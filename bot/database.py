@@ -581,7 +581,7 @@ class Database:
             logger.error(f"Error selecting card for user {user_id}: {e}")
             return None
 
-    def get_all_civilizations(self) -> List[Dict[str, Any]]:
+def get_all_civilizations(self) -> List[Dict[str, Any]]:
     """Get all civilizations for leaderboards"""
     try:
         conn = self.get_connection()
@@ -599,7 +599,7 @@ class Database:
             civ['territory'] = json.loads(civ['territory'])
             civ['hyper_items'] = json.loads(civ['hyper_items'])
             civ['bonuses'] = json.loads(civ['bonuses'])
-            civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))  # Add fallback
+            civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))  # Safe fallback
             civilizations.append(civ)
         
         return civilizations
