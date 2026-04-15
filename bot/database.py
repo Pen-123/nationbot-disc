@@ -607,7 +607,7 @@ def get_all_civilizations(self) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error getting all civilizations: {e}")
         return []
-
+        
     def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         """Create a new alliance"""
         try:
