@@ -1,6 +1,0 @@
-discord.py
-Flask
-aiohttp
-python-dotenv
-dropbox
-tenacity
