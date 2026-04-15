@@ -1232,7 +1232,7 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error in accept_peace command: {e}", exc_info=True)
 
     @commands.command(name='cards')
-    async def manage_cards(self, ctx, action: str = None, *args):
+    async def manage_cards(self, ctx, action: str = None, card_and_target: str = None):
         """View or use your unlocked cards (No cooldown)"""
         try:
             user_id = str(ctx.author.id)
@@ -1278,7 +1278,7 @@ class MilitaryCommands(commands.Cog):
                         
                         embed.add_field(
                             name="How to Use", 
-                            value="Use `.cards use \"Card Name\" [@target]` to use a card. Some cards require targets.", 
+                            value="Use `.cards use <card_name> [@target]` to use a card. Example: `.cards use \"Resource Heist\" @username`", 
                             inline=False
                         )
                     
@@ -1286,28 +1286,30 @@ class MilitaryCommands(commands.Cog):
                     return
                 
                 elif action.lower() == 'use':
-                    if not args:
-                        await ctx.send("❌ Please specify a card name! Usage: `.cards use \"Card Name\" [@target]`")
+                    if not card_and_target:
+                        await ctx.send("❌ Please specify a card name! Usage: `.cards use <card_name> [@target]`\nExample: `.cards use \"Resource Heist\" @user`")
                         return
                     
-                    # Parse card name and target from args
-                    card_name = args[0]
+                    # Parse card name and target from the combined argument
+                    parts = card_and_target.split()
+                    card_name = None
                     target_mention = None
                     
-                    # Handle quoted card names with spaces
-                    if card_name.startswith('"') and len(args) > 1:
-                        # Find the closing quote
-                        card_parts = []
-                        for arg in args:
-                            card_parts.append(arg)
-                            if arg.endswith('"'):
-                                break
-                        card_name = ' '.join(card_parts).strip('"')
-                        # The rest are target mentions
-                        if len(args) > len(card_parts):
-                            target_mention = args[len(card_parts)]
-                    elif len(args) > 1:
-                        target_mention = args[1]
+                    # Check if there's a mention in the message
+                    if ctx.message.mentions:
+                        # Find the card name (everything before the mention)
+                        mention_str = str(ctx.message.mentions[0].mention)
+                        if mention_str in card_and_target:
+                            card_name = card_and_target.replace(mention_str, "").strip()
+                            target_mention = mention_str
+                        else:
+                            card_name = card_and_target
+                    else:
+                        card_name = card_and_target
+                    
+                    if not card_name:
+                        await ctx.send("❌ Please specify a card name!")
+                        return
                     
                     # Use a specific card
                     cursor.execute('''
@@ -1343,11 +1345,11 @@ class MilitaryCommands(commands.Cog):
                         await ctx.send("❌ Failed to process card effect!")
                     
                 else:
-                    await ctx.send("❌ Invalid action! Use `.cards` to view your cards or `.cards use \"Card Name\" [@target]` to use a card.")
+                    await ctx.send("❌ Invalid action! Use `.cards` to view your cards or `.cards use <card_name> [@target]` to use a card.")
 
         except Exception as e:
             logger.error(f"Error in cards command: {e}", exc_info=True)
-
+            
     async def _process_card_effect(self, ctx, user_id, card_name, target_mention):
         """Process card effects"""
         try:
