@@ -582,31 +582,31 @@ class Database:
             return None
 
     def get_all_civilizations(self) -> List[Dict[str, Any]]:
-        """Get all civilizations for leaderboards"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM civilizations ORDER BY last_active DESC')
-            rows = cursor.fetchall()
-            
-            civilizations = []
-            for row in rows:
-                civ = dict(row)
-                civ['resources'] = json.loads(civ['resources'])
-                civ['population'] = json.loads(civ['population'])
-                civ['military'] = json.loads(civ['military'])
-                civ['territory'] = json.loads(civ['territory'])
-                civ['hyper_items'] = json.loads(civ['hyper_items'])
-                civ['bonuses'] = json.loads(civ['bonuses'])
-                civ['selected_cards'] = json.loads(civ['selected_cards'])
-                civilizations.append(civ)
-            
-            return civilizations
-            
-        except Exception as e:
-            logger.error(f"Error getting all civilizations: {e}")
-            return []
+    """Get all civilizations for leaderboards"""
+    try:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM civilizations ORDER BY last_active DESC')
+        rows = cursor.fetchall()
+        
+        civilizations = []
+        for row in rows:
+            civ = dict(row)
+            civ['resources'] = json.loads(civ['resources'])
+            civ['population'] = json.loads(civ['population'])
+            civ['military'] = json.loads(civ['military'])
+            civ['territory'] = json.loads(civ['territory'])
+            civ['hyper_items'] = json.loads(civ['hyper_items'])
+            civ['bonuses'] = json.loads(civ['bonuses'])
+            civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))  # Add fallback
+            civilizations.append(civ)
+        
+        return civilizations
+        
+    except Exception as e:
+        logger.error(f"Error getting all civilizations: {e}")
+        return []
 
     def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         """Create a new alliance"""
