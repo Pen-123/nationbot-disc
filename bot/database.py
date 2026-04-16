@@ -379,32 +379,40 @@ class Database:
             logger.error(f"Error deleting civilization for user {user_id}: {e}")
             return False
 
-    def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get civilization data for a user"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
-            row = cursor.fetchone()
-            
-            if not row:
-                return None
-            
-            civ = dict(row)
-            civ['resources'] = json.loads(civ['resources'])
-            civ['population'] = json.loads(civ['population'])
-            civ['military'] = json.loads(civ['military'])
-            civ['territory'] = json.loads(civ['territory'])
-            civ['hyper_items'] = json.loads(civ['hyper_items'])
-            civ['bonuses'] = json.loads(civ['bonuses'])
-            civ['selected_cards'] = json.loads(civ['selected_cards'])
-            
-            return civ
-            
-        except Exception as e:
-            logger.error(f"Error getting civilization for user {user_id}: {e}")
+   def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
+    """Get civilization data for a user"""
+    try:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Ensure selected_cards column exists (simple migration)
+        cursor.execute("PRAGMA table_info(civilizations)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'selected_cards' not in columns:
+            cursor.execute("ALTER TABLE civilizations ADD COLUMN selected_cards TEXT NOT NULL DEFAULT '[]'")
+            conn.commit()
+        
+        cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
+        row = cursor.fetchone()
+        
+        if not row:
             return None
+        
+        civ = dict(row)
+        # Safely load JSON fields with defaults
+        civ['resources'] = json.loads(civ.get('resources', '{}'))
+        civ['population'] = json.loads(civ.get('population', '{}'))
+        civ['military'] = json.loads(civ.get('military', '{}'))
+        civ['territory'] = json.loads(civ.get('territory', '{}'))
+        civ['hyper_items'] = json.loads(civ.get('hyper_items', '[]'))
+        civ['bonuses'] = json.loads(civ.get('bonuses', '{}'))
+        civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))
+        
+        return civ
+        
+    except Exception as e:
+        logger.error(f"Error getting civilization for user {user_id}: {e}")
+        return None
 
     def update_civilization(self, user_id: str, updates: Dict[str, Any]) -> bool:
         """Update civilization data"""
