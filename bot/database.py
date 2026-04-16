@@ -22,9 +22,12 @@ class Database:
         self.dropbox_app_key = dropbox_app_key or os.getenv('DROPBOX_APP_KEY')
         self.dropbox_app_secret = dropbox_app_secret or os.getenv('DROPBOX_APP_SECRET')
         self.dropbox_client = None
+        self._last_upload = 0  # Throttle uploads
         if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
             self.init_dropbox()
-        self.download_database()
+        # Only download if local file doesn't exist (avoid overwriting fresh data)
+        if not os.path.exists(self.db_path):
+            self.download_database()
         self.init_database()
         self.setup_cleanup_scheduler()
 
@@ -65,9 +68,12 @@ class Database:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def upload_database(self):
-        """Upload the database file to Dropbox"""
+        """Upload the database file to Dropbox (throttled to max once per 30 seconds)"""
         if not self.dropbox_client:
             logger.warning("No Dropbox client, skipping upload")
+            return
+        # Throttle uploads to avoid excessive API calls and race conditions
+        if time.time() - self._last_upload < 30:
             return
         try:
             # Check integrity
@@ -83,6 +89,7 @@ class Database:
                     dropbox_path,
                     mode=dropbox.files.WriteMode('overwrite')
                 )
+            self._last_upload = time.time()
             logger.info(f"Uploaded database to Dropbox: {dropbox_path}")
         except Exception as e:
             logger.error(f"Error uploading database to Dropbox: {e}")
@@ -91,7 +98,7 @@ class Database:
     def get_connection(self):
         """Get thread-local database connection"""
         if not hasattr(self.local, 'connection'):
-            self.local.connection = sqlite3.connect(self.db_path)
+            self.local.connection = sqlite3.connect(self.db_path, check_same_thread=False)
             self.local.connection.row_factory = sqlite3.Row
         return self.local.connection
 
@@ -257,7 +264,7 @@ class Database:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_invites_expires ON alliance_invitations(expires_at)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_wars_ongoing ON wars(result)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_peace_offers_status ON peace_offers(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)')  # Note: column is 'recipient_id' in schema
         
         conn.commit()
         self.upload_database()
@@ -581,32 +588,32 @@ class Database:
             logger.error(f"Error selecting card for user {user_id}: {e}")
             return None
 
-def get_all_civilizations(self) -> List[Dict[str, Any]]:
-    """Get all civilizations for leaderboards"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM civilizations ORDER BY last_active DESC')
-        rows = cursor.fetchall()
-        
-        civilizations = []
-        for row in rows:
-            civ = dict(row)
-            civ['resources'] = json.loads(civ['resources'])
-            civ['population'] = json.loads(civ['population'])
-            civ['military'] = json.loads(civ['military'])
-            civ['territory'] = json.loads(civ['territory'])
-            civ['hyper_items'] = json.loads(civ['hyper_items'])
-            civ['bonuses'] = json.loads(civ['bonuses'])
-            civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))  # Safe fallback
-            civilizations.append(civ)
-        
-        return civilizations
-        
-    except Exception as e:
-        logger.error(f"Error getting all civilizations: {e}")
-        return []
+    def get_all_civilizations(self) -> List[Dict[str, Any]]:
+        """Get all civilizations for leaderboards"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM civilizations ORDER BY last_active DESC')
+            rows = cursor.fetchall()
+            
+            civilizations = []
+            for row in rows:
+                civ = dict(row)
+                civ['resources'] = json.loads(civ['resources'])
+                civ['population'] = json.loads(civ['population'])
+                civ['military'] = json.loads(civ['military'])
+                civ['territory'] = json.loads(civ['territory'])
+                civ['hyper_items'] = json.loads(civ['hyper_items'])
+                civ['bonuses'] = json.loads(civ['bonuses'])
+                civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))  # Safe fallback
+                civilizations.append(civ)
+            
+            return civilizations
+            
+        except Exception as e:
+            logger.error(f"Error getting all civilizations: {e}")
+            return []
         
     def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         """Create a new alliance"""
