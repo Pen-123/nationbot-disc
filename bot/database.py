@@ -107,6 +107,29 @@ class Database:
         initial_timer.start()
         logger.info("Scheduled cleanup task initialized")
 
+    def _migrate_civilizations_table(self):
+        """Add missing columns to civilizations table if they don't exist."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(civilizations)")
+        columns = [col[1] for col in cursor.fetchall()]
+        # Define expected columns with their types and defaults
+        expected = {
+            'selected_cards': ("TEXT NOT NULL DEFAULT '[]'", "'[]'"),
+            'region': ("TEXT", None),
+            'black_market_history': ("TEXT NOT NULL DEFAULT '{}'", "'{}'")
+        }
+        for col, (col_def, default_val) in expected.items():
+            if col not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE civilizations ADD COLUMN {col} {col_def}")
+                    if default_val:
+                        cursor.execute(f"UPDATE civilizations SET {col} = {default_val} WHERE {col} IS NULL")
+                    conn.commit()
+                    logger.info(f"Added missing column '{col}' to civilizations table")
+                except Exception as e:
+                    logger.error(f"Failed to add column '{col}': {e}")
+
     def init_database(self):
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -127,6 +150,9 @@ class Database:
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Run migration for existing tables
+        self._migrate_civilizations_table()
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cooldowns (
                 user_id TEXT,
@@ -312,11 +338,14 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            # Add selected_cards column if missing
+            # Migration already ran in init_database, but double-check columns exist
             cursor.execute("PRAGMA table_info(civilizations)")
             columns = [col[1] for col in cursor.fetchall()]
             if 'selected_cards' not in columns:
                 cursor.execute("ALTER TABLE civilizations ADD COLUMN selected_cards TEXT NOT NULL DEFAULT '[]'")
+                conn.commit()
+            if 'region' not in columns:
+                cursor.execute("ALTER TABLE civilizations ADD COLUMN region TEXT")
                 conn.commit()
             cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
             row = cursor.fetchone()
