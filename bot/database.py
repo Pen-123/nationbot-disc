@@ -130,6 +130,25 @@ class Database:
                 except Exception as e:
                     logger.error(f"Failed to add column '{col}': {e}")
 
+    def _migrate_cooldowns_table(self):
+        """Add missing columns to cooldowns table if they don't exist."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(cooldowns)")
+        columns = [col[1] for col in cursor.fetchall()]
+        # Define expected columns
+        expected = {
+            'last_used_at': ("TIMESTAMP", None)
+        }
+        for col, (col_def, default_val) in expected.items():
+            if col not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE cooldowns ADD COLUMN {col} {col_def}")
+                    conn.commit()
+                    logger.info(f"Added missing column '{col}' to cooldowns table")
+                except Exception as e:
+                    logger.error(f"Failed to add column '{col}': {e}")
+
     def init_database(self):
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -150,8 +169,9 @@ class Database:
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        # Run migration for existing tables
+        # Run migrations for existing tables
         self._migrate_civilizations_table()
+        self._migrate_cooldowns_table()
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cooldowns (
@@ -338,7 +358,6 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            # Migration already ran in init_database, but double-check columns exist
             cursor.execute("PRAGMA table_info(civilizations)")
             columns = [col[1] for col in cursor.fetchall()]
             if 'selected_cards' not in columns:
@@ -393,7 +412,7 @@ class Database:
             cursor = self.get_connection().cursor()
             cursor.execute('SELECT last_used_at FROM cooldowns WHERE user_id = ? AND command = ?', (user_id, command))
             row = cursor.fetchone()
-            return datetime.fromisoformat(row['last_used_at']) if row else None
+            return datetime.fromisoformat(row['last_used_at']) if row and row['last_used_at'] else None
         except Exception as e:
             logger.error(f"Error getting command cooldown: {e}")
             return None
