@@ -452,81 +452,161 @@ Remember to keep responses engaging but focused on the game.
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
     # ------------------------------------------------------------------
-    # ULTRA‑RELIABLE warhelp – auto‑generated and wrapped in try/except
+    # NEW STATIC warhelp – lists ALL commands from your .help output
     # ------------------------------------------------------------------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx):
-        """
-        Show all commands grouped by cog – including economy, military, etc.
-        """
-        try:
-            embed = discord.Embed(
-                title="🤖 NationBot – Complete Command Help",
-                description="All commands work with both `.` prefix and `/` slash.\nSome commands have cooldowns – use them wisely!",
-                color=discord.Color.blue()
-            )
+        """Show all commands grouped by category."""
+        categories = {
+            "🏛️ Basic Commands": {
+                "description": "Essential civilization management",
+                "commands": {
+                    "ideology": "Choose your civilization's government ideology",
+                    "regions": "View or select your civilization's region",
+                    "reset": "Reset your civilization (irreversible!)",
+                    "start": "Start a new civilization with a cinematic intro",
+                    "status": "View your civilization status",
+                    "sv": "Start a saved chat with the AI (no timeout)",
+                    "svc": "Close and delete your saved chat",
+                    "warhelp": "Show this help menu"
+                }
+            },
+            "🤝 Diplomacy Commands": {
+                "description": "Alliances, trade, and messages",
+                "commands": {
+                    "acceptally": "Accept a pending alliance proposal",
+                    "accepttrade": "Accept a pending trade proposal",
+                    "ally": "Propose an alliance with another civilization",
+                    "break": "Break your current alliance",
+                    "coalition": "Form a coalition against another alliance",
+                    "inbox": "Check your pending alliance, trade proposals, and diplomatic messages",
+                    "mail": "Send a diplomatic message to another civilization",
+                    "rejectally": "Reject a pending alliance proposal",
+                    "rejecttrade": "Reject a pending trade proposal",
+                    "send": "Send resources to an ally",
+                    "trade": "Propose a resource trade with another civilization"
+                }
+            },
+            "💰 Economy (Extra)": {
+                "description": "Jobs, gambling, and store",
+                "commands": {
+                    "arrest": "Arrest a target (police job)",
+                    "blackjack": "Play a game of blackjack",
+                    "code": "Start a coding project",
+                    "darkweb": "Purchase risky items from the dark web",
+                    "extracards": "Play a card game against the bot",
+                    "extragamble": "Gamble gold for a chance to win",
+                    "extrainventory": "Show your inventory",
+                    "extrastore": "Buy items from the store",
+                    "extrawork": "Work to earn gold",
+                    "job": "Apply for a specific job",
+                    "jobs": "List available jobs",
+                    "rob": "Attempt to rob another user",
+                    "setbalance": "Set your gold balance (admin only)",
+                    "slots": "Play the slot machine"
+                }
+            },
+            "⚒️ Economy (Core)": {
+                "description": "Resource gathering and management",
+                "commands": {
+                    "advertise": "Run promotional campaigns to attract new citizens",
+                    "census": "Display current gold and population status",
+                    "cheer": "Spread cheer to boost citizen happiness",
+                    "drill": "Extract rare minerals with advanced drilling",
+                    "drive": "Unemploy citizens, freeing them from work",
+                    "farm": "Farm food for your civilization",
+                    "festival": "Hold a grand festival to boost happiness",
+                    "fish": "Fish for food or occasionally find treasure",
+                    "gather": "Gather random resources from your territory",
+                    "harvest": "Large harvest with longer cooldown",
+                    "invest": "Invest gold for delayed profit",
+                    "lottery": "Gamble gold for a chance at the jackpot",
+                    "mine": "Mine stone and wood from your territory",
+                    "raidcaravan": "Raid NPC merchant caravans for loot",
+                    "recruit": "Convert citizens into soldiers",
+                    "sell": "Sell hyper items to wandering merchants",
+                    "tax": "Collect taxes from your citizens",
+                    "work": "Employ citizens to work and gain immediate gold"
+                }
+            },
+            "💎 HyperItem Commands": {
+                "description": "Powerful one‑time items",
+                "commands": {
+                    "backstab": "Use Dagger for assassination attempt",
+                    "bomb": "Use Missiles for mid‑tier military strike",
+                    "boosttech": "Use Ancient Scroll to instantly advance technology",
+                    "hiremercs": "Use Mercenary Contract to hire professional soldiers",
+                    "laststand": "Use Last Stand when under 500 gold",
+                    "luckystrike": "Use Lucky Charm for guaranteed critical success",
+                    "megainvent": "Use Tech Core to advance multiple technology levels",
+                    "mintgold": "Use Gold Mint to generate large amounts of gold",
+                    "mirror": "Display Mirror status – reflects ANY attack",
+                    "nuke": "Launch a devastating nuclear attack (Warhead required)",
+                    "obliterate": "Completely obliterate a civilization (HyperLaser)",
+                    "propaganda": "Use Propaganda Kit to steal enemy soldiers",
+                    "sacrifice": "Destroy both your civilization and another (mutual destruction)",
+                    "shield": "Display Anti‑Nuke Shield status",
+                    "superharvest": "Use Harvest Engine for massive food",
+                    "superspy": "Use Spy Network for elite espionage"
+                }
+            },
+            "⚔️ Military Commands": {
+                "description": "War, borders, and cards",
+                "commands": {
+                    "accept_peace": "Accept a peace offer from another civilization",
+                    "addborder": "Build a defensive border (5min cooldown)",
+                    "attack": "Launch a direct attack (3min cooldown)",
+                    "borderinfo": "Check your border status (1min cooldown)",
+                    "cards": "View or use your unlocked cards",
+                    "declare": "Declare war on another civilization",
+                    "find": "Search for wandering soldiers (1min cooldown)",
+                    "peace": "Offer peace to an enemy civilization",
+                    "rectract": "Assign soldiers to the border (1min cooldown)",
+                    "removeborder": "Remove your border and retrieve soldiers (2min)",
+                    "retrieve": "Retrieve soldiers from the border (1min cooldown)",
+                    "siege": "Lay siege to an enemy (10min cooldown)",
+                    "stealthbattle": "Conduct a spy‑based stealth attack (4min)",
+                    "train": "Train military units (2min cooldown)"
+                }
+            },
+            "🏪 Store Commands": {
+                "description": "Upgrades and black market",
+                "commands": {
+                    "blackmarket": "Purchase random HyperItems (no cooldown)",
+                    "inventory": "View your HyperItems and store upgrades",
+                    "market": "Display information about the Black Market",
+                    "store": "View the civilization store and purchase upgrades"
+                }
+            },
+            "📌 Other": {
+                "description": "Miscellaneous commands",
+                "commands": {
+                    "help": "Shows this message"
+                }
+            }
+        }
 
-            # Iterate over all loaded cogs
-            for cog_name, cog in self.bot.cogs.items():
-                # Skip admin cog if you want
-                if cog_name.lower() in ["admincommands"]:
-                    continue
+        embed = discord.Embed(
+            title="🤖 NationBot – Complete Command List",
+            description="All commands work with both `.` prefix and `/` slash.\nSome commands have cooldowns – see descriptions for details.",
+            color=discord.Color.blue()
+        )
 
-                commands_list = []
-                try:
-                    for cmd in cog.get_commands():
-                        # Skip hidden commands if any
-                        if getattr(cmd, 'hidden', False):
-                            continue
-                        desc = cmd.short_doc or "No description"
-                        commands_list.append(f"`/{cmd.name}` – {desc}")
-                except Exception as e:
-                    logger.error(f"Error getting commands from cog {cog_name}: {e}")
-                    continue
+        for category_name, category_data in categories.items():
+            cmd_list = []
+            for cmd, desc in category_data["commands"].items():
+                cmd_list.append(f"`{cmd}` – {desc}")
+            if cmd_list:
+                if len(cmd_list) > 20:
+                    cmd_list = cmd_list[:20] + ["… and more"]
+                embed.add_field(
+                    name=f"{category_name}",
+                    value=f"*{category_data['description']}*\n" + "\n".join(cmd_list),
+                    inline=False
+                )
 
-                if commands_list:
-                    # Limit to 15 per cog to avoid overly long embeds
-                    if len(commands_list) > 15:
-                        commands_list = commands_list[:15] + ["… and more"]
-                    embed.add_field(
-                        name=f"📂 {cog_name}",
-                        value="\n".join(commands_list),
-                        inline=False
-                    )
-
-            embed.set_footer(text="Use /<command> or .<command>  |  Some commands have cooldowns.")
-            await ctx.send(embed=embed)
-
-        except Exception as e:
-            logger.error(f"Error in warhelp: {e}", exc_info=True)
-            # Fallback to a simple static help if auto‑generation fails
-            fallback_embed = discord.Embed(
-                title="🤖 NationBot Help",
-                description="I couldn't generate the full command list. Here are some key commands:",
-                color=discord.Color.red()
-            )
-            fallback_embed.add_field(
-                name="Basic",
-                value="`.start`, `.status`, `.ideology`, `.regions`, `.reset`, `.sv`, `.svc`",
-                inline=False
-            )
-            fallback_embed.add_field(
-                name="Economy",
-                value="`.extrawork`, `.extrastore`, `.extrainventory`, `.extragamble`, `.slots`, `.blackjack`, `.farm`, `.mine`, `.fish`",
-                inline=False
-            )
-            fallback_embed.add_field(
-                name="Military & Diplomacy",
-                value="`.train`, `.declare`, `.attack`, `.siege`, `.peace`, `.ally`, `.trade`, `.cards`",
-                inline=False
-            )
-            fallback_embed.add_field(
-                name="HyperItems & Store",
-                value="`.blackmarket`, `.inventory`, `.store`, `.nuke`, `.obliterate`, `.propaganda`",
-                inline=False
-            )
-            fallback_embed.set_footer(text="Use `.warhelp` again after reload if you see this.")
-            await ctx.send(embed=fallback_embed)
+        embed.set_footer(text="Use .help <command> for more details on a specific command.")
+        await ctx.send(embed=embed)
 
     # ------------------------------------------------------------------
     # EXISTING COMMANDS (unchanged)
