@@ -114,7 +114,8 @@ class Database:
         expected = {
             'selected_cards': ("TEXT NOT NULL DEFAULT '[]'", "'[]'"),
             'region': ("TEXT", None),
-            'black_market_history': ("TEXT NOT NULL DEFAULT '{}'", "'{}'")
+            'black_market_history': ("TEXT NOT NULL DEFAULT '{}'", "'{}'"),
+            'job': ("TEXT NOT NULL DEFAULT 'Unemployed'", "'Unemployed'")
         }
         for col, (col_def, default_val) in expected.items():
             if col not in columns:
@@ -162,6 +163,7 @@ class Database:
                 selected_cards TEXT NOT NULL DEFAULT '[]',
                 region TEXT,
                 black_market_history TEXT NOT NULL DEFAULT '{}',
+                job TEXT NOT NULL DEFAULT 'Unemployed',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -296,11 +298,12 @@ class Database:
             bonuses = bonuses or {}
             selected_cards = []
             black_market_history = {}
+            default_job = "Unemployed"
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO civilizations (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards, region, black_market_history)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO civilizations (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards, region, black_market_history, job)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id, name,
                 json.dumps(default_resources),
@@ -311,7 +314,8 @@ class Database:
                 json.dumps(bonuses),
                 json.dumps(selected_cards),
                 None,
-                json.dumps(black_market_history)
+                json.dumps(black_market_history),
+                default_job
             ))
             self.generate_card_selection(user_id, 1)
             conn.commit()
@@ -356,17 +360,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(civilizations)")
-            columns = [col[1] for col in cursor.fetchall()]
-            if 'selected_cards' not in columns:
-                cursor.execute("ALTER TABLE civilizations ADD COLUMN selected_cards TEXT NOT NULL DEFAULT '[]'")
-                conn.commit()
-            if 'region' not in columns:
-                cursor.execute("ALTER TABLE civilizations ADD COLUMN region TEXT")
-                conn.commit()
-            if 'black_market_history' not in columns:
-                cursor.execute("ALTER TABLE civilizations ADD COLUMN black_market_history TEXT NOT NULL DEFAULT '{}'")
-                conn.commit()
+            self._migrate_civilizations_table()  # Ensure all columns exist
             cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
             row = cursor.fetchone()
             if not row:
@@ -380,6 +374,7 @@ class Database:
             civ['bonuses'] = json.loads(civ.get('bonuses', '{}'))
             civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))
             civ['black_market_history'] = json.loads(civ.get('black_market_history', '{}'))
+            # job is plain text; leave as is
             return civ
         except Exception as e:
             logger.error(f"Error getting civilization for {user_id}: {e}")
@@ -391,7 +386,6 @@ class Database:
             cursor = conn.cursor()
             set_clauses = []
             values = []
-            # FIX: added 'black_market_history' to the JSON-encoded fields list
             json_fields = ['resources', 'population', 'military', 'territory', 'hyper_items', 'bonuses', 'selected_cards', 'black_market_history']
             for field, value in updates.items():
                 if field in json_fields:
