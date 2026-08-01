@@ -25,7 +25,6 @@ class Database:
         self._last_upload = 0
         if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
             self.init_dropbox()
-        # Only download if local file missing
         if not os.path.exists(self.db_path):
             self.download_database()
         self.init_database()
@@ -67,7 +66,6 @@ class Database:
     def upload_database(self):
         if not self.dropbox_client:
             return
-        # Throttle to once per 30 seconds
         if time.time() - self._last_upload < 30:
             return
         try:
@@ -113,7 +111,6 @@ class Database:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(civilizations)")
         columns = [col[1] for col in cursor.fetchall()]
-        # Define expected columns with their types and defaults
         expected = {
             'selected_cards': ("TEXT NOT NULL DEFAULT '[]'", "'[]'"),
             'region': ("TEXT", None),
@@ -136,7 +133,6 @@ class Database:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(cooldowns)")
         columns = [col[1] for col in cursor.fetchall()]
-        # Define expected columns
         expected = {
             'last_used_at': ("TIMESTAMP", None)
         }
@@ -165,11 +161,11 @@ class Database:
                 bonuses TEXT NOT NULL DEFAULT '{}',
                 selected_cards TEXT NOT NULL DEFAULT '[]',
                 region TEXT,
+                black_market_history TEXT NOT NULL DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        # Run migrations for existing tables
         self._migrate_civilizations_table()
         self._migrate_cooldowns_table()
 
@@ -299,11 +295,12 @@ class Database:
             hyper_items = [hyper_item] if hyper_item else []
             bonuses = bonuses or {}
             selected_cards = []
+            black_market_history = {}
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO civilizations (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards, region)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO civilizations (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards, region, black_market_history)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id, name,
                 json.dumps(default_resources),
@@ -313,7 +310,8 @@ class Database:
                 json.dumps(hyper_items),
                 json.dumps(bonuses),
                 json.dumps(selected_cards),
-                None
+                None,
+                json.dumps(black_market_history)
             ))
             self.generate_card_selection(user_id, 1)
             conn.commit()
@@ -366,6 +364,9 @@ class Database:
             if 'region' not in columns:
                 cursor.execute("ALTER TABLE civilizations ADD COLUMN region TEXT")
                 conn.commit()
+            if 'black_market_history' not in columns:
+                cursor.execute("ALTER TABLE civilizations ADD COLUMN black_market_history TEXT NOT NULL DEFAULT '{}'")
+                conn.commit()
             cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
             row = cursor.fetchone()
             if not row:
@@ -378,6 +379,7 @@ class Database:
             civ['hyper_items'] = json.loads(civ.get('hyper_items', '[]'))
             civ['bonuses'] = json.loads(civ.get('bonuses', '{}'))
             civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))
+            civ['black_market_history'] = json.loads(civ.get('black_market_history', '{}'))
             return civ
         except Exception as e:
             logger.error(f"Error getting civilization for {user_id}: {e}")
@@ -389,8 +391,10 @@ class Database:
             cursor = conn.cursor()
             set_clauses = []
             values = []
+            # FIX: added 'black_market_history' to the JSON-encoded fields list
+            json_fields = ['resources', 'population', 'military', 'territory', 'hyper_items', 'bonuses', 'selected_cards', 'black_market_history']
             for field, value in updates.items():
-                if field in ['resources', 'population', 'military', 'territory', 'hyper_items', 'bonuses', 'selected_cards']:
+                if field in json_fields:
                     set_clauses.append(f"{field} = ?")
                     values.append(json.dumps(value))
                 else:
@@ -516,6 +520,7 @@ class Database:
                 civ['hyper_items'] = json.loads(civ.get('hyper_items', '[]'))
                 civ['bonuses'] = json.loads(civ.get('bonuses', '{}'))
                 civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))
+                civ['black_market_history'] = json.loads(civ.get('black_market_history', '{}'))
                 civs.append(civ)
             return civs
         except Exception as e:
