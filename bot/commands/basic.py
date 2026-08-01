@@ -34,72 +34,6 @@ class BasicCommands(commands.Cog):
         self.last_interaction = {}  # user_id: timestamp
         self.saved_chats = set()  # user_ids with saved chats
 
-        self.help_categories = {
-            "basic": {
-                "title": "🏛️ Basic Commands",
-                "description": "Essential civilization management",
-                "commands": {
-                    "/start <name>": "Begin your civilization journey",
-                    "/ideology <type>": "Choose government type",
-                    "/status": "View your civilization stats",
-                    "/regions": "Select your region for bonuses",
-                    "/reset": "⚠️ Reset your civilization (irreversible!)",
-                    "/sv": "💾 Start saved chat with AI",
-                    "/svc": "🗑️ Close saved chat"
-                }
-            },
-            "economy": {
-                "title": "💰 Economy Commands",
-                "description": "Resource management & jobs",
-                "commands": {
-                    "/extrawork": "Work to earn gold (5min cd)",
-                    "/extrastore": "View special items shop",
-                    "/extrainventory": "Check your inventory",
-                    "/farm /mine /fish": "Gather resources",
-                    "/tax": "Collect taxes from citizens",
-                    "/invest <amt>": "Invest for future profit",
-                    "/job <type>": "Apply for special jobs"
-                }
-            },
-            "military": {
-                "title": "⚔️ Military Commands",
-                "description": "Warfare and defense",
-                "commands": {
-                    "/train soldiers/spies <amt>": "Train military units",
-                    "/declare <user>": "Declare war on another civ",
-                    "/attack <user>": "Launch direct attack",
-                    "/siege <user>": "Lay siege to territory",
-                    "/find": "Recruit wandering soldiers",
-                    "/addborder /removeborder": "Manage defenses",
-                    "/cards": "Use unlocked battle cards"
-                }
-            },
-            "diplomacy": {
-                "title": "🤝 Diplomacy Commands",
-                "description": "Alliances and trade",
-                "commands": {
-                    "/ally <user>": "Propose alliance",
-                    "/trade <user> ...": "Trade resources",
-                    "/peace <user>": "Offer peace treaty",
-                    "/accept_peace <user>": "Accept peace offer",
-                    "/mail <user> <msg>": "Send diplomatic message",
-                    "/inbox": "Check pending requests"
-                }
-            },
-            "items": {
-                "title": "💎 HyperItem Commands",
-                "description": "Powerful special items",
-                "commands": {
-                    "/inventory": "View your HyperItems",
-                    "/blackmarket": "Risky item marketplace",
-                    "/nuke <user>": "Nuclear attack (Warhead)",
-                    "/shield": "Anti-nuke defense (Shield)",
-                    "/propaganda <user>": "Steal soldiers (Kit)",
-                    "/luckystrike": "Guaranteed crit (Charm)"
-                }
-            }
-        }
-
     def _get_conversation_history(self, user_id):
         """Get formatted conversation history for a user"""
         history = []
@@ -594,73 +528,49 @@ Remember to keep responses engaging but focused on the game.
         logger.error("No configured AI provider available or all providers failed")
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
+
+    # ------------------------------------------------------------------
+    # NEW auto-generated warhelp that shows ALL commands from every cog
+    # ------------------------------------------------------------------
     @commands.command(name='warhelp')
-    @app_commands.describe(category="Optional help category")
-    @app_commands.choices(category=[
-        app_commands.Choice(name="basic", value="basic"),
-        app_commands.Choice(name="economy", value="economy"),
-        app_commands.Choice(name="military", value="military"),
-        app_commands.Choice(name="diplomacy", value="diplomacy"),
-        app_commands.Choice(name="items", value="items"),
-    ])
-    async def warbot_help_command(
-        self,
-        ctx,
-        category: Optional[Literal["basic", "economy", "military", "diplomacy", "items"]] = None
-    ):
-        """Display simplified, organized help menu"""
-        categories = self.help_categories
+    async def warhelp(self, ctx):
+        """
+        Show all commands grouped by cog – including economy, military, etc.
+        """
+        embed = guilded.Embed(
+            title="🤖 NationBot – Complete Command Help",
+            description="All commands work with both `.` prefix and `/` slash.\nSome commands have cooldowns – use them wisely!",
+            color=guilded.Color.blue()
+        )
 
-        # If no category specified, show main menu
-        if not category:
-            embed = guilded.Embed(
-                title="🤖 NationBot Help Menu",
-                description="**Use `/warhelp <category>` for detailed commands**\nExample: `/warhelp basic`",
-                color=0x1e90ff
-            )
-            
-            for cat_name, cat_data in categories.items():
+        # Iterate over all loaded cogs
+        for cog_name, cog in self.bot.cogs.items():
+            # Optionally skip admin cog
+            if cog_name.lower() in ["admincommands"]:
+                continue
+
+            commands_list = []
+            for cmd in cog.get_commands():
+                desc = cmd.short_doc or "No description"
+                commands_list.append(f"`/{cmd.name}` – {desc}")
+
+            if commands_list:
+                # Limit to 15 per cog to avoid overly long embeds
+                if len(commands_list) > 15:
+                    commands_list = commands_list[:15] + ["… and more"]
                 embed.add_field(
-                    name=cat_data["title"],
-                    value=f"*{cat_data['description']}*\n`{cat_name}`",
-                    inline=True
+                    name=f"📂 {cog_name}",
+                    value="\n".join(commands_list),
+                    inline=False
                 )
-            
-            embed.add_field(
-                name="💡 Quick Tips",
-                value="• Mention me or reply for AI help\n• Use `/sv` for persistent chats\n• Slash commands show built-in suggestions",
-                inline=False
-            )
-            
-            await ctx.send(embed=embed)
-            return
 
-        # Show specific category
-        category = category.lower()
-        if category in categories:
-            cat_data = categories[category]
-            
-            embed = guilded.Embed(
-                title=cat_data["title"],
-                description=cat_data["description"],
-                color=0x1e90ff
-            )
-            
-            for cmd, desc in cat_data["commands"].items():
-                embed.add_field(name=cmd, value=desc, inline=False)
-            
-            embed.set_footer(text=f"Use /warhelp for main menu | Total categories: {len(categories)}")
-            
-        else:
-            embed = guilded.Embed(
-                title="❌ Category Not Found",
-                description=f"Available categories: {', '.join(categories.keys())}",
-                color=0xff0000
-            )
-        
+        embed.set_footer(text="Use /<command> or .<command>  |  Some commands have cooldowns.")
         await ctx.send(embed=embed)
 
-    # ... rest of your existing commands (regions, start, ideology, status) remain the same ...
+    # ------------------------------------------------------------------
+    # Existing region, start, ideology, status commands (unchanged)
+    # ------------------------------------------------------------------
+
     @commands.command(name='regions')
     @app_commands.describe(region_name="Region to select (optional)")
     @app_commands.choices(region_name=[
@@ -684,7 +594,6 @@ Remember to keep responses engaging but focused on the game.
         ] = None
     ):
         """View or select your civilization's region"""
-        # [Existing regions command code remains unchanged]
         # Define available regions with bonuses (using underscores for names)
         regions = {
             "asia": {
