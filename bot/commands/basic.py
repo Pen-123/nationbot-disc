@@ -13,9 +13,8 @@ from bot.utils import format_number, get_ascii_art, create_embed
 
 logger = logging.getLogger(__name__)
 
-# Constants
 MAX_CONVERSATION_HISTORY = 100
-CONVERSATION_TIMEOUT = 1800  # 30 minutes
+CONVERSATION_TIMEOUT = 1800
 
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
@@ -28,7 +27,6 @@ class BasicCommands(commands.Cog):
         self.current_model = "llama-3.3-70b-versatile"
         self.model_switch_time = None
         self.rate_limited = False
-
         self.conversations = defaultdict(deque)
         self.last_interaction = {}
         self.saved_chats = set()
@@ -68,14 +66,13 @@ class BasicCommands(commands.Cog):
 
     @commands.command(name='reset')
     async def reset_civilization(self, ctx):
-        """Reset your civilization (irreversible!)"""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You don't have a civilization to reset!")
             return
         embed = discord.Embed(
-            title="⚠️ **CIVILIZATION RESET CONFIRMATION** ⚠️",
+            title="⚠️ CIVILIZATION RESET CONFIRMATION",
             description="**This action is PERMANENT and cannot be undone!**",
             color=0xff0000
         )
@@ -124,7 +121,6 @@ class BasicCommands(commands.Cog):
 
     @commands.command(name='sv')
     async def start_saved_chat(self, ctx):
-        """Start a saved chat with the AI (no timeout)"""
         user_id = str(ctx.author.id)
         if user_id in self.saved_chats:
             await ctx.send("💾 You already have a saved chat running! Use `.svc` to close it.")
@@ -147,7 +143,6 @@ class BasicCommands(commands.Cog):
 
     @commands.command(name='svc')
     async def close_saved_chat(self, ctx):
-        """Close and delete your saved chat"""
         user_id = str(ctx.author.id)
         if user_id not in self.saved_chats:
             await ctx.send("❌ You don't have a saved chat running! Use `.sv` to start one.")
@@ -451,9 +446,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ------------------------------------------------------------------
-    # NEW STATIC warhelp – lists ALL commands from your .help output
-    # ------------------------------------------------------------------
+    # ---------- STATIC WARHELP WITH INDUSTRIAL CATEGORY ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx):
         """Show all commands grouped by category."""
@@ -578,6 +571,41 @@ Remember to keep responses engaging but focused on the game.
                     "store": "View the civilization store and purchase upgrades"
                 }
             },
+            # ---------- NEW INDUSTRIAL CATEGORY ----------
+            "🏭 Industrial Revolution": {
+                "description": "Micromanagement challenge (once per player)",
+                "commands": {
+                    "industrial_start": "Begin the revolution (confirmation required)",
+                    "industrial_status": "View all 25+ stats",
+                    "industrial_build": "Build a factory",
+                    "industrial_tech": "Research technology",
+                    "industrial_workers": "Train workers",
+                    "industrial_cleanup": "Reduce pollution",
+                    "industrial_railway": "Build railways",
+                    "industrial_transport": "Improve transport",
+                    "industrial_army": "Raise military protection",
+                    "industrial_policy": "Enact a new policy",
+                    "industrial_import": "Import raw materials",
+                    "industrial_export": "Export goods",
+                    "industrial_steam": "Research steam power",
+                    "industrial_mine": "Build a mine",
+                    "industrial_hospital": "Build a hospital",
+                    "industrial_school": "Build a school",
+                    "industrial_law": "Enforce law and order",
+                    "industrial_trade": "Diplomatic trade",
+                    "industrial_aid": "Request foreign aid",
+                    "industrial_suppress": "Suppress revolts",
+                    "industrial_bribe": "Bribe workers",
+                    "industrial_automate": "Automate factories",
+                    "industrial_upgrade": "Upgrade factories",
+                    "industrial_relief": "Disaster relief",
+                    "industrial_expand": "Expand cities",
+                    "industrial_banking": "Invest in banking",
+                    "industrial_nationalize": "Nationalize industry",
+                    "indushelp": "Show all Industrial Revolution commands"
+                }
+            },
+            # --------------------------------------------
             "📌 Other": {
                 "description": "Miscellaneous commands",
                 "commands": {
@@ -608,10 +636,7 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .help <command> for more details on a specific command.")
         await ctx.send(embed=embed)
 
-    # ------------------------------------------------------------------
-    # EXISTING COMMANDS (unchanged)
-    # ------------------------------------------------------------------
-
+    # ---------- EXISTING COMMANDS ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Region to select (optional)")
     @app_commands.choices(region_name=[
@@ -624,58 +649,16 @@ Remember to keep responses engaging but focused on the game.
         app_commands.Choice(name="oceania", value="oceania"),
         app_commands.Choice(name="antarctica", value="antarctica"),
     ])
-    async def regions_command(
-        self,
-        ctx,
-        region_name: Optional[
-            Literal[
-                "asia", "europe", "africa", "north_america",
-                "south_america", "middle_east", "oceania", "antarctica"
-            ]
-        ] = None
-    ):
-        """View or select your civilization's region"""
+    async def regions_command(self, ctx, region_name: Optional[Literal["asia", "europe", "africa", "north_america", "south_america", "middle_east", "oceania", "antarctica"]] = None):
         regions = {
-            "asia": {
-                "name": "Asia",
-                "bonuses": {"food": 200, "population": 50},
-                "description": "🌏 **Asia**: Fertile lands with abundant resources and large population capacity."
-            },
-            "europe": {
-                "name": "Europe", 
-                "bonuses": {"gold": 300, "tech_level": 1},
-                "description": "🇪🇺 **Europe**: Advanced technological development and economic strength."
-            },
-            "africa": {
-                "name": "Africa",
-                "bonuses": {"stone": 150, "wood": 150},
-                "description": "🌍 **Africa**: Rich in natural resources and mineral wealth."
-            },
-            "north_america": {
-                "name": "North America",
-                "bonuses": {"gold": 200, "food": 200},
-                "description": "🇺🇸 **North America**: Balanced economy with strong agricultural and financial sectors."
-            },
-            "south_america": {
-                "name": "South America", 
-                "bonuses": {"food": 300, "wood": 100},
-                "description": "🇧🇷 **South America**: Lush rainforests and abundant agricultural potential."
-            },
-            "middle_east": {
-                "name": "Middle East",
-                "bonuses": {"gold": 400},
-                "description": "🌅 **Middle East**: Vast oil reserves creating immense wealth."
-            },
-            "oceania": {
-                "name": "Oceania",
-                "bonuses": {"food": 250, "happiness": 15},
-                "description": "🇦🇺 **Oceania**: Island paradise with high quality of life and abundant seafood."
-            },
-            "antarctica": {
-                "name": "Antarctica",
-                "bonuses": {"research": 25},
-                "description": "🇦🇶 **Antarctica**: Harsh environment but unique research opportunities. +25% research speed."
-            }
+            "asia": {"name": "Asia", "bonuses": {"food": 200, "population": 50}, "description": "🌏 **Asia**: Fertile lands with abundant resources and large population capacity."},
+            "europe": {"name": "Europe", "bonuses": {"gold": 300, "tech_level": 1}, "description": "🇪🇺 **Europe**: Advanced technological development and economic strength."},
+            "africa": {"name": "Africa", "bonuses": {"stone": 150, "wood": 150}, "description": "🌍 **Africa**: Rich in natural resources and mineral wealth."},
+            "north_america": {"name": "North America", "bonuses": {"gold": 200, "food": 200}, "description": "🇺🇸 **North America**: Balanced economy with strong agricultural and financial sectors."},
+            "south_america": {"name": "South America", "bonuses": {"food": 300, "wood": 100}, "description": "🇧🇷 **South America**: Lush rainforests and abundant agricultural potential."},
+            "middle_east": {"name": "Middle East", "bonuses": {"gold": 400}, "description": "🌅 **Middle East**: Vast oil reserves creating immense wealth."},
+            "oceania": {"name": "Oceania", "bonuses": {"food": 250, "happiness": 15}, "description": "🇦🇺 **Oceania**: Island paradise with high quality of life and abundant seafood."},
+            "antarctica": {"name": "Antarctica", "bonuses": {"research": 25}, "description": "🇦🇶 **Antarctica**: Harsh environment but unique research opportunities. +25% research speed."}
         }
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -683,32 +666,16 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
         if not region_name:
-            embed = discord.Embed(
-                title="🌍 Available Regions",
-                description="Choose a region for your civilization. Each region provides unique bonuses:",
-                color=0x00ff00
-            )
+            embed = discord.Embed(title="🌍 Available Regions", description="Choose a region for your civilization. Each region provides unique bonuses:", color=0x00ff00)
             for region_id, region_data in regions.items():
                 bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_data["bonuses"].items()])
-                embed.add_field(
-                    name=region_data["name"],
-                    value=f"{region_data['description']}\n**Bonuses:** {bonus_text}",
-                    inline=False
-                )
-            embed.add_field(
-                name="Usage",
-                value="Use `.regions <region_name>` to select a region (e.g., `.regions asia`)\nAvailable regions: asia, europe, africa, north_america, south_america, middle_east, oceania, antarctica",
-                inline=False
-            )
+                embed.add_field(name=region_data["name"], value=f"{region_data['description']}\n**Bonuses:** {bonus_text}", inline=False)
+            embed.add_field(name="Usage", value="Use `.regions <region_name>` to select a region (e.g., `.regions asia`)\nAvailable regions: asia, europe, africa, north_america, south_america, middle_east, oceania, antarctica", inline=False)
             if civ.get('region'):
                 current_region = next((r for r in regions.values() if r['name'].lower() == civ.get('region').lower()), None)
                 if current_region:
                     bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in current_region["bonuses"].items()])
-                    embed.add_field(
-                        name="Current Region",
-                        value=f"**{current_region['name']}**: {bonus_text}",
-                        inline=False
-                    )
+                    embed.add_field(name="Current Region", value=f"**{current_region['name']}**: {bonus_text}", inline=False)
             await ctx.send(embed=embed)
             return
         region_name = region_name.lower()
@@ -736,24 +703,12 @@ Remember to keep responses engaging but focused on the game.
                 current_bonuses = civ.get('bonuses', {})
                 current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
                 self.db.update_civilization(user_id, {'bonuses': current_bonuses})
-        update_data = {
-            'region': regions[region_name]['name'],
-            'resources': updated_resources,
-            'population': updated_population
-        }
+        update_data = {'region': regions[region_name]['name'], 'resources': updated_resources, 'population': updated_population}
         if self.db.update_civilization(user_id, update_data):
             bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_bonuses.items()])
-            embed = discord.Embed(
-                title=f"🌍 Region Selected: {regions[region_name]['name']}",
-                description=regions[region_name]['description'],
-                color=0x00ff00
-            )
+            embed = discord.Embed(title=f"🌍 Region Selected: {regions[region_name]['name']}", description=regions[region_name]['description'], color=0x00ff00)
             embed.add_field(name="Bonuses Applied", value=bonus_text, inline=False)
-            embed.add_field(
-                name="🎉 Nation Complete!",
-                value="Your civilization is now fully established! Use `.status` to view your complete stats and `.warhelp` to see all available commands.",
-                inline=False
-            )
+            embed.add_field(name="🎉 Nation Complete!", value="Your civilization is now fully established! Use `.status` to view your complete stats and `.warhelp` to see all available commands.", inline=False)
             await ctx.send(embed=embed)
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
@@ -761,7 +716,6 @@ Remember to keep responses engaging but focused on the game.
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, civ_name: str = None):
-        """Start a new civilization with a cinematic intro"""
         if not civ_name:
             await ctx.send("❌ Please provide a civilization name: `.start <civilization_name>`")
             return
@@ -791,22 +745,10 @@ Remember to keep responses engaging but focused on the game.
             common_items = ["Lucky Charm", "Propaganda Kit", "Mercenary Contract"]
             hyper_item = random.choice(common_items)
         self.civ_manager.create_civilization(user_id, civ_name, bonus_resources, name_bonuses, hyper_item)
-        embed = discord.Embed(
-            title=f"🏛️ The Founding of {civ_name}",
-            description=f"{intro_art}\n\n{event_text}\n{special_message}",
-            color=0x00ff00
-        )
+        embed = discord.Embed(title=f"🏛️ The Founding of {civ_name}", description=f"{intro_art}\n\n{event_text}\n{special_message}", color=0x00ff00)
         if hyper_item:
-            embed.add_field(
-                name="🎁 Rare Discovery!",
-                value=f"Your scouts found a **{hyper_item}**! This powerful item unlocks special abilities.",
-                inline=False
-            )
-        embed.add_field(
-            name="📋 Next Steps",
-            value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`",
-            inline=False
-        )
+            embed.add_field(name="🎁 Rare Discovery!", value=f"Your scouts found a **{hyper_item}**! This powerful item unlocks special abilities.", inline=False)
+        embed.add_field(name="📋 Next Steps", value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`", inline=False)
         await ctx.send(embed=embed)
 
     @commands.command(name='ideology')
@@ -825,27 +767,16 @@ Remember to keep responses engaging but focused on the game.
         app_commands.Choice(name="federalism", value="federalism"),
         app_commands.Choice(name="monarchy", value="monarchy"),
     ])
-    async def choose_ideology(
-        self,
-        ctx,
-        ideology_type: Optional[
-            Literal[
-                "fascism", "democracy", "communism", "theocracy", "anarchy",
-                "destruction", "pacifist", "socialism", "terrorism",
-                "capitalism", "federalism", "monarchy"
-            ]
-        ] = None
-    ):
-        """Choose your civilization's government ideology"""
+    async def choose_ideology(self, ctx, ideology_type: Optional[Literal["fascism", "democracy", "communism", "theocracy", "anarchy", "destruction", "pacifist", "socialism", "terrorism", "capitalism", "federalism", "monarchy"]] = None):
         if not ideology_type:
             ideologies = {
                 "fascism": "+25% soldier training speed, -15% diplomacy success, -10% luck",
-                "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)", 
+                "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)",
                 "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
                 "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
                 "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
                 "destruction": "+35% combat strength, +40% soldier training, -25% resources, -30% happiness, -50% diplomacy",
-                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy", 
+                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy",
                 "socialism": "+15% citizen productivity, +10% happiness from welfare, -10% trade profit",
                 "terrorism": "+40% guerrilla/raid effectiveness, +30% spy success, -50% diplomacy, increases unrest",
                 "capitalism": "+20% trade profit, +15% gold generation, -10% happiness due to inequality",
@@ -874,64 +805,40 @@ Remember to keep responses engaging but focused on the game.
         self.civ_manager.set_ideology(user_id, ideology_type)
         ideology_descriptions = {
             "fascism": "⚔️ **Fascism**: Your military grows strong, but diplomacy suffers.",
-            "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.", 
+            "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.",
             "communism": "🏭 **Communism**: Workers unite for the collective good.",
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
             "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
             "destruction": "💥 **Destruction**: Y o u. m o n s t e r.",
             "pacifist": "🕊️ **Pacifist**: Your civilization thrives in peace and harmony.",
-            "socialism": "🤝 **Socialism**: Welfare and shared prosperity — steady growth, modest trade penalties.", 
+            "socialism": "🤝 **Socialism**: Welfare and shared prosperity — steady growth, modest trade penalties.",
             "terrorism": "🔥 **Terrorism**: Operates from the shadows — excels at raids and covert ops but ruins diplomacy.",
             "capitalism": "💹 **Capitalism**: Commerce and wealth generation reign; inequality can lower happiness.",
             "federalism": "🏛️ **Federalism**: Regions manage themselves well — improved stability and diplomacy.",
             "monarchy": "👑 **Monarchy**: Tradition and loyalty strengthen your rule; reforms are slower."
         }
-        embed = discord.Embed(
-            title=f"🏛️ Ideology Chosen: {ideology_type.capitalize()}",
-            description=ideology_descriptions[ideology_type],
-            color=0x00ff00
-        )
-        embed.add_field(
-            name="🎉 Nation Almost Complete!",
-            value="Your civilization is nearly ready! **Select your region with `.regions`** to complete your nation setup and receive regional bonuses.",
-            inline=False
-        )
+        embed = discord.Embed(title=f"🏛️ Ideology Chosen: {ideology_type.capitalize()}", description=ideology_descriptions[ideology_type], color=0x00ff00)
+        embed.add_field(name="🎉 Nation Almost Complete!", value="Your civilization is nearly ready! **Select your region with `.regions`** to complete your nation setup and receive regional bonuses.", inline=False)
         await ctx.send(embed=embed)
 
     @commands.command(name='status')
     async def civilization_status(self, ctx):
-        """View your civilization status"""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You don't have a civilization yet! Use `.start <name>` to begin.")
             return
-        embed = discord.Embed(
-            title=f"🏛️ {civ['name']}",
-            description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}\n**Region**: {civ.get('region', 'Not selected')}",
-            color=0x0099ff
-        )
+        embed = discord.Embed(title=f"🏛️ {civ['name']}", description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}\n**Region**: {civ.get('region', 'Not selected')}", color=0x0099ff)
         resources = civ['resources']
-        embed.add_field(
-            name="💰 Resources",
-            value=f"🪙 Gold: {format_number(resources['gold'])}\n🌾 Food: {format_number(resources['food'])}\n🪨 Stone: {format_number(resources['stone'])}\n🪵 Wood: {format_number(resources['wood'])}",
-            inline=True
-        )
+        embed.add_field(name="💰 Resources", value=f"🪙 Gold: {format_number(resources['gold'])}\n🌾 Food: {format_number(resources['food'])}\n🪨 Stone: {format_number(resources['stone'])}\n🪵 Wood: {format_number(resources['wood'])}", inline=True)
         population = civ['population']
         military = civ['military']
-        embed.add_field(
-            name="👥 Population & Military",
-            value=f"👤 Citizens: {format_number(population['citizens'])}\n😊 Happiness: {population['happiness']}%\n🍽️ Hunger: {population['hunger']}%\n⚔️ Soldiers: {format_number(military['soldiers'])}\n🕵️ Spies: {format_number(military['spies'])}",
-            inline=True
-        )
+        embed.add_field(name="👥 Population & Military", value=f"👤 Citizens: {format_number(population['citizens'])}\n😊 Happiness: {population['happiness']}%\n🍽️ Hunger: {population['hunger']}%\n⚔️ Soldiers: {format_number(military['soldiers'])}\n🕵️ Spies: {format_number(military['spies'])}", inline=True)
         territory = civ['territory']
         hyper_items = civ.get('hyper_items', [])
-        embed.add_field(
-            name="🗺️ Territory & Items",
-            value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n🎁 HyperItems: {len(hyper_items)}\n" + ("\n".join(f"• {item}" for item in hyper_items[:5]) + ("..." if len(hyper_items) > 5 else "")),
-            inline=True
-        )
+        embed.add_field(name="🗺️ Territory & Items", value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n🎁 HyperItems: {len(hyper_items)}\n" + ("\n".join(f"• {item}" for item in hyper_items[:5]) + ("..." if len(hyper_items) > 5 else "")), inline=True)
         await ctx.send(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(BasicCommands(bot))
