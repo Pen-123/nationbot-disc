@@ -10,7 +10,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 from discord.ext import commands
 
-# Ensure existing `@commands.command` decorators are slash-compatible too.
+# Ensure existing @commands.command decorators are slash-compatible too.
 commands.command = commands.hybrid_command
 
 from web.dashboard import app as flask_app
@@ -24,6 +24,7 @@ from bot.commands.diplomacy import DiplomacyCommands
 from bot.commands.store import StoreCommands
 from bot.commands.hyperitems import HyperItemCommands
 from bot.commands.admin import AdminCommands
+from bot.commands.industrial import IndustrialCog  # <-- ADDED
 from bot.events import EventManager
 
 # Configure logging
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 def get_db_path() -> str:
     return os.getenv("DATABASE_PATH", "warbot.db")
+
 
 class WarBot(commands.Bot):
     def __init__(self):
@@ -103,6 +105,12 @@ class WarBot(commands.Bot):
             await self.add_cog(StoreCommands(self))
             await self.add_cog(HyperItemCommands(self))
             await self.add_cog(AdminCommands(self))
+
+            # ---- ADD INDUSTRIAL COG HERE ----
+            await self.add_cog(IndustrialCog(self))
+            logger.info("IndustrialCog loaded successfully")
+            # --------------------------------
+
             logger.info("All command cogs loaded successfully")
             await self._auto_sync_commands()
         except Exception as e:
@@ -118,22 +126,18 @@ class WarBot(commands.Bot):
     async def on_message(self, message: discord.Message):
         if message.author == self.user:
             return
-        
-        # Process commands
         await self.process_commands(message)
 
     def _get_command_suggestions(self, attempted: str, limit: int = 5):
         """Return closest command names for mistyped prefix commands."""
         if not attempted:
             return []
-
         attempted = attempted.lower().strip()
         all_names = set()
         for cmd in self.commands:
             all_names.add(cmd.name.lower())
             for alias in getattr(cmd, "aliases", []):
                 all_names.add(alias.lower())
-
         return difflib.get_close_matches(attempted, sorted(all_names), n=limit, cutoff=0.45)
 
     async def on_command_error(self, ctx, error):
@@ -208,7 +212,6 @@ class WarBot(commands.Bot):
             logger.exception("Failed to deliver app command error message")
 
 
-
 def start_flask_server():
     """Start the Flask web dashboard in a separate thread"""
     try:
@@ -249,6 +252,7 @@ async def run_discord_bot():
                 await bot.close()
         await asyncio.sleep(reconnect_delay)
 
+
 async def main():
     """Main function to start the bot"""
     load_dotenv()
@@ -263,6 +267,7 @@ async def main():
     # Keep process alive in dashboard-only mode.
     if flask_thread.is_alive():
         await asyncio.to_thread(flask_thread.join)
+
 
 if __name__ == "__main__":
     try:
