@@ -976,4 +976,20 @@ class Database:
             self.local.connection.close()
             del self.local.connection
 
+    # ---------- NEW METHOD: CHECK IF A REGION IS TAKEN ----------
+    def is_region_taken(self, region_name: str, exclude_user_id: str = None) -> bool:
+        """Check if a region (subregion) has already been chosen by another civilization."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            if exclude_user_id:
+                cursor.execute('SELECT COUNT(*) FROM civilizations WHERE region = ? AND user_id != ?', (region_name, exclude_user_id))
+            else:
+                cursor.execute('SELECT COUNT(*) FROM civilizations WHERE region = ?', (region_name,))
+            count = cursor.fetchone()[0]
+            return count > 0
+        except Exception as e:
+            logger.error(f"Error checking region taken: {e}")
+            return False
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
