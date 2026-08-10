@@ -39,6 +39,42 @@ async def run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
+# Helper utilities for hybrid command compatibility
+def is_interaction(ctx_or_interaction) -> bool:
+    """Return True when the invocation object is a discord.Interaction."""
+    return isinstance(ctx_or_interaction, discord.Interaction)
+
+
+def get_invoker_id(ctx_or_interaction) -> str:
+    """Return the user id (string) of the invoking user for Context or Interaction."""
+    if is_interaction(ctx_or_interaction):
+        return str(ctx_or_interaction.user.id)
+    return str(getattr(ctx_or_interaction, "author").id)
+
+
+async def send_response(ctx_or_interaction, content: Any = None, **kwargs):
+    """Send a message that works for both prefix Context and Interaction.
+
+    - For Interaction: uses response.send_message (or followup) and supports ephemeral kwarg.
+    - For Context: falls back to ctx.send.
+    """
+    if is_interaction(ctx_or_interaction):
+        try:
+            # prefer initial response when available
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(content, **kwargs)
+            else:
+                await ctx_or_interaction.followup.send(content, **kwargs)
+        except Exception:
+            # best-effort fallback: try to DM the invoker
+            try:
+                await ctx_or_interaction.user.send(content, **kwargs)
+            except Exception:
+                logger.exception("Failed to deliver interaction response")
+    else:
+        await ctx_or_interaction.send(content, **kwargs)
+
+
 def check_cooldown_decorator(minutes: int = 5):
     """Decorator to add cooldown functionality to both prefix commands (Context)
     and slash/app commands (discord.Interaction).
@@ -50,10 +86,10 @@ def check_cooldown_decorator(minutes: int = 5):
         @functools.wraps(func)
         async def wrapper(self, ctx_or_interaction, *args, **kwargs):
             # Determine whether this was called from an Interaction or a Context
-            is_interaction = isinstance(ctx_or_interaction, discord.Interaction)
+            is_inter = isinstance(ctx_or_interaction, discord.Interaction)
 
             # Extract user id in a safe way
-            if is_interaction:
+            if is_inter:
                 user_id = str(ctx_or_interaction.user.id)
             else:
                 user_id = str(getattr(ctx_or_interaction, "author").id)
@@ -79,7 +115,7 @@ def check_cooldown_decorator(minutes: int = 5):
                         discord.Color.orange()
                     )
                     try:
-                        if is_interaction:
+                        if is_inter:
                             # Try to respond ephemeral if possible
                             try:
                                 if not ctx_or_interaction.response.is_done():
@@ -122,7 +158,7 @@ def check_cooldown_decorator(minutes: int = 5):
                     discord.Color.red()
                 )
                 try:
-                    if is_interaction:
+                    if is_inter:
                         try:
                             if not ctx_or_interaction.response.is_done():
                                 await ctx_or_interaction.response.send_message(embed=embed, ephemeral=True)
