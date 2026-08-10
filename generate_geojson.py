@@ -90,12 +90,11 @@ if not unmapped.empty:
 else:
     logger.info("✅ All countries mapped successfully.")
 
+# Remove countries that don't have a region (so the game's region logic doesn't break)
 world = world.dropna(subset=['subregion'])
-regions = world.dissolve(by='subregion', aggfunc='sum')
-regions = regions.reset_index()
 
-# Save to GeoJSON
-regions.to_file("regions.geojson", driver="GeoJSON")
-print("✅ regions.geojson created!")
+# --- CHANGED: Save individual countries, NOT dissolved regions ---
+world.to_file("regions.geojson", driver="GeoJSON")
+print("✅ regions.geojson created with individual countries!")
 
 shutil.rmtree("temp_geo")
