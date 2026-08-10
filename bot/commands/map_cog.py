@@ -16,7 +16,6 @@ class MapCog(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
-        # Load the GeoJSON once
         self.geojson_path = "regions.geojson"
         if not os.path.exists(self.geojson_path):
             logger.error("regions.geojson not found. Map will not work.")
@@ -24,18 +23,18 @@ class MapCog(commands.Cog):
         else:
             try:
                 self.gdf = gpd.read_file(self.geojson_path)
-                # Ensure it's in EPSG:4326 (lat/lon)
                 if self.gdf.crs is None:
                     self.gdf = self.gdf.set_crs('EPSG:4326', allow_override=True)
                 elif self.gdf.crs != 'EPSG:4326':
                     self.gdf = self.gdf.to_crs('EPSG:4326')
+                # Ensure geometry is valid
+                self.gdf['geometry'] = self.gdf['geometry'].buffer(0)
             except Exception as e:
                 logger.error(f"Failed to load regions.geojson: {e}")
                 self.gdf = None
-        self.cache = {}  # key: hash of ownership data -> BytesIO image
+        self.cache = {}
 
     def get_ownership_data(self):
-        """Fetch all users' owned provinces from the database."""
         if self.gdf is None:
             return {}
         conn = self.db.get_connection()
@@ -46,10 +45,8 @@ class MapCog(commands.Cog):
         for row in rows:
             user_id = row[0]
             provinces = json.loads(row[1]) if row[1] else []
-            # Get the civilization name for the legend
             civ = self.civ_manager.get_civilization(user_id)
             name = civ['name'] if civ else user_id[:6]
-            # Map provinces to subregions (for map display)
             from bot.commands.territory import PROVINCE_TO_SUBREGION
             subregions = set()
             for province in provinces:
@@ -60,9 +57,7 @@ class MapCog(commands.Cog):
         return data
 
     def generate_map(self, ownership_data):
-        """Generate a Matplotlib figure and return as BytesIO."""
         if self.gdf is None:
-            # Return a simple error image
             fig, ax = plt.subplots(figsize=(10, 6))
             ax.text(0.5, 0.5, "Map data not available\nRun generate_geojson.py", 
                     ha='center', va='center', fontsize=14)
@@ -73,36 +68,35 @@ class MapCog(commands.Cog):
             buf.seek(0)
             return buf
 
-        # Assign a colour per user
-        colors = plt.cm.tab20.colors  # 20 distinct colours
+        colors = plt.cm.tab20.colors
         user_colors = {}
         for i, (user_id, info) in enumerate(ownership_data.items()):
             user_colors[user_id] = colors[i % len(colors)]
 
         fig, ax = plt.subplots(figsize=(15, 10))
 
-        # Build a list of facecolors for each row in the GeoDataFrame
-        facecolors = []
+        # Plot each region individually to avoid shape issues
         for idx, row in self.gdf.iterrows():
             region_name = row['subregion']
-            # Find which user owns this region
             owner = None
             for user_id, info in ownership_data.items():
                 if region_name in info["territories"]:
                     owner = user_id
                     break
             color = user_colors.get(owner, (0.8, 0.8, 0.8, 1))  # grey if unowned
-            facecolors.append(color)
 
-        # Plot the entire GeoDataFrame at once
-        self.gdf.plot(ax=ax, facecolor=facecolors, edgecolor='white', linewidth=0.5)
+            # Plot this single feature
+            gpd.GeoDataFrame([row], crs=self.gdf.crs).plot(
+                ax=ax, facecolor=color, edgecolor='white', linewidth=0.5
+            )
 
-        # Add labels for each region (centroid)
+        # Add labels
         for idx, row in self.gdf.iterrows():
             region_name = row['subregion']
             if row.geometry and not row.geometry.is_empty:
                 centroid = row.geometry.centroid
-                ax.annotate(region_name, xy=(centroid.x, centroid.y), fontsize=6, ha='center', va='center',
+                ax.annotate(region_name, xy=(centroid.x, centroid.y), fontsize=6,
+                            ha='center', va='center',
                             bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
 
         # Legend
@@ -116,7 +110,6 @@ class MapCog(commands.Cog):
         ax.set_title("World Map of Civilizations", fontsize=14)
         ax.set_axis_off()
 
-        # Save to BytesIO
         buf = BytesIO()
         plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
         plt.close(fig)
@@ -125,13 +118,11 @@ class MapCog(commands.Cog):
 
     @commands.command(name='map')
     async def show_map(self, ctx):
-        """Show the world map with your territories coloured."""
         if self.gdf is None:
             await ctx.send("❌ Map data is not available. Please run `generate_geojson.py` to create the map file.")
             return
 
         ownership = self.get_ownership_data()
-        # Create a cache key
         key = hashlib.md5(json.dumps(ownership).encode()).hexdigest()
         if key in self.cache:
             buf = self.cache[key]
@@ -139,7 +130,6 @@ class MapCog(commands.Cog):
         else:
             buf = self.generate_map(ownership)
             self.cache[key] = buf
-            # Limit cache size (optional)
             if len(self.cache) > 10:
                 self.cache.pop(next(iter(self.cache)))
 
