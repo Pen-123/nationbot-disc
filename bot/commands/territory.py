@@ -56,6 +56,9 @@ for subregion, province_list in PROVINCES.items():
 # All provinces flat list
 ALL_PROVINCES = list(PROVINCE_TO_SUBREGION.keys())
 
+# All subregions flat list (FOR EXPORT)
+ALL_SUBREGIONS = list(PROVINCES.keys())
+
 # Sub‑region neighbour data (same as before)
 SUBREGION_DATA = {
     "Eastern Europe": {"neighbours": ["Western Europe", "Northern Europe", "Central Asia"]},
@@ -123,7 +126,7 @@ SUBREGION_TO_CONTINENT = {
     "West Antarctica": "Antarctica",
 }
 
-# Region to subregion mapping (for starting territory in basic.py)
+# Region to subregion mapping (for starting territory in basic.py) – kept for compatibility
 REGION_TO_SUBREGION = {
     "asia": "East Asia",
     "europe": "Western Europe",
@@ -190,7 +193,6 @@ class TerritoryCog(commands.Cog):
             return False
         owned.append(province)
         self._set_owned_provinces(user_id, owned)
-        # Log history
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
