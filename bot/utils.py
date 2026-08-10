@@ -1,7 +1,8 @@
 import functools
 import logging
+import asyncio
 from datetime import datetime, timedelta
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 import discord
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ def format_number(number: int) -> str:
     else:
         return f"{number/1000000000:.1f}B"
 
+
 def create_embed(title: str, description: str, color: discord.Color = None) -> discord.Embed:
     """Create a standardized embed for bot responses"""
     if color is None:
@@ -31,16 +33,39 @@ def create_embed(title: str, description: str, color: discord.Color = None) -> d
     
     return embed
 
+
+async def run_in_executor(func: Callable, *args, **kwargs) -> Any:
+    """Run a blocking function in a threadpool and return the result."""
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
 def check_cooldown_decorator(minutes: int = 5):
-    """Decorator to add cooldown functionality to commands"""
+    """Decorator to add cooldown functionality to both prefix commands (Context)
+    and slash/app commands (discord.Interaction).
+
+    The decorator will call blocking DB functions in a thread to avoid blocking the event loop,
+    and will send ephemeral replies for interactions where appropriate.
+    """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
-        async def wrapper(self, ctx, *args, **kwargs):
-            user_id = str(ctx.author.id)
+        async def wrapper(self, ctx_or_interaction, *args, **kwargs):
+            # Determine whether this was called from an Interaction or a Context
+            is_interaction = isinstance(ctx_or_interaction, discord.Interaction)
+
+            # Extract user id in a safe way
+            if is_interaction:
+                user_id = str(ctx_or_interaction.user.id)
+            else:
+                user_id = str(getattr(ctx_or_interaction, "author").id)
+
             command_name = func.__name__
-            
-            # Check if user is on cooldown
-            last_used = self.db.get_command_cooldown(user_id, command_name)
+
+            # Use executor for DB calls to avoid blocking
+            try:
+                last_used = await run_in_executor(self.db.get_command_cooldown, user_id, command_name)
+            except Exception as e:
+                logger.exception("Failed to fetch cooldown from DB")
+                last_used = None
 
             if last_used:
                 cooldown_expiry = last_used + timedelta(minutes=minutes)
@@ -48,37 +73,75 @@ def check_cooldown_decorator(minutes: int = 5):
                 if time_left.total_seconds() > 0:
                     # Format time remaining
                     time_str = format_time_duration(time_left)
-                    
                     embed = create_embed(
                         "⏰ Command on Cooldown",
                         f"You must wait **{time_str}** before using this command again.",
                         discord.Color.orange()
                     )
-                    await ctx.send(embed=embed)
+                    try:
+                        if is_interaction:
+                            # Try to respond ephemeral if possible
+                            try:
+                                if not ctx_or_interaction.response.is_done():
+                                    await ctx_or_interaction.response.send_message(embed=embed, ephemeral=True)
+                                else:
+                                    await ctx_or_interaction.followup.send(embed=embed, ephemeral=True)
+                            except Exception:
+                                # Fallback to sending via channel if interaction cannot be replied to
+                                try:
+                                    channel = await run_in_executor(self.bot.fetch_channel, ctx_or_interaction.channel_id)
+                                    if channel:
+                                        await channel.send(embed=embed)
+                                except Exception:
+                                    logger.exception("Failed to deliver cooldown message for interaction")
+                        else:
+                            await ctx_or_interaction.send(embed=embed)
+                    except Exception:
+                        logger.exception("Failed to send cooldown message")
                     return
-                    
+
             # Execute the command
             try:
-                result = await func(self, ctx, *args, **kwargs)
-                
-                # Set cooldown only if command succeeded (didn't return early with error)
-                self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
-                
+                result = await func(self, ctx_or_interaction, *args, **kwargs)
+
+                # Set cooldown only if command succeeded
+                try:
+                    await run_in_executor(self.db.set_command_cooldown, user_id, command_name, datetime.utcnow())
+                except Exception:
+                    logger.exception("Failed to set cooldown in DB")
+
                 return result
-                
+
             except Exception as e:
-                logger.error(f"Error in command {command_name}: {e}")
-                
-                # Don't set cooldown if command failed
+                logger.exception(f"Error in command {command_name}: {e}")
+
+                # Don't set cooldown if command failed; send a friendly message
                 embed = create_embed(
                     "❌ Command Error",
-                    "An error occurred while executing this command. Please try again.",
+                    "An error occurred while executing this command. Please try again or contact an admin.",
                     discord.Color.red()
                 )
-                await ctx.send(embed=embed)
-                
+                try:
+                    if is_interaction:
+                        try:
+                            if not ctx_or_interaction.response.is_done():
+                                await ctx_or_interaction.response.send_message(embed=embed, ephemeral=True)
+                            else:
+                                await ctx_or_interaction.followup.send(embed=embed, ephemeral=True)
+                        except Exception:
+                            # last resort: DM the user (best-effort)
+                            try:
+                                await ctx_or_interaction.user.send(embed=embed)
+                            except Exception:
+                                logger.exception("Failed to deliver error message to interaction user")
+                    else:
+                        await ctx_or_interaction.send(embed=embed)
+                except Exception:
+                    logger.exception("Failed to send command error message")
+
         return wrapper
     return decorator
+
 
 def format_time_duration(delta: timedelta) -> str:
     """Format a timedelta into a readable string"""
@@ -98,6 +161,7 @@ def format_time_duration(delta: timedelta) -> str:
         if minutes > 0:
             return f"{hours} hours, {minutes} minutes"
         return f"{hours} hours"
+
 
 def get_ascii_art(art_type: str) -> str:
     """Get ASCII art for various occasions"""
@@ -125,7 +189,7 @@ def get_ascii_art(art_type: str) -> str:
         """,
         
         "victory": """
-    🏆 ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 🏆
+    🏆 ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 🏆
        
          ⭐ GLORIOUS VICTORY! ⭐
            The battle is won!
@@ -186,6 +250,7 @@ def get_ascii_art(art_type: str) -> str:
     
     return art_collection.get(art_type, "")
 
+
 def calculate_percentage_change(old_value: int, new_value: int) -> str:
     """Calculate and format percentage change between two values"""
     if old_value == 0:
@@ -197,6 +262,7 @@ def calculate_percentage_change(old_value: int, new_value: int) -> str:
         return f"+{change:.1f}%"
     else:
         return f"{change:.1f}%"
+
 
 def get_civilization_rank(power_score: int) -> tuple[str, str]:
     """Get civilization rank and title based on power score"""
@@ -219,6 +285,7 @@ def get_civilization_rank(power_score: int) -> tuple[str, str]:
     else:
         return "Galactic Empire", "🌌"
 
+
 def get_happiness_status(happiness: int) -> tuple[str, str]:
     """Get happiness status description and emoji"""
     if happiness >= 90:
@@ -240,6 +307,7 @@ def get_happiness_status(happiness: int) -> tuple[str, str]:
     else:
         return "Revolt Risk", "😡"
 
+
 def get_hunger_status(hunger: int) -> tuple[str, str]:
     """Get hunger status description and emoji"""
     if hunger <= 10:
@@ -252,6 +320,7 @@ def get_hunger_status(hunger: int) -> tuple[str, str]:
         return "Very Hungry", "😰"
     else:
         return "Starving", "💀"
+
 
 def get_military_strength_description(soldiers: int, spies: int, tech_level: int) -> str:
     """Get description of military strength"""
@@ -272,7 +341,8 @@ def get_military_strength_description(soldiers: int, spies: int, tech_level: int
     else:
         return "Legendary"
 
-def validate_user_mention(mention: str) -> str:
+
+def validate_user_mention(mention: str) -> Optional[str]:
     """Extract user ID from mention string"""
     if mention.startswith('<@') and mention.endswith('>'):
         user_id = mention[2:-1]
@@ -280,6 +350,7 @@ def validate_user_mention(mention: str) -> str:
             user_id = user_id[1:]
         return user_id
     return None
+
 
 def get_resource_efficiency_bonus(ideology: str, action_type: str) -> float:
     """Get resource efficiency bonus based on ideology and action type"""
@@ -309,23 +380,35 @@ def get_resource_efficiency_bonus(ideology: str, action_type: str) -> float:
     
     return ideology_bonuses.get(ideology, {}).get(action_type, 1.0)
 
+
 def format_civilization_summary(civ_data: dict) -> str:
     """Format a civilization summary for display"""
-    resources = civ_data['resources']
-    population = civ_data['population']
-    military = civ_data['military']
-    
+    resources = civ_data.get('resources', {})
+    population = civ_data.get('population', {})
+    military = civ_data.get('military', {})
+
+    gold = resources.get('gold', 0)
+    citizens = population.get('citizens', 0)
+    happiness = population.get('happiness', 50)
+    soldiers = military.get('soldiers', 0)
+    tech_level = military.get('tech_level', 0)
+
     power_score = (
         sum(resources.values()) + 
-        population['citizens'] * 2 + 
-        military['soldiers'] * 5 + 
-        military['tech_level'] * 100
+        citizens * 2 + 
+        soldiers * 5 + 
+        tech_level * 100
     )
     
     rank, rank_emoji = get_civilization_rank(power_score)
-    happiness_status, happiness_emoji = get_happiness_status(population['happiness'])
-    
-    return f"{rank_emoji} **{civ_data['name']}** ({rank})\n💰 {format_number(resources['gold'])} Gold | 👤 {format_number(population['citizens'])} Citizens | {happiness_emoji} {happiness_status}"
+    happiness_status, happiness_emoji = get_happiness_status(happiness)
+
+    return (
+        f"{rank_emoji} **{civ_data.get('name','Unknown')}** ({rank})\n"
+        f"💰 {format_number(gold)} Gold | 👤 {format_number(citizens)} Citizens | {happiness_emoji} {happiness_status}\n"
+        f"⚔️ Soldiers: {format_number(soldiers)} | 🔬 Tech Level: {tech_level} | Power: {format_number(power_score)}"
+    )
+
 
 def create_progress_bar(current: int, maximum: int, length: int = 10) -> str:
     """Create a visual progress bar"""
@@ -337,6 +420,7 @@ def create_progress_bar(current: int, maximum: int, length: int = 10) -> str:
     
     bar = "▓" * filled + "░" * (length - filled)
     return f"[{bar}] {current}/{maximum}"
+
 
 def get_random_flavor_text(category: str) -> str:
     """Get random flavor text for various situations"""
@@ -373,6 +457,7 @@ def get_random_flavor_text(category: str) -> str:
     
     import random
     return random.choice(flavor_texts.get(category, ["Fortune favors the prepared!"]))
+
 
 class CooldownManager:
     """Advanced cooldown management for complex scenarios"""
