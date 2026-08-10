@@ -30,11 +30,25 @@ class Database:
         if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
             self.init_dropbox()
 
-        # Download latest database from Dropbox if available
-        if not os.path.exists(self.db_path):
+        # -------- FIX: ALWAYS DOWNLOAD FROM DROPBOX IF AVAILABLE --------
+        if self.dropbox_client:
+            # Back up any existing local file before downloading (optional but safe)
+            if os.path.exists(self.db_path):
+                backup_path = f"{self.db_path}.backup"
+                try:
+                    os.rename(self.db_path, backup_path)
+                    logger.info(f"Local database backed up to {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Could not backup local database: {e}")
+            # Download the latest from Dropbox (will create new file if not found)
             self.download_database()
+        else:
+            # No Dropbox; ensure local file exists or initialize
+            if not os.path.exists(self.db_path):
+                # Create empty file; init_database will create tables
+                open(self.db_path, 'w').close()
 
-        # Always initialize local DB schema
+        # Always initialize database schema
         self.init_database()
         self.setup_cleanup_scheduler()
 
@@ -59,18 +73,25 @@ class Database:
             self._upload_enabled = False
 
     def download_database(self):
+        """Download the latest database from Dropbox, overwriting local."""
         if not self.dropbox_client:
-            logger.info("No Dropbox client; skipping download.")
+            logger.warning("No Dropbox client; skipping download.")
             return
         try:
             dropbox_path = f"/{os.path.basename(self.db_path)}"
+            # Check if file exists in Dropbox
+            try:
+                self.dropbox_client.files_get_metadata(dropbox_path)
+            except ApiError as e:
+                if e.error.is_path() and e.error.get_path().is_not_found():
+                    logger.info("No database found in Dropbox; starting fresh.")
+                    return
+                raise
+            # Download to local file
             self.dropbox_client.files_download_to_file(self.db_path, dropbox_path)
-            logger.info(f"Downloaded database from Dropbox: {dropbox_path}")
+            logger.info(f"Downloaded latest database from Dropbox: {dropbox_path}")
         except ApiError as e:
-            if e.error.is_path() and e.error.get_path().is_not_found():
-                logger.info("No database found in Dropbox; starting fresh.")
-            else:
-                logger.error(f"Error downloading database: {e}")
+            logger.error(f"Error downloading database: {e}")
         except Exception as e:
             logger.error(f"Unexpected error downloading database: {e}")
 
