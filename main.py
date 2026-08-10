@@ -10,8 +10,8 @@ from discord import app_commands
 from dotenv import load_dotenv
 from discord.ext import commands
 
-# Ensure existing @commands.command decorators are slash-compatible too.
-commands.command = commands.hybrid_command
+# Ensure existing @commands.command decorators are slash-compatible too. (REMOVED)
+
 
 from web.dashboard import app as flask_app
 from bot.database import Database
