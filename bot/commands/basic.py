@@ -740,24 +740,28 @@ Remember to keep responses engaging but focused on the game.
             embed.add_field(name="🎉 Nation Complete!", value="Your civilization is now fully established! Use `.status` to view your complete stats and `.warhelp` to see all available commands.", inline=False)
             await ctx.send(embed=embed)
 
-            # ---- 🏛️ GIVE STARTING TERRITORY ----
-            territory_cog = self.bot.get_cog("TerritoryCog")
-            if territory_cog:
-                region_map = {
-                    "asia": "East Asia",
-                    "europe": "Western Europe",
-                    "africa": "West Africa",
-                    "north_america": "Central North America",
-                    "south_america": "Brazil",
-                    "middle_east": "Middle East",
-                    "oceania": "Australia",
-                    "antarctica": "Antarctic Peninsula",
-                }
-                starter = region_map.get(region_name)
-                if starter:
-                    territory_cog._add_territory(user_id, starter)
-                    await ctx.send(f"🏛️ Your starting territory is **{starter}**! Use `.map` to see it on the world map!")
-            # ------------------------------------
+       # ---- 🏛️ GIVE STARTING PROVINCE ----
+territory_cog = self.bot.get_cog("TerritoryCog")
+if territory_cog:
+    from bot.commands.territory import PROVINCES
+    region_map = {
+        "asia": "East Asia",
+        "europe": "Western Europe",
+        "africa": "West Africa",
+        "north_america": "Central North America",
+        "south_america": "Brazil",
+        "middle_east": "Middle East",
+        "oceania": "Australia",
+        "antarctica": "Antarctic Peninsula",
+    }
+    starter_subregion = region_map.get(region_name)
+    if starter_subregion:
+        province_list = PROVINCES.get(starter_subregion, [])
+        if province_list:
+            first_province = province_list[0]
+            territory_cog._add_province(user_id, first_province)
+            await ctx.send(f"🏛️ Your starting province is **{first_province}**! Use `.map` to see it on the world map!")
+# ------------------------------------
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
