@@ -4,6 +4,7 @@ import os
 import aiohttp
 import asyncio
 import logging
+import json
 from typing import Literal, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
@@ -33,6 +34,22 @@ class BasicCommands(commands.Cog):
         self.conversations = defaultdict(deque)
         self.last_interaction = {}
         self.saved_chats = set()
+
+    def _get_all_owned_provinces(self) -> list:
+        """Return a list of all provinces owned by any player."""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT owned_provinces FROM territories')
+        rows = cursor.fetchall()
+        all_provinces = set()
+        for row in rows:
+            if row[0]:
+                try:
+                    provinces = json.loads(row[0])
+                    all_provinces.update(provinces)
+                except:
+                    pass
+        return list(all_provinces)
 
     def _get_conversation_history(self, user_id):
         history = []
@@ -449,7 +466,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- PREFIX-ONLY WARHELP (shows categories, then commands per category) ----------
+    # ---------- PREFIX-ONLY WARHELP ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
         """
@@ -628,7 +645,6 @@ Remember to keep responses engaging but focused on the game.
             }
         }
 
-        # If no category is given, show only category names and descriptions
         if category is None:
             embed = discord.Embed(
                 title="🤖 NationBot – Command Categories",
@@ -645,7 +661,6 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send(embed=embed)
             return
 
-        # Category given – show commands for that category
         category_key = category.lower()
         if category_key not in categories:
             await ctx.send(f"❌ Unknown category `{category}`. Use `.warhelp` to see all categories.")
@@ -668,7 +683,7 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- REGIONS COMMAND (NEW: subregion selection with uniqueness) ----------
+    # ---------- REGIONS COMMAND (UPDATED) ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
@@ -683,11 +698,11 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
 
-        # If no region name given, show all available subregions grouped by continent
+        # If no region name given, show all available subregions
         if not region_name:
             embed = discord.Embed(
                 title="🌍 Available Subregions",
-                description="Choose a subregion to start your civilization. Each subregion provides unique bonuses based on its continent and is **unique** – once taken, no one else can claim it.\n\nTo select one, use `.regions <subregion_name>` (e.g., `.regions western europe`).",
+                description="Choose a subregion to start your civilization. Each subregion provides unique bonuses based on its continent and provinces are **unique** – once a province is taken, no one else can claim it.\n\nTo select one, use `.regions <subregion_name>` (e.g., `.regions western europe`).",
                 color=0x00ff00
             )
             # Group by continent
@@ -696,27 +711,24 @@ Remember to keep responses engaging but focused on the game.
                 continent = SUBREGION_TO_CONTINENT.get(sub, "Unknown")
                 grouped.setdefault(continent, []).append(sub)
             for continent, sublist in grouped.items():
-                # Show which ones are taken
-                taken_list = []
-                available_list = []
+                # Show which subregions have at least one available province
+                available_subregions = []
                 for sub in sorted(sublist):
-                    if self.db.is_region_taken(sub, exclude_user_id=user_id):
-                        taken_list.append(f"~~{sub}~~ (taken)")
-                    else:
-                        available_list.append(sub)
-                value = ""
-                if available_list:
-                    value += "**Available:** " + ", ".join(available_list) + "\n"
-                if taken_list:
-                    value += "**Taken:** " + ", ".join(taken_list)
-                if not value:
-                    value = "All taken!"
-                embed.add_field(name=continent, value=value, inline=False)
+                    # Check if there is any province left in this subregion
+                    provinces = PROVINCES.get(sub, [])
+                    all_owned = self._get_all_owned_provinces()
+                    available = [p for p in provinces if p not in all_owned]
+                    if available:
+                        available_subregions.append(sub)
+                if available_subregions:
+                    embed.add_field(name=continent, value=", ".join(available_subregions), inline=False)
+                else:
+                    embed.add_field(name=continent, value="*All subregions in this continent are fully claimed.*", inline=False)
             embed.set_footer(text=f"Your current region: {civ.get('region', 'None')}")
             await ctx.send(embed=embed)
             return
 
-        # Normalize input: lowercase, strip spaces, and allow case-insensitive matching
+        # Normalize input
         input_name = region_name.strip().lower()
         matched_subregion = None
         for sub in ALL_SUBREGIONS:
@@ -724,7 +736,6 @@ Remember to keep responses engaging but focused on the game.
                 matched_subregion = sub
                 break
         if not matched_subregion:
-            # Try partial match (e.g., "western" might match "Western Europe")
             for sub in ALL_SUBREGIONS:
                 if input_name in sub.lower():
                     matched_subregion = sub
@@ -733,19 +744,30 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send(f"❌ Unknown subregion: `{region_name}`. Use `.regions` to see available subregions.")
             return
 
-        # Check if already selected a region
+        # Check if user already selected a region
         if civ.get('region'):
             await ctx.send(f"❌ You've already selected the **{civ['region']}** region. Region selection cannot be changed.")
             return
 
-        # Check if this subregion is already taken by another player
-        if self.db.is_region_taken(matched_subregion, exclude_user_id=user_id):
-            await ctx.send(f"❌ The subregion **{matched_subregion}** has already been claimed by another civilization. Choose another.")
+        # Get all provinces in this subregion
+        provinces_in_subregion = PROVINCES.get(matched_subregion, [])
+        if not provinces_in_subregion:
+            await ctx.send(f"❌ Subregion **{matched_subregion}** has no provinces.")
             return
+
+        # Get all owned provinces globally
+        all_owned = self._get_all_owned_provinces()
+        available_provinces = [p for p in provinces_in_subregion if p not in all_owned]
+
+        if not available_provinces:
+            await ctx.send(f"❌ All provinces in **{matched_subregion}** have already been claimed. Choose another subregion.")
+            return
+
+        # Pick a random available province
+        chosen_province = random.choice(available_provinces)
 
         # Determine continent for bonuses
         continent = SUBREGION_TO_CONTINENT.get(matched_subregion, "Unknown")
-        # Define bonuses per continent
         continent_bonuses = {
             "Europe": {"gold": 300, "tech_level": 1},
             "Asia": {"food": 200, "population": 50},
@@ -773,12 +795,25 @@ Remember to keep responses engaging but focused on the game.
                 current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
                 self.db.update_civilization(user_id, {'bonuses': current_bonuses})
 
+        # Get area of chosen province
+        territory_cog = self.bot.get_cog("TerritoryCog")
+        if territory_cog:
+            area = territory_cog.province_areas.get(chosen_province, 1000)
+        else:
+            area = 1000  # fallback
+
+        # Update civilization: set region, resources, population, and territory land_size to the area
         update_data = {
-            'region': matched_subregion,  # store the subregion name
+            'region': matched_subregion,
             'resources': updated_resources,
-            'population': updated_population
+            'population': updated_population,
+            'territory': {'land_size': area}  # overwrite land_size with actual area
         }
         if self.db.update_civilization(user_id, update_data):
+            # Also add the province to territories table
+            if territory_cog:
+                territory_cog._add_province(user_id, chosen_province)
+
             bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in bonuses.items()])
             embed = discord.Embed(
                 title=f"🌍 Region Selected: {matched_subregion}",
@@ -786,21 +821,13 @@ Remember to keep responses engaging but focused on the game.
                 color=0x00ff00
             )
             embed.add_field(name="Bonuses Applied", value=bonus_text, inline=False)
+            embed.add_field(name="🏛️ Starting Province", value=f"You have been granted **{chosen_province}** (area: {area:,} km²).", inline=False)
             embed.add_field(name="🎉 Nation Complete!", value="Use `.status` to view your complete stats and `.warhelp` to see all available commands.", inline=False)
             await ctx.send(embed=embed)
-
-            # Give starting province from the chosen subregion
-            territory_cog = self.bot.get_cog("TerritoryCog")
-            if territory_cog:
-                province_list = PROVINCES.get(matched_subregion, [])
-                if province_list:
-                    first_province = province_list[0]
-                    territory_cog._add_province(user_id, first_province)
-                    await ctx.send(f"🏛️ Your starting province is **{first_province}**! Use `.map` to see it on the world map!")
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
-    # ---------- OTHER COMMANDS (unchanged) ----------
+    # ---------- OTHER COMMANDS ----------
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, civ_name: str = None):
