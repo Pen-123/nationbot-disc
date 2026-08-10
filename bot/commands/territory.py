@@ -42,6 +42,35 @@ PROVINCES = {
     "Pacific Islands": ["Fiji", "Solomon Islands", "Vanuatu", "Papua New Guinea", "Samoa", "Tonga", "Micronesia", "Marshall Islands", "Palau", "Nauru", "Kiribati", "Tuvalu"]
 }
 
+# ---------- NEW MAPPING: Subregion -> Continent ----------
+SUBREGION_TO_CONTINENT = {
+    "Western Europe": "Europe",
+    "Eastern Europe": "Europe",
+    "Southern Europe": "Europe",
+    "Northern Europe": "Europe",
+    "Central Asia": "Asia",
+    "East Asia": "Asia",
+    "South Asia": "Asia",
+    "Southeast Asia": "Asia",
+    "Middle East": "Asia",          # Often considered part of Asia
+    "North Africa": "Africa",
+    "West Africa": "Africa",
+    "Central Africa": "Africa",
+    "East Africa": "Africa",
+    "Southern Africa": "Africa",
+    "Western North America": "North America",
+    "Central North America": "North America",
+    "Central America": "North America",
+    "Caribbean": "North America",
+    "Northern South America": "South America",
+    "Western South America": "South America",
+    "Eastern South America": "South America",
+    "Southern Cone": "South America",
+    "Australia": "Oceania",
+    "New Zealand": "Oceania",
+    "Pacific Islands": "Oceania",
+}
+
 # Build reverse mapping: province -> subregion
 PROVINCE_TO_SUBREGION = {}
 for subregion, province_list in PROVINCES.items():
