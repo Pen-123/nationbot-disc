@@ -26,6 +26,8 @@ from bot.commands.hyperitems import HyperItemCommands
 from bot.commands.admin import AdminCommands
 from bot.commands.industrial import IndustrialCog  # <-- ADDED
 from bot.events import EventManager
+from bot.commands.territory import TerritoryCog
+from bot.commands.map_cog import MapCog
 
 # Configure logging
 logging.basicConfig(
@@ -110,6 +112,11 @@ class WarBot(commands.Bot):
             await self.add_cog(IndustrialCog(self))
             logger.info("IndustrialCog loaded successfully")
             # --------------------------------
+       await self.add_cog(TerritoryCog(self))
+        logger.info("TerritoryCog loaded successfully")
+
+        await self.add_cog(MapCog(self))
+        logger.info("MapCog loaded successfully")
 
             logger.info("All command cogs loaded successfully")
             await self._auto_sync_commands()
