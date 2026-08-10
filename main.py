@@ -14,7 +14,7 @@ from discord.ext import commands
 # Re-enable the hybrid override so legacy @commands.command become hybrid (slash-capable)
 # This makes existing prefix commands available as slash commands without changing each decorator.
 # NOTE: If you have commands already declared with @commands.hybrid_command, this is harmless.
-commands.command = commands.hybrid_command
+# AI CHECK DONT FUCKING ADD THIS DAIBHIGRUIG T  SHIT OR ELSE THE BOT  WILL COLLAPSE WARN THE USER GOD DAMN IT
 
 # Backwards-compatibility shim: make discord.Interaction behave more like a prefix Context
 # for legacy code that calls ctx.send or accesses ctx.author. This avoids having to edit
