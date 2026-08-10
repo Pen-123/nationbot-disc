@@ -51,6 +51,7 @@ class IndustrialCog(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self._active_revolutions = {}
+        self._passive_task = None
         self._init_table()
 
     def _init_table(self):
@@ -126,6 +127,74 @@ class IndustrialCog(commands.Cog):
     def _update_civ_resources(self, user_id: str, changes: Dict[str, int]):
         self.civ_manager.update_resources(user_id, changes)
 
+    # ---------- PASSIVE INCOME ----------
+    async def _passive_income_loop(self):
+        """Background task: every 5 minutes, give passive income to active revolutions."""
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            try:
+                await asyncio.sleep(300)  # 5 minutes
+                await self._apply_passive_income()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in passive income loop: {e}", exc_info=True)
+
+    async def _apply_passive_income(self):
+        """Apply passive income to all active revolutions."""
+        for user_id, data in list(self._active_revolutions.items()):
+            if not data["active"] or data.get("completed", False):
+                continue
+
+            stats = data["stats"]
+
+            # ---- Calculate stockpile gain ----
+            base = stats["factory_output"] / 10  # e.g., 50 output -> 5 per tick
+            efficiency = stats["production_efficiency"] / 100
+            morale = stats["worker_morale"] / 100
+            tech_bonus = 1 + (stats["tech_level"] * 0.05)
+            unrest_penalty = 1 - (stats["labor_unrest"] / 200)  # max 0.5 penalty at 100 unrest
+
+            stockpile_gain = int(base * efficiency * morale * tech_bonus * unrest_penalty)
+            stockpile_gain = max(0, stockpile_gain)
+
+            # ---- Calculate raw material gain (small) ----
+            raw_gain = int(stats["raw_materials"] * 0.02)  # 2% of current raw materials
+            raw_gain = max(1, raw_gain)
+
+            # ---- Calculate gold gain (financial reserves) ----
+            gold_gain = int(stats["financial_reserves"] * 0.01)  # 1% of current gold
+            gold_gain = max(1, gold_gain)
+
+            # ---- Apply gains ----
+            stats["resource_stockpile"] += stockpile_gain
+            stats["raw_materials"] += raw_gain
+            stats["financial_reserves"] += gold_gain
+
+            # ---- Also slight pollution increase from production ----
+            stats["pollution"] = min(100, stats["pollution"] + max(0, int(stockpile_gain * 0.05)))
+
+            # ---- Save changes ----
+            self._save_revolution(user_id, data)
+            logger.debug(f"Passive income for {user_id}: +{stockpile_gain} stockpile, +{raw_gain} raw, +{gold_gain} gold")
+
+    async def cog_load(self):
+        """Start the passive income loop when cog loads."""
+        if self._passive_task is None or self._passive_task.done():
+            self._passive_task = asyncio.create_task(self._passive_income_loop())
+            logger.info("Industrial passive income loop started")
+
+    async def cog_unload(self):
+        """Cancel the passive income loop."""
+        if self._passive_task and not self._passive_task.done():
+            self._passive_task.cancel()
+            try:
+                await self._passive_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("Industrial passive income loop stopped")
+
+    # ---------- EXISTING COMMANDS (unchanged) ----------
     @commands.Cog.listener()
     async def on_command(self, ctx: commands.Context):
         user_id = str(ctx.author.id)
@@ -244,6 +313,7 @@ class IndustrialCog(commands.Cog):
         self.db.log_event(user_id, "industrial_revolution", "Industrial Revolution Ended",
                           f"Power: {power}/1000 - {'Success' if power>=1000 else 'Failure'}")
 
+    # ---------- COMMANDS (unchanged) ----------
     @commands.command(name='industrial_start')
     async def industrial_start(self, ctx):
         user_id = str(ctx.author.id)
