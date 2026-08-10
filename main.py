@@ -10,8 +10,8 @@ from discord import app_commands
 from dotenv import load_dotenv
 from discord.ext import commands
 
-# Ensure existing @commands.command decorators are slash-compatible too. (REMOVED)
-
+# Ensure existing @commands.command decorators are slash-compatible too.
+commands.command = commands.hybrid_command
 
 from web.dashboard import app as flask_app
 from bot.database import Database
@@ -24,10 +24,10 @@ from bot.commands.diplomacy import DiplomacyCommands
 from bot.commands.store import StoreCommands
 from bot.commands.hyperitems import HyperItemCommands
 from bot.commands.admin import AdminCommands
-from bot.commands.industrial import IndustrialCog  # <-- ADDED
+from bot.commands.industrial import IndustrialCog
+from bot.commands.territory import TerritoryCog        # <-- ADDED
+from bot.commands.map_cog import MapCog                # <-- ADDED
 from bot.events import EventManager
-from bot.commands.territory import TerritoryCog
-from bot.commands.map_cog import MapCog
 
 # Configure logging
 logging.basicConfig(
@@ -112,11 +112,14 @@ class WarBot(commands.Bot):
             await self.add_cog(IndustrialCog(self))
             logger.info("IndustrialCog loaded successfully")
             # --------------------------------
-       await self.add_cog(TerritoryCog(self))
-        logger.info("TerritoryCog loaded successfully")
 
-        await self.add_cog(MapCog(self))
-        logger.info("MapCog loaded successfully")
+            # ---- TERRITORY & MAP COGS ----
+            await self.add_cog(TerritoryCog(self))
+            logger.info("TerritoryCog loaded successfully")
+
+            await self.add_cog(MapCog(self))
+            logger.info("MapCog loaded successfully")
+            # --------------------------------
 
             logger.info("All command cogs loaded successfully")
             await self._auto_sync_commands()
