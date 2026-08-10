@@ -25,14 +25,12 @@ with zipfile.ZipFile(io.BytesIO(r.content)) as z:
 
 world = gpd.read_file("temp_geo/ne_110m_admin_0_countries.shp")
 
-# ---------- UPDATED MAPPING (more complete) ----------
-# These are the country names as they appear in Natural Earth (use .NAME)
-# I've added aliases for common missing ones.
+# ---------- FULL MAPPING WITH ALL FIXES ----------
 region_country_mapping = {
     "Western Europe": ["France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Switzerland", "Austria", "Monaco", "Andorra"],
     "Eastern Europe": ["Poland", "Czech Republic", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
     "Southern Europe": ["Portugal", "Spain", "Italy", "Greece", "Croatia", "Slovenia", "Bosnia and Herzegovina", "Serbia", "Montenegro", "Albania", "North Macedonia", "Kosovo", "Malta", "Cyprus"],
-    "Northern Europe": ["Norway", "Sweden", "Finland", "Denmark", "Iceland", "Estonia", "Latvia", "Lithuania"],
+    "Northern Europe": ["Norway", "Sweden", "Finland", "Denmark", "Iceland", "Estonia", "Latvia", "Lithuania", "Greenland"],
     "Central Asia": ["Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Afghanistan"],
     "East Asia": ["China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan"],
     "South Asia": ["India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan", "Myanmar"],
@@ -40,12 +38,21 @@ region_country_mapping = {
     "Middle East": ["Turkey", "Iran", "Iraq", "Syria", "Lebanon", "Israel", "Palestine", "Jordan", "Saudi Arabia", "Yemen", "Oman", "United Arab Emirates", "UAE", "Qatar", "Kuwait", "Bahrain", "Georgia", "Armenia", "Azerbaijan"],
     "North Africa": ["Morocco", "Algeria", "Tunisia", "Libya", "Egypt", "Western Sahara"],
     "West Africa": ["Mauritania", "Senegal", "Gambia", "Mali", "Burkina Faso", "Benin", "Togo", "Ghana", "Ivory Coast", "Côte d'Ivoire", "Liberia", "Sierra Leone", "Guinea", "Guinea-Bissau", "Cape Verde", "Nigeria", "Niger"],
-    "Central Africa": ["Chad", "Cameroon", "Central African Republic", "C.A.R.", "DR Congo", "Democratic Republic of the Congo", "Republic of Congo", "Gabon", "Equatorial Guinea", "Sao Tome and Principe"],
-    "East Africa": ["Sudan", "South Sudan", "Eritrea", "Ethiopia", "Djibouti", "Somalia", "Kenya", "Uganda", "Rwanda", "Burundi", "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles"],
+    "Central Africa": [
+        "Chad", "Cameroon", "Central African Republic", "C.A.R.", 
+        "DR Congo", "Democratic Republic of the Congo", "Congo (Kinshasa)", 
+        "Republic of Congo", "Congo (Brazzaville)", "Congo", 
+        "Gabon", "Equatorial Guinea", "Sao Tome and Principe"
+    ],
+    "East Africa": [
+        "Sudan", "South Sudan", "Eritrea", "Ethiopia", "Djibouti", 
+        "Somalia", "Kenya", "Uganda", "Rwanda", "Burundi", 
+        "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles"
+    ],
     "Southern Africa": ["Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana", "Namibia", "South Africa", "Eswatini", "Lesotho"],
-    "Western North America": ["Canada", "United States", "United States of America", "USA", "Alaska"],  # Alaska is not a country, but we include it as a synonym for USA
+    "Western North America": ["Canada", "United States", "United States of America", "USA", "Alaska"],
     "Central North America": ["Mexico"],
-    "Eastern North America": ["United States", "United States of America", "USA"],  # duplicate for consistency
+    "Eastern North America": ["United States", "United States of America", "USA"],
     "Mexico": ["Mexico"],
     "Central America": ["Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama"],
     "Northern South America": ["Venezuela", "Colombia", "Guyana", "Suriname", "French Guiana"],
@@ -56,12 +63,11 @@ region_country_mapping = {
     "Australia": ["Australia"],
     "New Zealand": ["New Zealand"],
     "Pacific Islands": ["Fiji", "Solomon Islands", "Vanuatu", "Papua New Guinea", "Samoa", "Tonga", "Micronesia", "Marshall Islands", "Palau", "Nauru", "Kiribati", "Tuvalu"],
-    "Antarctic Peninsula": [],  # Antarctica is not in Natural Earth 110m; we skip
+    "Antarctic Peninsula": [],
     "East Antarctica": [],
     "West Antarctica": [],
 }
 
-# Function to map a country name (case-insensitive) to a region
 def map_country_to_region(country):
     if not country:
         return None
@@ -72,7 +78,6 @@ def map_country_to_region(country):
                 return region
     return None
 
-# Apply mapping
 world['subregion'] = world['NAME'].apply(map_country_to_region)
 
 # Log unmapped countries
@@ -85,16 +90,11 @@ if not unmapped.empty:
 else:
     logger.info("✅ All countries mapped successfully.")
 
-# Drop unmapped countries
 world = world.dropna(subset=['subregion'])
-
-# Dissolve by subregion
 regions = world.dissolve(by='subregion', aggfunc='sum')
 regions = regions.reset_index()
 
-# Save to GeoJSON
 regions.to_file("regions.geojson", driver="GeoJSON")
 print("✅ regions.geojson created!")
 
-# Cleanup
 shutil.rmtree("temp_geo")
