@@ -2,7 +2,7 @@ import random
 import json
 import logging
 import math
-from typing import List, Optional
+from typing import List, Optional, Set
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -12,61 +12,118 @@ from bot.utils import create_embed, format_number
 logger = logging.getLogger(__name__)
 
 # ---------------------------
-# WORLD DATA – Continents & Sub‑regions
+# PROVINCE DATA – each sub‑region is split into provinces
 # ---------------------------
-WORLD = {
-    "Europe": {
-        "Western Europe": {"cost": {"gold": 500, "food": 200, "wood": 100, "stone": 50}, "neighbours": ["Southern Europe", "Northern Europe", "Eastern Europe"]},
-        "Eastern Europe": {"cost": {"gold": 400, "food": 300, "wood": 150, "stone": 100}, "neighbours": ["Western Europe", "Northern Europe", "Central Asia"]},
-        "Southern Europe": {"cost": {"gold": 600, "food": 150, "wood": 80, "stone": 120}, "neighbours": ["Western Europe", "Middle East", "North Africa"]},
-        "Northern Europe": {"cost": {"gold": 450, "food": 250, "wood": 200, "stone": 80}, "neighbours": ["Western Europe", "Eastern Europe"]},
-    },
-    "Asia": {
-        "Central Asia": {"cost": {"gold": 300, "food": 400, "wood": 100, "stone": 200}, "neighbours": ["Eastern Europe", "South Asia", "East Asia", "Middle East"]},
-        "East Asia": {"cost": {"gold": 700, "food": 600, "wood": 300, "stone": 150}, "neighbours": ["Central Asia", "South Asia", "Southeast Asia", "Oceania"]},
-        "South Asia": {"cost": {"gold": 500, "food": 500, "wood": 200, "stone": 100}, "neighbours": ["Central Asia", "East Asia", "Southeast Asia", "Middle East"]},
-        "Southeast Asia": {"cost": {"gold": 400, "food": 700, "wood": 250, "stone": 80}, "neighbours": ["East Asia", "South Asia", "Oceania"]},
-        "Middle East": {"cost": {"gold": 800, "food": 200, "wood": 50, "stone": 300}, "neighbours": ["Southern Europe", "Central Asia", "South Asia", "North Africa"]},
-    },
-    "Africa": {
-        "North Africa": {"cost": {"gold": 600, "food": 300, "wood": 80, "stone": 200}, "neighbours": ["Southern Europe", "Middle East", "West Africa", "Central Africa"]},
-        "West Africa": {"cost": {"gold": 400, "food": 500, "wood": 150, "stone": 100}, "neighbours": ["North Africa", "Central Africa", "Southern Africa"]},
-        "Central Africa": {"cost": {"gold": 350, "food": 600, "wood": 200, "stone": 150}, "neighbours": ["North Africa", "West Africa", "East Africa", "Southern Africa"]},
-        "East Africa": {"cost": {"gold": 450, "food": 550, "wood": 100, "stone": 120}, "neighbours": ["North Africa", "Central Africa", "Southern Africa"]},
-        "Southern Africa": {"cost": {"gold": 500, "food": 400, "wood": 150, "stone": 250}, "neighbours": ["West Africa", "Central Africa", "East Africa"]},
-    },
-    "North America": {
-        "Western North America": {"cost": {"gold": 700, "food": 300, "wood": 200, "stone": 150}, "neighbours": ["Central North America", "Mexico"]},
-        "Central North America": {"cost": {"gold": 600, "food": 400, "wood": 150, "stone": 100}, "neighbours": ["Western North America", "Eastern North America", "Mexico"]},
-        "Eastern North America": {"cost": {"gold": 650, "food": 350, "wood": 180, "stone": 80}, "neighbours": ["Central North America"]},
-        "Mexico": {"cost": {"gold": 500, "food": 300, "wood": 100, "stone": 80}, "neighbours": ["Western North America", "Central North America", "Central America"]},
-    },
-    "South America": {
-        "Central America": {"cost": {"gold": 400, "food": 300, "wood": 150, "stone": 50}, "neighbours": ["Mexico", "Northern South America"]},
-        "Northern South America": {"cost": {"gold": 500, "food": 400, "wood": 200, "stone": 100}, "neighbours": ["Central America", "Western South America", "Eastern South America", "Brazil"]},
-        "Western South America": {"cost": {"gold": 550, "food": 350, "wood": 150, "stone": 200}, "neighbours": ["Northern South America", "Brazil", "Southern Cone"]},
-        "Eastern South America": {"cost": {"gold": 450, "food": 500, "wood": 180, "stone": 120}, "neighbours": ["Northern South America", "Brazil", "Southern Cone"]},
-        "Brazil": {"cost": {"gold": 600, "food": 600, "wood": 250, "stone": 150}, "neighbours": ["Northern South America", "Western South America", "Eastern South America", "Southern Cone"]},
-        "Southern Cone": {"cost": {"gold": 500, "food": 400, "wood": 120, "stone": 200}, "neighbours": ["Western South America", "Eastern South America", "Brazil"]},
-    },
-    "Oceania": {
-        "Australia": {"cost": {"gold": 800, "food": 400, "wood": 150, "stone": 300}, "neighbours": ["Southeast Asia", "New Zealand", "Pacific Islands"]},
-        "New Zealand": {"cost": {"gold": 600, "food": 300, "wood": 200, "stone": 100}, "neighbours": ["Australia", "Pacific Islands"]},
-        "Pacific Islands": {"cost": {"gold": 400, "food": 200, "wood": 100, "stone": 50}, "neighbours": ["Australia", "New Zealand", "Southeast Asia"]},
-    },
-    "Antarctica": {
-        "Antarctic Peninsula": {"cost": {"gold": 1000, "food": 50, "wood": 50, "stone": 500}, "neighbours": ["Southern Cone"]},
-        "East Antarctica": {"cost": {"gold": 1200, "food": 50, "wood": 50, "stone": 600}, "neighbours": ["Antarctic Peninsula"]},
-        "West Antarctica": {"cost": {"gold": 1100, "food": 50, "wood": 50, "stone": 550}, "neighbours": ["Antarctic Peninsula"]},
-    },
+PROVINCES = {
+    "Eastern Europe": ["Poland", "Ukraine", "Belarus", "Moldova", "Romania", "Bulgaria"],
+    "Western Europe": ["France", "Germany", "UK", "Ireland", "Benelux", "Switzerland", "Austria"],
+    "Southern Europe": ["Portugal", "Spain", "Italy", "Greece", "Croatia", "Serbia"],
+    "Northern Europe": ["Norway", "Sweden", "Finland", "Denmark", "Iceland", "Baltic States"],
+    "Central Asia": ["Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan"],
+    "East Asia": ["China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan"],
+    "South Asia": ["India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan"],
+    "Southeast Asia": ["Thailand", "Vietnam", "Indonesia", "Philippines", "Malaysia", "Singapore"],
+    "Middle East": ["Turkey", "Iran", "Iraq", "Syria", "Israel", "Saudi Arabia", "UAE", "Qatar"],
+    "North Africa": ["Morocco", "Algeria", "Tunisia", "Libya", "Egypt"],
+    "West Africa": ["Nigeria", "Ghana", "Ivory Coast", "Senegal", "Mali", "Burkina Faso"],
+    "Central Africa": ["DR Congo", "Cameroon", "Angola", "Zambia", "Zimbabwe"],
+    "East Africa": ["Kenya", "Tanzania", "Ethiopia", "Somalia", "Uganda", "Mozambique"],
+    "Southern Africa": ["South Africa", "Namibia", "Botswana", "Lesotho", "Eswatini"],
+    "Western North America": ["Canada", "Alaska", "California", "Pacific Northwest"],
+    "Central North America": ["Midwest", "Texas", "Great Plains", "Rocky Mountains"],
+    "Eastern North America": ["New York", "Florida", "New England", "Appalachia"],
+    "Mexico": ["Mexico", "Yucatan"],
+    "Central America": ["Guatemala", "Honduras", "Nicaragua", "Costa Rica", "Panama"],
+    "Northern South America": ["Venezuela", "Colombia", "Guyana", "Suriname"],
+    "Western South America": ["Peru", "Ecuador", "Bolivia", "Chile"],
+    "Eastern South America": ["Brazil East"],
+    "Brazil": ["Brazil", "Amazonas", "São Paulo"],
+    "Southern Cone": ["Argentina", "Uruguay", "Paraguay"],
+    "Australia": ["Australia East", "Australia West", "Australia South"],
+    "New Zealand": ["New Zealand North", "New Zealand South"],
+    "Pacific Islands": ["Papua New Guinea", "Fiji", "Samoa", "Tonga"],
+    "Antarctic Peninsula": ["Antarctic Coast"],
+    "East Antarctica": ["East Antarctic Plateau"],
+    "West Antarctica": ["West Antarctic Ice Sheet"],
 }
 
-# Flatten for easy lookup
-SUBREGION_TO_CONTINENT = {sub: cont for cont, subs in WORLD.items() for sub in subs}
-SUBREGION_DATA = {sub: data for cont, subs in WORLD.items() for sub, data in subs.items()}
-ALL_SUBREGIONS = list(SUBREGION_DATA.keys())
+# Build reverse mapping: province -> subregion
+PROVINCE_TO_SUBREGION = {}
+for subregion, province_list in PROVINCES.items():
+    for province in province_list:
+        PROVINCE_TO_SUBREGION[province] = subregion
 
-# Map region choices (from basic.py) to sub‑regions (used for giving starting territory)
+# All provinces flat list
+ALL_PROVINCES = list(PROVINCE_TO_SUBREGION.keys())
+
+# Sub‑region neighbour data (same as before)
+SUBREGION_DATA = {
+    "Eastern Europe": {"neighbours": ["Western Europe", "Northern Europe", "Central Asia"]},
+    "Western Europe": {"neighbours": ["Southern Europe", "Northern Europe", "Eastern Europe"]},
+    "Southern Europe": {"neighbours": ["Western Europe", "Middle East", "North Africa"]},
+    "Northern Europe": {"neighbours": ["Western Europe", "Eastern Europe"]},
+    "Central Asia": {"neighbours": ["Eastern Europe", "South Asia", "East Asia", "Middle East"]},
+    "East Asia": {"neighbours": ["Central Asia", "South Asia", "Southeast Asia", "Oceania"]},
+    "South Asia": {"neighbours": ["Central Asia", "East Asia", "Southeast Asia", "Middle East"]},
+    "Southeast Asia": {"neighbours": ["East Asia", "South Asia", "Oceania"]},
+    "Middle East": {"neighbours": ["Southern Europe", "Central Asia", "South Asia", "North Africa"]},
+    "North Africa": {"neighbours": ["Southern Europe", "Middle East", "West Africa", "Central Africa"]},
+    "West Africa": {"neighbours": ["North Africa", "Central Africa", "Southern Africa"]},
+    "Central Africa": {"neighbours": ["North Africa", "West Africa", "East Africa", "Southern Africa"]},
+    "East Africa": {"neighbours": ["North Africa", "Central Africa", "Southern Africa"]},
+    "Southern Africa": {"neighbours": ["West Africa", "Central Africa", "East Africa"]},
+    "Western North America": {"neighbours": ["Central North America", "Mexico"]},
+    "Central North America": {"neighbours": ["Western North America", "Eastern North America", "Mexico"]},
+    "Eastern North America": {"neighbours": ["Central North America"]},
+    "Mexico": {"neighbours": ["Western North America", "Central North America", "Central America"]},
+    "Central America": {"neighbours": ["Mexico", "Northern South America"]},
+    "Northern South America": {"neighbours": ["Central America", "Western South America", "Eastern South America", "Brazil"]},
+    "Western South America": {"neighbours": ["Northern South America", "Brazil", "Southern Cone"]},
+    "Eastern South America": {"neighbours": ["Northern South America", "Brazil", "Southern Cone"]},
+    "Brazil": {"neighbours": ["Northern South America", "Western South America", "Eastern South America", "Southern Cone"]},
+    "Southern Cone": {"neighbours": ["Western South America", "Eastern South America", "Brazil"]},
+    "Australia": {"neighbours": ["Southeast Asia", "New Zealand", "Pacific Islands"]},
+    "New Zealand": {"neighbours": ["Australia", "Pacific Islands"]},
+    "Pacific Islands": {"neighbours": ["Australia", "New Zealand", "Southeast Asia"]},
+    "Antarctic Peninsula": {"neighbours": ["Southern Cone"]},
+    "East Antarctica": {"neighbours": ["Antarctic Peninsula"]},
+    "West Antarctica": {"neighbours": ["Antarctic Peninsula"]},
+}
+
+SUBREGION_TO_CONTINENT = {
+    "Eastern Europe": "Europe",
+    "Western Europe": "Europe",
+    "Southern Europe": "Europe",
+    "Northern Europe": "Europe",
+    "Central Asia": "Asia",
+    "East Asia": "Asia",
+    "South Asia": "Asia",
+    "Southeast Asia": "Asia",
+    "Middle East": "Asia",
+    "North Africa": "Africa",
+    "West Africa": "Africa",
+    "Central Africa": "Africa",
+    "East Africa": "Africa",
+    "Southern Africa": "Africa",
+    "Western North America": "North America",
+    "Central North America": "North America",
+    "Eastern North America": "North America",
+    "Mexico": "North America",
+    "Central America": "South America",
+    "Northern South America": "South America",
+    "Western South America": "South America",
+    "Eastern South America": "South America",
+    "Brazil": "South America",
+    "Southern Cone": "South America",
+    "Australia": "Oceania",
+    "New Zealand": "Oceania",
+    "Pacific Islands": "Oceania",
+    "Antarctic Peninsula": "Antarctica",
+    "East Antarctica": "Antarctica",
+    "West Antarctica": "Antarctica",
+}
+
+# Region to subregion mapping (for starting territory in basic.py)
 REGION_TO_SUBREGION = {
     "asia": "East Asia",
     "europe": "Western Europe",
@@ -80,7 +137,7 @@ REGION_TO_SUBREGION = {
 
 
 class TerritoryCog(commands.Cog):
-    """Territorial expansion and management"""
+    """Territorial expansion and management (province-based)"""
 
     def __init__(self, bot):
         self.bot = bot
@@ -94,7 +151,7 @@ class TerritoryCog(commands.Cog):
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS territories (
                 user_id TEXT PRIMARY KEY,
-                owned_territories TEXT NOT NULL DEFAULT '[]'
+                owned_provinces TEXT NOT NULL DEFAULT '[]'
             )
         ''')
         cursor.execute('''
@@ -108,193 +165,233 @@ class TerritoryCog(commands.Cog):
         conn.commit()
 
     # ---------- Internal database helpers ----------
-    def _get_owned_territories(self, user_id: str) -> List[str]:
+    def _get_owned_provinces(self, user_id: str) -> List[str]:
+        """Get the list of owned province names for a user."""
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT owned_territories FROM territories WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT owned_provinces FROM territories WHERE user_id = ?', (user_id,))
         row = cursor.fetchone()
         if row:
             return json.loads(row[0])
         return []
 
-    def _set_owned_territories(self, user_id: str, territories: List[str]):
+    def _set_owned_provinces(self, user_id: str, provinces: List[str]):
+        """Overwrite the owned provinces list for a user."""
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('INSERT OR REPLACE INTO territories (user_id, owned_territories) VALUES (?, ?)',
-                       (user_id, json.dumps(territories)))
+        cursor.execute('INSERT OR REPLACE INTO territories (user_id, owned_provinces) VALUES (?, ?)',
+                       (user_id, json.dumps(provinces)))
         conn.commit()
 
-    def _add_territory(self, user_id: str, territory: str) -> bool:
-        """Add a territory to a user's owned list. Returns True if added, False if already owned."""
-        owned = self._get_owned_territories(user_id)
-        if territory in owned:
+    def _add_province(self, user_id: str, province: str) -> bool:
+        """Add a province to a user's owned list. Returns True if added, False if already owned."""
+        owned = self._get_owned_provinces(user_id)
+        if province in owned:
             return False
-        owned.append(territory)
-        self._set_owned_territories(user_id, owned)
+        owned.append(province)
+        self._set_owned_provinces(user_id, owned)
         # Log history
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, territory))
+        cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
         conn.commit()
         return True
 
-    def _is_adjacent(self, user_id: str, territory: str) -> bool:
-        owned = self._get_owned_territories(user_id)
-        if not owned:
-            return False
-        neighbours = SUBREGION_DATA[territory]["neighbours"]
-        for t in owned:
-            if t in neighbours:
-                return True
-        return False
+    def _get_owned_subregions(self, user_id: str) -> Set[str]:
+        """Return sub‑regions where the user owns all provinces."""
+        owned = self._get_owned_provinces(user_id)
+        fully_owned = set()
+        for subregion, province_list in PROVINCES.items():
+            if all(p in owned for p in province_list):
+                fully_owned.add(subregion)
+        return fully_owned
 
     def _get_expansion_options(self, user_id: str) -> List[str]:
-        """Return a list of sub‑regions that are adjacent and not yet owned."""
-        owned = self._get_owned_territories(user_id)
+        """
+        Return a list of provinces that are available to expand into.
+        This includes:
+          - Any province in a subregion that borders a fully owned subregion.
+          - Any province in the same subregion as an already owned province (within the same region).
+        """
+        owned = set(self._get_owned_provinces(user_id))
+        fully_owned_subregions = self._get_owned_subregions(user_id)
+        
         possible = set()
-        for t in owned:
-            neighbours = SUBREGION_DATA.get(t, {}).get("neighbours", [])
-            possible.update(neighbours)
-        possible = possible - set(owned)
-        return sorted(possible)
+        # 1. Provinces from neighbouring subregions
+        for subregion in fully_owned_subregions:
+            neighbours = SUBREGION_DATA.get(subregion, {}).get("neighbours", [])
+            for neighbour_subregion in neighbours:
+                for province in PROVINCES.get(neighbour_subregion, []):
+                    if province not in owned:
+                        possible.add(province)
+        
+        # 2. Provinces in the same subregion as any owned province (allows intra-region expansion)
+        for province in owned:
+            subregion = PROVINCE_TO_SUBREGION.get(province)
+            if subregion:
+                for p in PROVINCES.get(subregion, []):
+                    if p not in owned:
+                        possible.add(p)
+        
+        return sorted(list(possible))
 
     def _calculate_soldier_cost(self, civ) -> int:
         """Calculate 10% of current soldiers (rounded up, minimum 1)."""
         soldiers = civ['military']['soldiers']
-        cost = math.ceil(soldiers * 0.1)  # 10% rounded up
-        return max(1, cost)  # at least 1 soldier
+        cost = math.ceil(soldiers * 0.1)
+        return max(1, cost)
 
     # ---------- Commands ----------
     @commands.command(name='territories')
     async def list_territories(self, ctx):
-        """List all sub‑regions you own, grouped by continent."""
+        """List all provinces you own, grouped by sub‑region."""
         user_id = str(ctx.author.id)
-        owned = self._get_owned_territories(user_id)
+        owned = self._get_owned_provinces(user_id)
         if not owned:
-            await ctx.send("🌍 You don't own any territories yet! Use `.expand` to claim your first, or select a region with `.regions` to start.")
+            await ctx.send("🌍 You don't own any provinces yet! Use `.expand` to claim your first.")
             return
-        embed = discord.Embed(title="🗺️ Your Territories", color=discord.Color.green())
-        by_continent = {}
-        for terr in owned:
-            cont = SUBREGION_TO_CONTINENT.get(terr, "Unknown")
-            by_continent.setdefault(cont, []).append(terr)
-        for cont, territories in by_continent.items():
-            embed.add_field(name=cont, value=", ".join(territories), inline=False)
-        embed.set_footer(text=f"Total: {len(owned)} sub‑regions")
+        
+        embed = discord.Embed(title="🗺️ Your Provinces", color=discord.Color.green())
+        by_subregion = {}
+        for province in owned:
+            subregion = PROVINCE_TO_SUBREGION.get(province, "Unknown")
+            by_subregion.setdefault(subregion, []).append(province)
+        
+        total_provinces = len(owned)
+        fully_owned = self._get_owned_subregions(user_id)
+        
+        for subregion, provinces in by_subregion.items():
+            total_in_subregion = len(PROVINCES.get(subregion, []))
+            status = "✅ Complete" if subregion in fully_owned else f"{len(provinces)}/{total_in_subregion}"
+            embed.add_field(name=f"{subregion} ({status})", value=", ".join(provinces), inline=False)
+        
+        embed.set_footer(text=f"Total: {total_provinces} provinces")
         await ctx.send(embed=embed)
 
     @commands.command(name='expand')
-    @app_commands.describe(territory="Name of the sub‑region to expand into")
-    async def expand(self, ctx, *, territory: str = None):
-        """Claim a new sub‑region adjacent to your territory (costs resources + 10% of your soldiers)."""
+    @app_commands.describe(province="Name of the province to claim")
+    async def expand(self, ctx, *, province: str = None):
+        """Claim a new province (costs resources + 10% of your soldiers)."""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You need a civilization first! Use `.start`.")
             return
 
-        owned = self._get_owned_territories(user_id)
+        owned = self._get_owned_provinces(user_id)
 
-        # If no territory specified, show available expansions
-        if territory is None:
+        # If no province specified, show available options
+        if province is None:
             if not owned:
-                await ctx.send("❌ You have no territory. Select a region with `.regions` to get your starting territory, or use `.expand <territory>` to claim any territory as your first (costs resources + soldiers).")
+                await ctx.send("❌ You have no province. Select a region with `.regions` to get your starting province, or use `.expand <province>` to claim any province as your first.")
                 return
             possible = self._get_expansion_options(user_id)
             if not possible:
-                await ctx.send("❌ No adjacent territories available to expand into.")
+                await ctx.send("❌ No available provinces to expand into.")
                 return
-            embed = discord.Embed(title="🌍 Possible Expansions", description="Use `.expand <territory>` to claim one.", color=discord.Color.blue())
-            by_cont = {}
+            embed = discord.Embed(title="🌍 Available Provinces", description="Use `.expand <province>` to claim one.", color=discord.Color.blue())
+            by_subregion = {}
             for p in possible:
-                cont = SUBREGION_TO_CONTINENT.get(p, "Unknown")
-                by_cont.setdefault(cont, []).append(p)
-            for cont, names in by_cont.items():
-                embed.add_field(name=cont, value=", ".join(names), inline=False)
-            embed.set_footer(text=f"Each expansion costs resources + 10% of your current soldiers.")
+                subregion = PROVINCE_TO_SUBREGION.get(p, "Unknown")
+                by_subregion.setdefault(subregion, []).append(p)
+            for subregion, names in by_subregion.items():
+                embed.add_field(name=subregion, value=", ".join(names), inline=False)
+            embed.set_footer(text="Each expansion costs resources + 10% of your soldiers.")
             await ctx.send(embed=embed)
             return
 
-        # Find exact match (case‑insensitive)
+        # Find exact match (case-insensitive)
         match = None
-        for name in ALL_SUBREGIONS:
-            if name.lower() == territory.lower():
-                match = name
+        for p in ALL_PROVINCES:
+            if p.lower() == province.lower():
+                match = p
                 break
         if not match:
-            # try partial match
-            for name in ALL_SUBREGIONS:
-                if territory.lower() in name.lower():
-                    match = name
+            # Partial match
+            for p in ALL_PROVINCES:
+                if province.lower() in p.lower():
+                    match = p
                     break
         if not match:
-            await ctx.send(f"❌ Unknown sub‑region: `{territory}`. Use `.expand` to see available territories.")
+            await ctx.send(f"❌ Unknown province: `{province}`. Use `.expand` to see available provinces.")
             return
-        territory = match
+        province = match
 
-        # If this is the first territory, allow claiming any (no adjacency check, but still costs resources + soldiers)
+        # Determine cost based on subregion (scale by number of provinces)
+        subregion = PROVINCE_TO_SUBREGION[province]
+        province_count = len(PROVINCES[subregion])
+        base_cost = {
+            "gold": 300 + (100 // max(1, province_count)),
+            "food": 100 + (50 // max(1, province_count)),
+            "wood": 50 + (25 // max(1, province_count)),
+            "stone": 50 + (25 // max(1, province_count)),
+        }
+        cost = base_cost
+
+        # First province: allow claiming any (no adjacency check)
         if not owned:
-            cost = SUBREGION_DATA[territory]["cost"]
             if not self.civ_manager.can_afford(user_id, cost):
                 cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
-                await ctx.send(f"❌ Cannot afford to claim **{territory}**. Requires: {cost_str}.")
+                await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.")
                 return
 
-            # Soldier cost for first territory
             soldier_cost = self._calculate_soldier_cost(civ)
             if civ['military']['soldiers'] < soldier_cost:
-                await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army) to claim this territory! You have {civ['military']['soldiers']}.")
+                await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army) to claim this province! You have {civ['military']['soldiers']}.")
                 return
 
-            # Spend resources and soldiers
             self.civ_manager.spend_resources(user_id, cost)
             self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
-            if self._add_territory(user_id, territory):
-                land_gain = random.randint(100, 300)
+            if self._add_province(user_id, province):
+                land_gain = random.randint(50, 150)
                 self.civ_manager.update_territory(user_id, {"land_size": land_gain})
-                embed = discord.Embed(title="🏹 First Territory Claimed!", description=f"**{civ['name']}** has claimed **{territory}**!", color=discord.Color.green())
-                embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers (10% of army)", inline=True)
+                embed = discord.Embed(title="🏹 First Province Claimed!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
+                embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers", inline=True)
                 embed.add_field(name="Land Gained", value=f"+{land_gain} km²", inline=True)
                 await ctx.send(embed=embed)
-                self.db.log_event(user_id, "expansion", "First Territory", f"Claimed {territory} as first territory")
+                self.db.log_event(user_id, "expansion", "First Province", f"Claimed {province}")
             else:
-                await ctx.send("❌ Failed to claim territory.")
+                await ctx.send("❌ Failed to claim province.")
             return
 
-        # Normal expansion: check adjacency
-        if not self._is_adjacent(user_id, territory):
-            await ctx.send(f"❌ **{territory}** is not adjacent to any of your territories. You can only expand into neighbouring regions.")
+        # Normal expansion: check if province is already owned
+        if province in owned:
+            await ctx.send(f"❌ You already own **{province}**.")
+            return
+
+        # Check adjacency (is it in the list of possible expansions?)
+        possible = self._get_expansion_options(user_id)
+        if province not in possible:
+            await ctx.send(f"❌ **{province}** is not adjacent to your territories. You can only expand into neighbouring provinces.")
             return
 
         # Check resource cost
-        cost = SUBREGION_DATA[territory]["cost"]
         if not self.civ_manager.can_afford(user_id, cost):
             cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
-            await ctx.send(f"❌ Cannot afford to claim **{territory}**. Requires: {cost_str}.")
+            await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.")
             return
 
-        # Soldier cost (10% of current army)
+        # Soldier cost
         soldier_cost = self._calculate_soldier_cost(civ)
         if civ['military']['soldiers'] < soldier_cost:
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army) to expand! You have {civ['military']['soldiers']}.")
             return
 
-        # Spend resources and soldiers
+        # Spend resources and soldiers, then claim
         self.civ_manager.spend_resources(user_id, cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
-        # Claim territory
-        if self._add_territory(user_id, territory):
-            land_gain = random.randint(50, 200)
+        if self._add_province(user_id, province):
+            land_gain = random.randint(30, 100)
             self.civ_manager.update_territory(user_id, {"land_size": land_gain})
-            embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has expanded into **{territory}**!", color=discord.Color.green())
-            embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers (10% of army)", inline=True)
+            embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
+            embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers", inline=True)
             embed.add_field(name="Land Gained", value=f"+{land_gain} km²", inline=True)
             await ctx.send(embed=embed)
-            self.db.log_event(user_id, "expansion", "Territory Claimed", f"Claimed {territory}")
+            self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province}")
         else:
-            await ctx.send("❌ Failed to claim territory. Please try again.")
+            await ctx.send("❌ Failed to claim province.")
 
 
 async def setup(bot):
