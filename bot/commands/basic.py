@@ -683,7 +683,7 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- REGIONS COMMAND (UPDATED) ----------
+    # ---------- REGIONS COMMAND ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
@@ -714,7 +714,6 @@ Remember to keep responses engaging but focused on the game.
                 # Show which subregions have at least one available province
                 available_subregions = []
                 for sub in sorted(sublist):
-                    # Check if there is any province left in this subregion
                     provinces = PROVINCES.get(sub, [])
                     all_owned = self._get_all_owned_provinces()
                     available = [p for p in provinces if p not in all_owned]
@@ -755,7 +754,6 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send(f"❌ Subregion **{matched_subregion}** has no provinces.")
             return
 
-        # Get all owned provinces globally
         all_owned = self._get_all_owned_provinces()
         available_provinces = [p for p in provinces_in_subregion if p not in all_owned]
 
@@ -827,10 +825,11 @@ Remember to keep responses engaging but focused on the game.
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
-    # ---------- OTHER COMMANDS ----------
+    # ---------- START COMMAND (FIXED: accepts multi-word names) ----------
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
-    async def start_civilization(self, ctx, civ_name: str = None):
+    async def start_civilization(self, ctx, *, civ_name: str = None):
+        """Start a new civilization with a cinematic intro."""
         if not civ_name:
             await ctx.send("❌ Please provide a civilization name: `.start <civilization_name>`")
             return
@@ -866,6 +865,7 @@ Remember to keep responses engaging but focused on the game.
         embed.add_field(name="📋 Next Steps", value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`", inline=False)
         await ctx.send(embed=embed)
 
+    # ---------- OTHER COMMANDS ----------
     @commands.command(name='ideology')
     @app_commands.describe(ideology_type="Government ideology")
     @app_commands.choices(ideology_type=[
