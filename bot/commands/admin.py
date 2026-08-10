@@ -32,8 +32,25 @@ class AdminCommands(commands.Cog):
         """
         scope = (scope or "global").lower().strip()
 
+        # Helper to send messages for both Context and Interaction
+        async def _send(message: str, **kwargs):
+            if isinstance(ctx, discord.Interaction):
+                try:
+                    if not ctx.response.is_done():
+                        await ctx.response.send_message(message, **kwargs)
+                    else:
+                        await ctx.followup.send(message, **kwargs)
+                except Exception:
+                    # Best-effort fallback
+                    try:
+                        await ctx.followup.send(message, **kwargs)
+                    except Exception:
+                        pass
+            else:
+                await ctx.send(message, **kwargs)
+
         if scope not in {"global", "current_guild", "copy_global_to_guild"}:
-            await ctx.send(
+            await _send(
                 "❌ Invalid scope. Use one of: `global`, `current_guild`, `copy_global_to_guild`."
             )
             return
@@ -42,25 +59,32 @@ class AdminCommands(commands.Cog):
         if scope != "global":
             if guild_id is not None:
                 target_guild = discord.Object(id=guild_id)
-            elif ctx.guild is not None:
+            elif getattr(ctx, "guild", None) is not None:
                 target_guild = ctx.guild
             else:
-                await ctx.send("❌ No guild context found. Provide a `guild_id`.")
+                await _send("❌ No guild context found. Provide a `guild_id`.")
                 return
 
-        if scope == "global":
-            synced = await self.bot.tree.sync()
-            await ctx.send(f"✅ Synced {len(synced)} global slash commands.")
-            return
+        try:
+            if scope == "global":
+                synced = await self.bot.tree.sync()
+                await _send(f"✅ Synced {len(synced)} global slash commands.")
+                return
 
-        if scope == "copy_global_to_guild":
-            self.bot.tree.copy_global_to(guild=target_guild)
+            if scope == "copy_global_to_guild":
+                self.bot.tree.copy_global_to(guild=target_guild)
 
-        synced = await self.bot.tree.sync(guild=target_guild)
-        await ctx.send(
-            f"✅ Synced {len(synced)} slash commands to guild `{target_guild.id}` "
-            f"(scope: `{scope}`)."
-        )
+            synced = await self.bot.tree.sync(guild=target_guild)
+            await _send(
+                f"✅ Synced {len(synced)} slash commands to guild `{target_guild.id}` "
+                f"(scope: `{scope}`)."
+            )
+        except Exception as e:
+            # Surface the actual error to the invoker where possible
+            try:
+                await _send(f"❌ Sync failed: {e}")
+            except Exception:
+                pass
 
 
 async def setup(bot):
