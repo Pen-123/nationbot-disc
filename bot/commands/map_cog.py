@@ -27,7 +27,6 @@ class MapCog(commands.Cog):
                     self.gdf = self.gdf.set_crs('EPSG:4326', allow_override=True)
                 elif self.gdf.crs != 'EPSG:4326':
                     self.gdf = self.gdf.to_crs('EPSG:4326')
-                # Ensure geometry is valid
                 self.gdf['geometry'] = self.gdf['geometry'].buffer(0)
             except Exception as e:
                 logger.error(f"Failed to load regions.geojson: {e}")
@@ -35,6 +34,7 @@ class MapCog(commands.Cog):
         self.cache = {}
 
     def get_ownership_data(self):
+        """Fetch all users' owned provinces and map them to countries."""
         if self.gdf is None:
             return {}
         conn = self.db.get_connection()
@@ -47,13 +47,8 @@ class MapCog(commands.Cog):
             provinces = json.loads(row[1]) if row[1] else []
             civ = self.civ_manager.get_civilization(user_id)
             name = civ['name'] if civ else user_id[:6]
-            from bot.commands.territory import PROVINCE_TO_SUBREGION
-            subregions = set()
-            for province in provinces:
-                sub = PROVINCE_TO_SUBREGION.get(province)
-                if sub:
-                    subregions.add(sub)
-            data[user_id] = {"territories": list(subregions), "name": name}
+            # Store provinces directly (no subregion conversion)
+            data[user_id] = {"provinces": provinces, "name": name}
         return data
 
     def generate_map(self, ownership_data):
@@ -75,27 +70,43 @@ class MapCog(commands.Cog):
 
         fig, ax = plt.subplots(figsize=(15, 10))
 
-        # Plot each region individually to avoid shape issues
+        # Plot each country/province individually
         for idx, row in self.gdf.iterrows():
-            region_name = row['subregion']
+            # The 'subregion' column contains the region name
+            # We need to check if this specific country belongs to any player
+            country_name = row.get('NAME', 'Unknown')
+            region_name = row.get('subregion', '')
+            
+            # Find which user owns this specific country (by checking if any province matches)
             owner = None
             for user_id, info in ownership_data.items():
-                if region_name in info["territories"]:
-                    owner = user_id
+                # Check if any owned province matches this country name
+                # Also handle the case where provinces might be stored as country names
+                for province in info["provinces"]:
+                    # Check if the province name matches the country name
+                    # Also handle partial matches (e.g., "United States" vs "USA")
+                    if country_name.lower() == province.lower():
+                        owner = user_id
+                        break
+                    # Handle special cases
+                    if province.lower() in country_name.lower() or country_name.lower() in province.lower():
+                        owner = user_id
+                        break
+                if owner:
                     break
+
             color = user_colors.get(owner, (0.8, 0.8, 0.8, 1))  # grey if unowned
 
-            # Plot this single feature
             gpd.GeoDataFrame([row], crs=self.gdf.crs).plot(
                 ax=ax, facecolor=color, edgecolor='white', linewidth=0.5
             )
 
-        # Add labels
+        # Add labels for each country
         for idx, row in self.gdf.iterrows():
-            region_name = row['subregion']
+            country_name = row.get('NAME', '')
             if row.geometry and not row.geometry.is_empty:
                 centroid = row.geometry.centroid
-                ax.annotate(region_name, xy=(centroid.x, centroid.y), fontsize=6,
+                ax.annotate(country_name, xy=(centroid.x, centroid.y), fontsize=5,
                             ha='center', va='center',
                             bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
 
