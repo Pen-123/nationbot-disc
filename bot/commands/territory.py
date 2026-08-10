@@ -1,6 +1,7 @@
 import random
 import json
 import logging
+import math
 from typing import List, Optional
 import discord
 from discord.ext import commands
@@ -157,6 +158,12 @@ class TerritoryCog(commands.Cog):
         possible = possible - set(owned)
         return sorted(possible)
 
+    def _calculate_soldier_cost(self, civ) -> int:
+        """Calculate 10% of current soldiers (rounded up, minimum 1)."""
+        soldiers = civ['military']['soldiers']
+        cost = math.ceil(soldiers * 0.1)  # 10% rounded up
+        return max(1, cost)  # at least 1 soldier
+
     # ---------- Commands ----------
     @commands.command(name='territories')
     async def list_territories(self, ctx):
@@ -179,7 +186,7 @@ class TerritoryCog(commands.Cog):
     @commands.command(name='expand')
     @app_commands.describe(territory="Name of the sub‑region to expand into")
     async def expand(self, ctx, *, territory: str = None):
-        """Claim a new sub‑region adjacent to your territory (costs resources)."""
+        """Claim a new sub‑region adjacent to your territory (costs resources + 10% of your soldiers)."""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
@@ -191,7 +198,7 @@ class TerritoryCog(commands.Cog):
         # If no territory specified, show available expansions
         if territory is None:
             if not owned:
-                await ctx.send("❌ You have no territory. Select a region with `.regions` to get your starting territory, or use `.expand <territory>` to claim any territory as your first (costs resources).")
+                await ctx.send("❌ You have no territory. Select a region with `.regions` to get your starting territory, or use `.expand <territory>` to claim any territory as your first (costs resources + soldiers).")
                 return
             possible = self._get_expansion_options(user_id)
             if not possible:
@@ -204,6 +211,7 @@ class TerritoryCog(commands.Cog):
                 by_cont.setdefault(cont, []).append(p)
             for cont, names in by_cont.items():
                 embed.add_field(name=cont, value=", ".join(names), inline=False)
+            embed.set_footer(text=f"Each expansion costs resources + 10% of your current soldiers.")
             await ctx.send(embed=embed)
             return
 
@@ -224,20 +232,29 @@ class TerritoryCog(commands.Cog):
             return
         territory = match
 
-        # If this is the first territory, allow claiming any (no adjacency check, but still costs)
+        # If this is the first territory, allow claiming any (no adjacency check, but still costs resources + soldiers)
         if not owned:
             cost = SUBREGION_DATA[territory]["cost"]
             if not self.civ_manager.can_afford(user_id, cost):
                 cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
                 await ctx.send(f"❌ Cannot afford to claim **{territory}**. Requires: {cost_str}.")
                 return
-            # Spend resources
+
+            # Soldier cost for first territory
+            soldier_cost = self._calculate_soldier_cost(civ)
+            if civ['military']['soldiers'] < soldier_cost:
+                await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army) to claim this territory! You have {civ['military']['soldiers']}.")
+                return
+
+            # Spend resources and soldiers
             self.civ_manager.spend_resources(user_id, cost)
+            self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
+
             if self._add_territory(user_id, territory):
                 land_gain = random.randint(100, 300)
                 self.civ_manager.update_territory(user_id, {"land_size": land_gain})
                 embed = discord.Embed(title="🏹 First Territory Claimed!", description=f"**{civ['name']}** has claimed **{territory}**!", color=discord.Color.green())
-                embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]), inline=True)
+                embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers (10% of army)", inline=True)
                 embed.add_field(name="Land Gained", value=f"+{land_gain} km²", inline=True)
                 await ctx.send(embed=embed)
                 self.db.log_event(user_id, "expansion", "First Territory", f"Claimed {territory} as first territory")
@@ -250,20 +267,29 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{territory}** is not adjacent to any of your territories. You can only expand into neighbouring regions.")
             return
 
-        # Check cost
+        # Check resource cost
         cost = SUBREGION_DATA[territory]["cost"]
         if not self.civ_manager.can_afford(user_id, cost):
             cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
             await ctx.send(f"❌ Cannot afford to claim **{territory}**. Requires: {cost_str}.")
             return
 
-        # Spend and claim
+        # Soldier cost (10% of current army)
+        soldier_cost = self._calculate_soldier_cost(civ)
+        if civ['military']['soldiers'] < soldier_cost:
+            await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army) to expand! You have {civ['military']['soldiers']}.")
+            return
+
+        # Spend resources and soldiers
         self.civ_manager.spend_resources(user_id, cost)
+        self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
+
+        # Claim territory
         if self._add_territory(user_id, territory):
             land_gain = random.randint(50, 200)
             self.civ_manager.update_territory(user_id, {"land_size": land_gain})
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has expanded into **{territory}**!", color=discord.Color.green())
-            embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]), inline=True)
+            embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers (10% of army)", inline=True)
             embed.add_field(name="Land Gained", value=f"+{land_gain} km²", inline=True)
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "expansion", "Territory Claimed", f"Claimed {territory}")
