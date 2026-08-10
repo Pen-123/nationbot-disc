@@ -11,6 +11,9 @@ from discord.ext import commands
 from discord import app_commands
 from bot.utils import format_number, get_ascii_art, create_embed
 
+# Import subregion data from territory.py
+from bot.commands.territory import PROVINCES, SUBREGION_TO_CONTINENT, SUBREGION_DATA, ALL_SUBREGIONS
+
 logger = logging.getLogger(__name__)
 
 MAX_CONVERSATION_HISTORY = 100
@@ -665,65 +668,100 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- PREFIX-ONLY COMMANDS (existing) ----------
+    # ---------- REGIONS COMMAND (NEW: subregion selection with uniqueness) ----------
     @commands.command(name='regions')
-    @app_commands.describe(region_name="Region to select (optional)")
-    @app_commands.choices(region_name=[
-        app_commands.Choice(name="asia", value="asia"),
-        app_commands.Choice(name="europe", value="europe"),
-        app_commands.Choice(name="africa", value="africa"),
-        app_commands.Choice(name="north_america", value="north_america"),
-        app_commands.Choice(name="south_america", value="south_america"),
-        app_commands.Choice(name="middle_east", value="middle_east"),
-        app_commands.Choice(name="oceania", value="oceania"),
-        app_commands.Choice(name="antarctica", value="antarctica"),
-    ])
-    async def regions_command(self, ctx, region_name: Optional[Literal["asia", "europe", "africa", "north_america", "south_america", "middle_east", "oceania", "antarctica"]] = None):
-        regions = {
-            "asia": {"name": "Asia", "bonuses": {"food": 200, "population": 50}, "description": "🌏 **Asia**: Fertile lands with abundant resources and large population capacity."},
-            "europe": {"name": "Europe", "bonuses": {"gold": 300, "tech_level": 1}, "description": "🇪🇺 **Europe**: Advanced technological development and economic strength."},
-            "africa": {"name": "Africa", "bonuses": {"stone": 150, "wood": 150}, "description": "🌍 **Africa**: Rich in natural resources and mineral wealth."},
-            "north_america": {"name": "North America", "bonuses": {"gold": 200, "food": 200}, "description": "🇺🇸 **North America**: Balanced economy with strong agricultural and financial sectors."},
-            "south_america": {"name": "South America", "bonuses": {"food": 300, "wood": 100}, "description": "🇧🇷 **South America**: Lush rainforests and abundant agricultural potential."},
-            "middle_east": {"name": "Middle East", "bonuses": {"gold": 400}, "description": "🌅 **Middle East**: Vast oil reserves creating immense wealth."},
-            "oceania": {"name": "Oceania", "bonuses": {"food": 250, "happiness": 15}, "description": "🇦🇺 **Oceania**: Island paradise with high quality of life and abundant seafood."},
-            "antarctica": {"name": "Antarctica", "bonuses": {"research": 25}, "description": "🇦🇶 **Antarctica**: Harsh environment but unique research opportunities. +25% research speed."}
-        }
+    @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
+    async def regions_command(self, ctx, *, region_name: str = None):
+        """
+        Choose a subregion for your civilization.
+        Usage: .regions <subregion_name>
+        Examples: .regions western europe, .regions east asia, .regions brazil
+        """
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
+
+        # If no region name given, show all available subregions grouped by continent
         if not region_name:
-            embed = discord.Embed(title="🌍 Available Regions", description="Choose a region for your civilization. Each region provides unique bonuses:", color=0x00ff00)
-            for region_id, region_data in regions.items():
-                bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_data["bonuses"].items()])
-                embed.add_field(name=region_data["name"], value=f"{region_data['description']}\n**Bonuses:** {bonus_text}", inline=False)
-            embed.add_field(name="Usage", value="Use `.regions <region_name>` to select a region (e.g., `.regions asia`)\nAvailable regions: asia, europe, africa, north_america, south_america, middle_east, oceania, antarctica", inline=False)
-            if civ.get('region'):
-                current_region = next((r for r in regions.values() if r['name'].lower() == civ.get('region').lower()), None)
-                if current_region:
-                    bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in current_region["bonuses"].items()])
-                    embed.add_field(name="Current Region", value=f"**{current_region['name']}**: {bonus_text}", inline=False)
+            embed = discord.Embed(
+                title="🌍 Available Subregions",
+                description="Choose a subregion to start your civilization. Each subregion provides unique bonuses based on its continent and is **unique** – once taken, no one else can claim it.\n\nTo select one, use `.regions <subregion_name>` (e.g., `.regions western europe`).",
+                color=0x00ff00
+            )
+            # Group by continent
+            grouped = {}
+            for sub in ALL_SUBREGIONS:
+                continent = SUBREGION_TO_CONTINENT.get(sub, "Unknown")
+                grouped.setdefault(continent, []).append(sub)
+            for continent, sublist in grouped.items():
+                # Show which ones are taken
+                taken_list = []
+                available_list = []
+                for sub in sorted(sublist):
+                    if self.db.is_region_taken(sub, exclude_user_id=user_id):
+                        taken_list.append(f"~~{sub}~~ (taken)")
+                    else:
+                        available_list.append(sub)
+                value = ""
+                if available_list:
+                    value += "**Available:** " + ", ".join(available_list) + "\n"
+                if taken_list:
+                    value += "**Taken:** " + ", ".join(taken_list)
+                if not value:
+                    value = "All taken!"
+                embed.add_field(name=continent, value=value, inline=False)
+            embed.set_footer(text=f"Your current region: {civ.get('region', 'None')}")
             await ctx.send(embed=embed)
             return
 
-        region_name = region_name.lower()
-        if region_name not in regions:
-            await ctx.send(f"❌ Invalid region! Available regions: {', '.join(regions.keys())}")
+        # Normalize input: lowercase, strip spaces, and allow case-insensitive matching
+        input_name = region_name.strip().lower()
+        matched_subregion = None
+        for sub in ALL_SUBREGIONS:
+            if sub.lower() == input_name:
+                matched_subregion = sub
+                break
+        if not matched_subregion:
+            # Try partial match (e.g., "western" might match "Western Europe")
+            for sub in ALL_SUBREGIONS:
+                if input_name in sub.lower():
+                    matched_subregion = sub
+                    break
+        if not matched_subregion:
+            await ctx.send(f"❌ Unknown subregion: `{region_name}`. Use `.regions` to see available subregions.")
             return
-        if civ.get('region'):
-            if civ['region'].lower() == region_name:
-                await ctx.send(f"❌ Your civilization is already in the {regions[region_name]['name']} region!")
-                return
-            else:
-                await ctx.send(f"❌ You've already selected the {civ['region']} region. Region selection cannot be changed.")
-                return
 
-        region_bonuses = regions[region_name]['bonuses']
+        # Check if already selected a region
+        if civ.get('region'):
+            await ctx.send(f"❌ You've already selected the **{civ['region']}** region. Region selection cannot be changed.")
+            return
+
+        # Check if this subregion is already taken by another player
+        if self.db.is_region_taken(matched_subregion, exclude_user_id=user_id):
+            await ctx.send(f"❌ The subregion **{matched_subregion}** has already been claimed by another civilization. Choose another.")
+            return
+
+        # Determine continent for bonuses
+        continent = SUBREGION_TO_CONTINENT.get(matched_subregion, "Unknown")
+        # Define bonuses per continent
+        continent_bonuses = {
+            "Europe": {"gold": 300, "tech_level": 1},
+            "Asia": {"food": 200, "population": 50},
+            "Africa": {"stone": 150, "wood": 150},
+            "North America": {"gold": 200, "food": 200},
+            "South America": {"food": 300, "wood": 100},
+            "Oceania": {"food": 250, "happiness": 15},
+            "Antarctica": {"research": 25},
+            "Unknown": {"gold": 100, "food": 100}
+        }
+        bonuses = continent_bonuses.get(continent, continent_bonuses["Unknown"])
+
+        # Apply bonuses
         updated_resources = civ['resources'].copy()
         updated_population = civ['population'].copy()
-        for resource, amount in region_bonuses.items():
+        for resource, amount in bonuses.items():
             if resource in updated_resources:
                 updated_resources[resource] += amount
             elif resource == "population":
@@ -735,39 +773,34 @@ Remember to keep responses engaging but focused on the game.
                 current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
                 self.db.update_civilization(user_id, {'bonuses': current_bonuses})
 
-        update_data = {'region': regions[region_name]['name'], 'resources': updated_resources, 'population': updated_population}
+        update_data = {
+            'region': matched_subregion,  # store the subregion name
+            'resources': updated_resources,
+            'population': updated_population
+        }
         if self.db.update_civilization(user_id, update_data):
-            bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_bonuses.items()])
-            embed = discord.Embed(title=f"🌍 Region Selected: {regions[region_name]['name']}", description=regions[region_name]['description'], color=0x00ff00)
+            bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in bonuses.items()])
+            embed = discord.Embed(
+                title=f"🌍 Region Selected: {matched_subregion}",
+                description=f"Your civilization is now established in **{matched_subregion}** ({continent}).",
+                color=0x00ff00
+            )
             embed.add_field(name="Bonuses Applied", value=bonus_text, inline=False)
-            embed.add_field(name="🎉 Nation Complete!", value="Your civilization is now fully established! Use `.status` to view your complete stats and `.warhelp` to see all available commands.", inline=False)
+            embed.add_field(name="🎉 Nation Complete!", value="Use `.status` to view your complete stats and `.warhelp` to see all available commands.", inline=False)
             await ctx.send(embed=embed)
 
-            # ---- 🏛️ GIVE STARTING PROVINCE ----
+            # Give starting province from the chosen subregion
             territory_cog = self.bot.get_cog("TerritoryCog")
             if territory_cog:
-                from bot.commands.territory import PROVINCES
-                region_map = {
-                    "asia": "East Asia",
-                    "europe": "Western Europe",
-                    "africa": "West Africa",
-                    "north_america": "Central North America",
-                    "south_america": "Brazil",
-                    "middle_east": "Middle East",
-                    "oceania": "Australia",
-                    "antarctica": "Antarctic Peninsula",
-                }
-                starter_subregion = region_map.get(region_name)
-                if starter_subregion:
-                    province_list = PROVINCES.get(starter_subregion, [])
-                    if province_list:
-                        first_province = province_list[0]
-                        territory_cog._add_province(user_id, first_province)
-                        await ctx.send(f"🏛️ Your starting province is **{first_province}**! Use `.map` to see it on the world map!")
-            # ------------------------------------
+                province_list = PROVINCES.get(matched_subregion, [])
+                if province_list:
+                    first_province = province_list[0]
+                    territory_cog._add_province(user_id, first_province)
+                    await ctx.send(f"🏛️ Your starting province is **{first_province}**! Use `.map` to see it on the world map!")
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
+    # ---------- OTHER COMMANDS (unchanged) ----------
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, civ_name: str = None):
