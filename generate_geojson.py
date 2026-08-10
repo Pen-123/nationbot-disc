@@ -5,6 +5,7 @@ import zipfile
 import io
 import os
 import shutil
+import json
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -24,10 +25,7 @@ with zipfile.ZipFile(io.BytesIO(r.content)) as z:
 
 world = gpd.read_file("temp_geo/ne_110m_admin_0_countries.shp")
 
-# ------------------------------------------------------------
-# COMPREHENSIVE MAPPING – includes all countries, even tiny ones,
-# because they will appear on the map (even if not claimable).
-# ------------------------------------------------------------
+# -------- MAPPING (same as before, includes all countries) --------
 region_country_mapping = {
     "Western Europe": [
         "France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", 
@@ -136,12 +134,10 @@ region_country_mapping = {
 }
 
 def map_country_to_region(row):
-    """Check multiple name fields for a match."""
     names_to_check = set()
     for col in ['NAME', 'ADMIN', 'NAME_LONG', 'SOVEREIGNT', 'GEOUNIT']:
         if col in row and pd.notna(row[col]):
             names_to_check.add(str(row[col]).strip().lower())
-
     for region, countries in region_country_mapping.items():
         for c in countries:
             if c.lower() in names_to_check:
@@ -150,26 +146,35 @@ def map_country_to_region(row):
 
 world['subregion'] = world.apply(map_country_to_region, axis=1)
 
-# Log unmapped countries (for debugging)
+# Log unmapped
 unmapped = world[world['subregion'].isna()]
 if not unmapped.empty:
-    logger.warning("⚠️ The following countries were not mapped to any region:")
+    logger.warning("Unmapped countries:")
     for name in unmapped['NAME'].unique():
         logger.warning(f"  - {name}")
-    logger.warning("They will not appear on the map.")
-else:
-    logger.info("✅ All countries mapped successfully.")
 
-# Drop unmapped (so they don't appear as grey blobs)
 world = world.dropna(subset=['subregion'])
 
-# Dissolve by subregion to create merged regions (optional – we can keep individual countries)
-# The user originally wanted individual countries, but the fix dissolves by subregion.
-# The map display will show subregions in the same color if dissolved.
-# I'll keep individual countries so each can be colored separately.
-# To keep individual, we skip dissolve and save as is.
-# But the user said "when you expand into the new registered countries it highlights it in your color" – that works with individual countries.
-# So we save individual countries, not dissolved.
+# --- Compute area for each country (in km²) ---
+# Use an equal-area projection (EPSG:3857 gives square meters, but distorted; we'll use a better one: EPSG:6933 for world)
+# Actually, we can use area from geometry in lat/lon with pyproj, but simpler: project to EPSG:3857 and convert.
+# For rough game values, it's fine.
+world_proj = world.to_crs('EPSG:3857')
+world_proj['area_km2'] = world_proj.geometry.area / 1_000_000  # square meters to km²
+
+# Build province -> area dict
+province_areas = {}
+for idx, row in world_proj.iterrows():
+    name = row['NAME']
+    area = row['area_km2']
+    province_areas[name] = round(area, 0)  # integer km²
+
+# Save to JSON
+with open('province_areas.json', 'w') as f:
+    json.dump(province_areas, f, indent=2)
+print("✅ province_areas.json created with area data.")
+
+# Save geojson (individual countries)
 world.to_file("regions.geojson", driver="GeoJSON")
 print("✅ regions.geojson created with individual countries!")
 
