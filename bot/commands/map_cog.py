@@ -24,6 +24,11 @@ class MapCog(commands.Cog):
         else:
             try:
                 self.gdf = gpd.read_file(self.geojson_path)
+                # Ensure it's in EPSG:4326 (lat/lon)
+                if self.gdf.crs is None:
+                    self.gdf = self.gdf.set_crs('EPSG:4326', allow_override=True)
+                elif self.gdf.crs != 'EPSG:4326':
+                    self.gdf = self.gdf.to_crs('EPSG:4326')
             except Exception as e:
                 logger.error(f"Failed to load regions.geojson: {e}")
                 self.gdf = None
@@ -35,7 +40,6 @@ class MapCog(commands.Cog):
             return {}
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        # FIXED: use owned_provinces instead of owned_territories
         cursor.execute("SELECT user_id, owned_provinces FROM territories")
         rows = cursor.fetchall()
         data = {}
@@ -46,7 +50,6 @@ class MapCog(commands.Cog):
             civ = self.civ_manager.get_civilization(user_id)
             name = civ['name'] if civ else user_id[:6]
             # Map provinces to subregions (for map display)
-            # We need to convert province names to subregion names for the map
             from bot.commands.territory import PROVINCE_TO_SUBREGION
             subregions = set()
             for province in provinces:
@@ -78,7 +81,8 @@ class MapCog(commands.Cog):
 
         fig, ax = plt.subplots(figsize=(15, 10))
 
-        # Plot each sub‑region
+        # Build a list of facecolors for each row in the GeoDataFrame
+        facecolors = []
         for idx, row in self.gdf.iterrows():
             region_name = row['subregion']
             # Find which user owns this region
@@ -88,7 +92,10 @@ class MapCog(commands.Cog):
                     owner = user_id
                     break
             color = user_colors.get(owner, (0.8, 0.8, 0.8, 1))  # grey if unowned
-            ax.add_geometries(row.geometry, crs='EPSG:4326', facecolor=color, edgecolor='white', linewidth=0.5)
+            facecolors.append(color)
+
+        # Plot the entire GeoDataFrame at once
+        self.gdf.plot(ax=ax, facecolor=facecolors, edgecolor='white', linewidth=0.5)
 
         # Add labels for each region (centroid)
         for idx, row in self.gdf.iterrows():
