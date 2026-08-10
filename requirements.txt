@@ -4,3 +4,9 @@ aiohttp
 python-dotenv
 dropbox
 tenacity
+geopandas
+matplotlib
+shapely
+pillow
+numpy
+requests
