@@ -27,7 +27,7 @@ class MapCog(commands.Cog):
         """Fetch all users' owned territories from the database."""
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, owned_territories FROM territories")
+        cursor.execute("SELECT user_id, owned_provinces FROM territories")
         rows = cursor.fetchall()
         data = {}
         for row in rows:
