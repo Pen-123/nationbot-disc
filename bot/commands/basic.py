@@ -707,6 +707,7 @@ Remember to keep responses engaging but focused on the game.
                     embed.add_field(name="Current Region", value=f"**{current_region['name']}**: {bonus_text}", inline=False)
             await ctx.send(embed=embed)
             return
+
         region_name = region_name.lower()
         if region_name not in regions:
             await ctx.send(f"❌ Invalid region! Available regions: {', '.join(regions.keys())}")
@@ -718,6 +719,7 @@ Remember to keep responses engaging but focused on the game.
             else:
                 await ctx.send(f"❌ You've already selected the {civ['region']} region. Region selection cannot be changed.")
                 return
+
         region_bonuses = regions[region_name]['bonuses']
         updated_resources = civ['resources'].copy()
         updated_population = civ['population'].copy()
@@ -732,6 +734,7 @@ Remember to keep responses engaging but focused on the game.
                 current_bonuses = civ.get('bonuses', {})
                 current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
                 self.db.update_civilization(user_id, {'bonuses': current_bonuses})
+
         update_data = {'region': regions[region_name]['name'], 'resources': updated_resources, 'population': updated_population}
         if self.db.update_civilization(user_id, update_data):
             bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_bonuses.items()])
@@ -740,28 +743,28 @@ Remember to keep responses engaging but focused on the game.
             embed.add_field(name="🎉 Nation Complete!", value="Your civilization is now fully established! Use `.status` to view your complete stats and `.warhelp` to see all available commands.", inline=False)
             await ctx.send(embed=embed)
 
-       # ---- 🏛️ GIVE STARTING PROVINCE ----
-territory_cog = self.bot.get_cog("TerritoryCog")
-if territory_cog:
-    from bot.commands.territory import PROVINCES
-    region_map = {
-        "asia": "East Asia",
-        "europe": "Western Europe",
-        "africa": "West Africa",
-        "north_america": "Central North America",
-        "south_america": "Brazil",
-        "middle_east": "Middle East",
-        "oceania": "Australia",
-        "antarctica": "Antarctic Peninsula",
-    }
-    starter_subregion = region_map.get(region_name)
-    if starter_subregion:
-        province_list = PROVINCES.get(starter_subregion, [])
-        if province_list:
-            first_province = province_list[0]
-            territory_cog._add_province(user_id, first_province)
-            await ctx.send(f"🏛️ Your starting province is **{first_province}**! Use `.map` to see it on the world map!")
-# ------------------------------------
+            # ---- 🏛️ GIVE STARTING PROVINCE ----
+            territory_cog = self.bot.get_cog("TerritoryCog")
+            if territory_cog:
+                from bot.commands.territory import PROVINCES
+                region_map = {
+                    "asia": "East Asia",
+                    "europe": "Western Europe",
+                    "africa": "West Africa",
+                    "north_america": "Central North America",
+                    "south_america": "Brazil",
+                    "middle_east": "Middle East",
+                    "oceania": "Australia",
+                    "antarctica": "Antarctic Peninsula",
+                }
+                starter_subregion = region_map.get(region_name)
+                if starter_subregion:
+                    province_list = PROVINCES.get(starter_subregion, [])
+                    if province_list:
+                        first_province = province_list[0]
+                        territory_cog._add_province(user_id, first_province)
+                        await ctx.send(f"🏛️ Your starting province is **{first_province}**! Use `.map` to see it on the world map!")
+            # ------------------------------------
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
