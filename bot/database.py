@@ -9,7 +9,7 @@ import time
 import dropbox
 from dropbox.exceptions import ApiError, AuthError
 import os
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,18 @@ class Database:
         self.dropbox_app_secret = dropbox_app_secret or os.getenv('DROPBOX_APP_SECRET')
         self.dropbox_client = None
         self._last_upload = 0
+        self._upload_lock = threading.Lock()
+        self._upload_enabled = False
+
+        # Initialize Dropbox if credentials exist
         if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
             self.init_dropbox()
+
+        # Download latest database from Dropbox if available
         if not os.path.exists(self.db_path):
             self.download_database()
+
+        # Always initialize local DB schema
         self.init_database()
         self.setup_cleanup_scheduler()
 
@@ -39,16 +47,20 @@ class Database:
             )
             dbx.check_user()
             self.dropbox_client = dbx
-            logger.info("Dropbox client initialized")
+            self._upload_enabled = True
+            logger.info("Dropbox client initialized successfully")
         except AuthError as e:
-            logger.error(f"Dropbox auth error: {e}")
+            logger.error(f"Dropbox auth error: {e}. Check your refresh token and app credentials.")
             self.dropbox_client = None
+            self._upload_enabled = False
         except Exception as e:
             logger.error(f"Error initializing Dropbox: {e}")
             self.dropbox_client = None
+            self._upload_enabled = False
 
     def download_database(self):
         if not self.dropbox_client:
+            logger.info("No Dropbox client; skipping download.")
             return
         try:
             dropbox_path = f"/{os.path.basename(self.db_path)}"
@@ -56,24 +68,39 @@ class Database:
             logger.info(f"Downloaded database from Dropbox: {dropbox_path}")
         except ApiError as e:
             if e.error.is_path() and e.error.get_path().is_not_found():
-                logger.info("No database found in Dropbox, starting fresh")
+                logger.info("No database found in Dropbox; starting fresh.")
             else:
                 logger.error(f"Error downloading database: {e}")
         except Exception as e:
             logger.error(f"Unexpected error downloading database: {e}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def upload_database(self):
-        if not self.dropbox_client:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    def _upload_to_dropbox(self):
+        """Internal method that actually uploads; retries on any exception."""
+        if not self._upload_enabled or not self.dropbox_client:
+            logger.warning("Dropbox upload skipped – client not available.")
             return
-        if time.time() - self._last_upload < 30:
+
+        # Rate limit: at most once every 30 seconds
+        now = time.time()
+        if now - self._last_upload < 30:
+            logger.debug("Skipping upload – less than 30s since last upload.")
             return
+
         try:
-            cursor = self.get_connection().cursor()
+            # Verify database integrity before upload
+            conn = self.get_connection()
+            cursor = conn.cursor()
             cursor.execute("PRAGMA integrity_check")
             if cursor.fetchone()[0] != "ok":
-                logger.error("Database corrupted, skipping upload")
+                logger.error("Database integrity check failed; aborting upload.")
                 return
+
             dropbox_path = f"/{os.path.basename(self.db_path)}"
             with open(self.db_path, 'rb') as f:
                 self.dropbox_client.files_upload(
@@ -81,11 +108,29 @@ class Database:
                     dropbox_path,
                     mode=dropbox.files.WriteMode('overwrite')
                 )
-            self._last_upload = time.time()
-            logger.info(f"Uploaded database to Dropbox: {dropbox_path}")
+            self._last_upload = now
+            logger.info(f"Successfully uploaded database to Dropbox: {dropbox_path}")
+        except ApiError as e:
+            logger.error(f"Dropbox API error during upload: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error uploading database to Dropbox: {e}")
             raise
+
+    def upload_database(self):
+        """Public method to trigger upload; runs in a separate thread to avoid blocking."""
+        if not self._upload_enabled:
+            return
+
+        # Use a lock to prevent concurrent uploads
+        if self._upload_lock.acquire(blocking=False):
+            try:
+                # Run upload in a background thread to avoid blocking DB operations
+                threading.Thread(target=self._upload_to_dropbox, daemon=True).start()
+            finally:
+                self._upload_lock.release()
+        else:
+            logger.debug("Upload already in progress; skipping.")
 
     def get_connection(self):
         if not hasattr(self.local, 'connection'):
@@ -97,6 +142,7 @@ class Database:
         def cleanup_task():
             logger.info("Running scheduled cleanup...")
             self.cleanup_expired_requests()
+            # Schedule next cleanup in 24 hours
             timer = threading.Timer(86400, cleanup_task)
             timer.daemon = True
             timer.start()
@@ -129,7 +175,6 @@ class Database:
                     logger.error(f"Failed to add column '{col}': {e}")
 
     def _migrate_cooldowns_table(self):
-        """Add missing columns to cooldowns table if they don't exist."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(cooldowns)")
@@ -360,7 +405,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            self._migrate_civilizations_table()  # Ensure all columns exist
+            self._migrate_civilizations_table()
             cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
             row = cursor.fetchone()
             if not row:
@@ -374,7 +419,6 @@ class Database:
             civ['bonuses'] = json.loads(civ.get('bonuses', '{}'))
             civ['selected_cards'] = json.loads(civ.get('selected_cards', '[]'))
             civ['black_market_history'] = json.loads(civ.get('black_market_history', '{}'))
-            # job is plain text; leave as is
             return civ
         except Exception as e:
             logger.error(f"Error getting civilization for {user_id}: {e}")
