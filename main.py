@@ -3,12 +3,16 @@ import contextlib
 import difflib
 import logging
 import os
+import subprocess
 import threading
 
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
 from discord.ext import commands
+
+# REMOVED the hybrid override – slash commands are now disabled
+# commands.command = commands.hybrid_command   # <-- DELETED
 
 from web.dashboard import app as flask_app
 from bot.database import Database
@@ -22,8 +26,8 @@ from bot.commands.store import StoreCommands
 from bot.commands.hyperitems import HyperItemCommands
 from bot.commands.admin import AdminCommands
 from bot.commands.industrial import IndustrialCog
-from bot.commands.territory import TerritoryCog        # <-- ADDED
-from bot.commands.map_cog import MapCog                # <-- ADDED
+from bot.commands.territory import TerritoryCog
+from bot.commands.map_cog import MapCog
 from bot.events import EventManager
 
 # Configure logging
@@ -61,8 +65,8 @@ class WarBot(commands.Bot):
         self.events_task = None
 
     async def _auto_sync_commands(self):
-        """Auto-sync app commands on startup/deploy."""
-        do_sync = os.getenv("AUTO_SYNC_COMMANDS", "true").lower() in {"1", "true", "yes", "on"}
+        """Auto-sync app commands on startup/deploy (disabled by env)."""
+        do_sync = os.getenv("AUTO_SYNC_COMMANDS", "false").lower() in {"1", "true", "yes", "on"}
         if not do_sync:
             logger.info("AUTO_SYNC_COMMANDS disabled; skipping startup command sync")
             return
@@ -84,6 +88,35 @@ class WarBot(commands.Bot):
             logger.error(f"Failed global auto-sync: {e}", exc_info=True)
 
     async def setup_hook(self):
+        # ---- AUTOMATIC GeoJSON GENERATION ----
+        if not os.path.exists("regions.geojson"):
+            logger.info("🌍 regions.geojson not found – generating it now...")
+            try:
+                # Run the generator in a thread to avoid blocking the event loop
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["python", "generate_geojson.py"],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    logger.info("✅ regions.geojson generated successfully!")
+                else:
+                    logger.error(f"❌ Generation failed (code {result.returncode}): {result.stderr}")
+                    # Create a dummy file so the bot can still start
+                    with open("regions.geojson", "w") as f:
+                        f.write('{"type":"FeatureCollection","features":[]}')
+                    logger.warning("⚠️ Created empty regions.geojson as fallback. The map will be blank.")
+            except Exception as e:
+                logger.error(f"❌ Error running generator: {e}")
+                # Create dummy fallback
+                with open("regions.geojson", "w") as f:
+                    f.write('{"type":"FeatureCollection","features":[]}')
+                logger.warning("⚠️ Created empty regions.geojson as fallback. The map will be blank.")
+        else:
+            logger.info("✅ regions.geojson already exists.")
+
+        # ---- LOAD COGS ----
         try:
             await self.add_cog(BasicCommands(self))
 
@@ -105,18 +138,14 @@ class WarBot(commands.Bot):
             await self.add_cog(HyperItemCommands(self))
             await self.add_cog(AdminCommands(self))
 
-            # ---- ADD INDUSTRIAL COG HERE ----
             await self.add_cog(IndustrialCog(self))
             logger.info("IndustrialCog loaded successfully")
-            # --------------------------------
 
-            # ---- TERRITORY & MAP COGS ----
             await self.add_cog(TerritoryCog(self))
             logger.info("TerritoryCog loaded successfully")
 
             await self.add_cog(MapCog(self))
             logger.info("MapCog loaded successfully")
-            # --------------------------------
 
             logger.info("All command cogs loaded successfully")
             await self._auto_sync_commands()
@@ -160,26 +189,26 @@ class WarBot(commands.Bot):
                 await ctx.send(
                     f"❌ Command `.{attempted}` not found.\n"
                     f"Did you mean:\n{suggested_text}\n\n"
-                    "Use `/warhelp` (or `.warhelp`) to browse commands."
+                    "Use `.warhelp` to browse commands."
                 )
             else:
                 await ctx.send(
                     f"❌ Command `.{attempted}` not found.\n"
-                    "Use `/warhelp` (or `.warhelp`) to browse commands."
+                    "Use `.warhelp` to browse commands."
                 )
             return
 
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(
                 f"❌ Missing required argument: `{error.param.name}`.\n"
-                "Use `/warhelp` (or `.warhelp`) for usage examples."
+                "Use `.warhelp` for usage examples."
             )
             return
 
         if isinstance(error, commands.BadArgument):
             await ctx.send(
                 "❌ Invalid argument type or value.\n"
-                "Please check command usage with `/warhelp`."
+                "Please check command usage with `.warhelp`."
             )
             return
 
@@ -197,7 +226,7 @@ class WarBot(commands.Bot):
         await ctx.send("❌ Something went wrong while running that command. Please try again.")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        """Friendly slash-command error handling."""
+        """Friendly slash-command error handling (kept for safety)."""
         message = "❌ Something went wrong while running that slash command."
 
         if isinstance(error, app_commands.CommandOnCooldown):
