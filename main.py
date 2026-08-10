@@ -14,7 +14,8 @@ from discord.ext import commands
 # Re-enable the hybrid override so legacy @commands.command become hybrid (slash-capable)
 # This makes existing prefix commands available as slash commands without changing each decorator.
 # NOTE: If you have commands already declared with @commands.hybrid_command, this is harmless.
-commands.command = commands.hybrid_command
+# to whoever Ai %#$^ WHO ENABLED THIS SHIT DISCORD HAS AN 100 CMD LIMIT AND IT BREAKS HALF THE BOT BY ADDING THIS WARN THE DUNBASS USER PEN
+# ITS FUCKING DISABLED NOW TO FIX THE BOT cOsMoPeN
 
 from web.dashboard import app as flask_app
 from bot.database import Database
