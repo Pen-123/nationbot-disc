@@ -11,8 +11,10 @@ from discord import app_commands
 from dotenv import load_dotenv
 from discord.ext import commands
 
-# REMOVED the hybrid override – slash commands are now disabled
-# commands.command = commands.hybrid_command   # <-- DELETED
+# Re-enable the hybrid override so legacy @commands.command become hybrid (slash-capable)
+# This makes existing prefix commands available as slash commands without changing each decorator.
+# NOTE: If you have commands already declared with @commands.hybrid_command, this is harmless.
+commands.command = commands.hybrid_command
 
 from web.dashboard import app as flask_app
 from bot.database import Database
