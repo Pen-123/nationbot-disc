@@ -1,5 +1,5 @@
 import random
-import discord as guilded
+import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
@@ -155,7 +155,7 @@ class StoreCommands(commands.Cog):
             }
         }
 
-    @commands.command(name='store')
+    @commands.hybrid_command(name='store')
     @app_commands.describe(item="Upgrade to purchase (optional)")
     @app_commands.choices(item=[
         app_commands.Choice(name="farm_upgrade", value="farm_upgrade"),
@@ -178,7 +178,7 @@ class StoreCommands(commands.Cog):
         ] = None
     ):
         """View the civilization store and purchase upgrades"""
-        user_id = str(ctx.author.id)
+        user_id = str(ctx.author.id if not isinstance(ctx, discord.Interaction) else ctx.user.id)
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -190,7 +190,7 @@ class StoreCommands(commands.Cog):
             embed = create_embed(
                 "🏪 Civilization Store",
                 "Purchase permanent upgrades for your civilization!",
-                guilded.Color.blue()
+                discord.Color.blue()
             )
             
             # Group items by category
@@ -248,7 +248,7 @@ class StoreCommands(commands.Cog):
         embed = create_embed(
             "🏪 Purchase Successful!",
             f"You have purchased **{item_data['name']}**!",
-            guilded.Color.green()
+            discord.Color.green()
         )
         
         embed.add_field(name="Description", value=item_data['description'], inline=False)
@@ -263,10 +263,10 @@ class StoreCommands(commands.Cog):
         # Log the purchase
         self.db.log_event(user_id, "store_purchase", "Store Purchase", f"Purchased {item_data['name']}")
 
-    @commands.command(name='blackmarket')
+    @commands.hybrid_command(name='blackmarket')
     async def black_market(self, ctx):
         """Enter the black market to purchase random HyperItems (No cooldown)"""
-        user_id = str(ctx.author.id)
+        user_id = str(ctx.author.id if not isinstance(ctx, discord.Interaction) else ctx.user.id)
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -340,10 +340,10 @@ class StoreCommands(commands.Cog):
         
         # Create dramatic reveal embed
         rarity_colors = {
-            "common": guilded.Color.green(),
-            "uncommon": guilded.Color.blue(), 
-            "rare": guilded.Color.purple(),
-            "legendary": guilded.Color.gold()
+            "common": discord.Color.green(),
+            "uncommon": discord.Color.blue(), 
+            "rare": discord.Color.purple(),
+            "legendary": discord.Color.gold()
         }
         
         rarity_emojis = {
@@ -372,7 +372,7 @@ class StoreCommands(commands.Cog):
         # Add purchase stats
         embed.add_field(
             name="Purchase Stats", 
-            value=f"Total Purchases: {black_market_history['total_purchases']}\nSince Uncommon: {black_market_history['since_uncommon']}/3\nSince Rare: {black_market_history['since_rare']}/6\nSince Legendary: {black_market_history['since_legendary']}/10",
+            value=f"Total Purchases: {black_market_history['total_purchases']}\nSince Uncommon: {black_market_history['since_uncommon']}/3\nSince Rare: {black_market_history['since_rare']}/6\nSin[...]",
             inline=True
         )
         
@@ -390,8 +390,8 @@ class StoreCommands(commands.Cog):
         if item_data['rarity'] == 'legendary':
             global_embed = create_embed(
                 "🌟 LEGENDARY DISCOVERY!",
-                f"**{civ['name']}** has obtained the legendary **{hyper_item}** from the Black Market!",
-                guilded.Color.gold()
+                f"**{civ.get('name','Unknown')}** has obtained the legendary **{hyper_item}** from the Black Market!",
+                discord.Color.gold()
             )
             
             # Send to all channels (simplified - in real implementation would track channels)
@@ -424,10 +424,10 @@ class StoreCommands(commands.Cog):
             
         return random.choice(items_of_rarity)
 
-    @commands.command(name='inventory')
+    @commands.hybrid_command(name='inventory')
     async def view_inventory(self, ctx):
         """View your HyperItems and store upgrades"""
-        user_id = str(ctx.author.id)
+        user_id = str(ctx.author.id if not isinstance(ctx, discord.Interaction) else ctx.user.id)
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -439,9 +439,9 @@ class StoreCommands(commands.Cog):
         black_market_history = civ.get('black_market_history', {})
         
         embed = create_embed(
-            f"🎒 {civ['name']} Inventory",
-            f"Leader: {ctx.author.name}",
-            guilded.Color.blue()
+            f"🎒 {civ.get('name','Unknown')} Inventory",
+            f"Leader: {ctx.author.name if not isinstance(ctx, discord.Interaction) else ctx.user.name}",
+            discord.Color.blue()
         )
         
         # HyperItems section
@@ -506,13 +506,13 @@ class StoreCommands(commands.Cog):
             
         await ctx.send(embed=embed)
 
-    @commands.command(name='market')
+    @commands.hybrid_command(name='market')
     async def market_info(self, ctx):
         """Display information about the Black Market"""
         embed = create_embed(
             "🕴️ Black Market Information",
             "A shadowy organization dealing in rare and powerful artifacts...",
-            guilded.Color.dark_gray()
+            discord.Color.dark_gray()
         )
         
         embed.add_field(
@@ -535,13 +535,13 @@ class StoreCommands(commands.Cog):
         
         embed.add_field(
             name="🎁 Pity System",
-            value="**Guaranteed drops after certain purchases:**\n• 🔵 Uncommon: Every 3 purchases\n• 🟣 Rare: Every 6 purchases\n• 🟡 Legendary: Every 10 purchases\n*Counters reset when you get that rarity*",
+            value="**Guaranteed drops after certain purchases:**\n• 🔵 Uncommon: Every 3 purchases\n• 🟣 Rare: Every 6 purchases\n• 🟡 Legendary: Every 10 purchases\n*Counters reset w[...],",
             inline=False
         )
         
         embed.add_field(
             name="🎁 HyperItem Types",
-            value="• **Weapons**: Nuclear Warhead, HyperLaser, Missiles, Dagger\n• **Tools**: Lucky Charm, Ancient Scroll, Gold Mint, Harvest Engine\n• **Support**: Anti-Nuke Shield, Spy Network, Propaganda Kit\n• **Military**: Mercenary Contract",
+            value="• **Weapons**: Nuclear Warhead, HyperLaser, Missiles, Dagger\n• **Tools**: Lucky Charm, Ancient Scroll, Gold Mint, Harvest Engine\n• **Support**: Anti-Nuke Shield, Spy Ne[...]",
             inline=False
         )
         
