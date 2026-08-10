@@ -253,7 +253,7 @@ class IndustrialCog(commands.Cog):
                           f"Power: {power}/1000 - {'Success' if power>=1000 else 'Failure'}")
 
     # ---------- START COMMAND ----------
-    @commands.command(name='industrial_start')
+    @commands.hybrid_command(name='industrial_start', description="Start the Industrial Revolution (once per player).")
     async def industrial_start(self, ctx):
         """Start the Industrial Revolution (once per player)."""
         user_id = str(ctx.author.id)
@@ -321,7 +321,7 @@ class IndustrialCog(commands.Cog):
         self.db.log_event(user_id, "industrial_revolution", "Industrial Revolution Started", "Began the revolution.")
 
     # ---------- STATUS ----------
-    @commands.command(name='industrial_status')
+    @commands.hybrid_command(name='industrial_status', description="Show all 25+ Industrial Revolution stats.")
     async def industrial_status(self, ctx):
         """Show all 25+ stats."""
         user_id = str(ctx.author.id)
@@ -378,7 +378,7 @@ class IndustrialCog(commands.Cog):
 
     # ---------- 20+ NEW COMMANDS ----------
 
-    @commands.command(name='industrial_build')
+    @commands.hybrid_command(name='industrial_build', description="Build a factory (+20-50 Power).")
     async def industrial_build(self, ctx):
         """Build a factory (+20-50 Power)."""
         user_id = str(ctx.author.id)
@@ -400,7 +400,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send(f"🏗️ Factory built! Power +{gain} (now {stats['industrial_power']}/1000).")
 
-    @commands.command(name='industrial_tech')
+    @commands.hybrid_command(name='industrial_tech', description="Research technology (+1 Tech, +30 Power).")
     async def industrial_tech(self, ctx):
         """Research technology (+1 Tech, +30 Power)."""
         user_id = str(ctx.author.id)
@@ -419,7 +419,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send(f"🔬 Tech advanced! Level: {stats['tech_level']}.")
 
-    @commands.command(name='industrial_workers')
+    @commands.hybrid_command(name='industrial_workers', description="Train workers (+10 Morale, +15 Power).")
     async def industrial_workers(self, ctx):
         """Train workers (+10 Morale, +15 Power)."""
         user_id = str(ctx.author.id)
@@ -438,7 +438,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("👷 Workers trained! Morale +10, Unrest -5, Power +15.")
 
-    @commands.command(name='industrial_cleanup')
+    @commands.hybrid_command(name='industrial_cleanup', description="Reduce pollution (-15 Pollution, -10 Env Damage).")
     async def industrial_cleanup(self, ctx):
         """Reduce pollution (-15 Pollution, -10 Env Damage)."""
         user_id = str(ctx.author.id)
@@ -459,7 +459,7 @@ class IndustrialCog(commands.Cog):
 
     # --- NEW COMMANDS (20+) ---
 
-    @commands.command(name='industrial_railway')
+    @commands.hybrid_command(name='industrial_railway', description="Build railways (+20 Infrastructure, +15 Railway Coverage, +10 Power).")
     async def industrial_railway(self, ctx):
         """Build railways (+20 Infrastructure, +15 Railway Coverage, +10 Power)."""
         user_id = str(ctx.author.id)
@@ -479,7 +479,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🚂 Railways built! Infra +20, Coverage +15, Power +10.")
 
-    @commands.command(name='industrial_transport')
+    @commands.hybrid_command(name='industrial_transport', description="Improve transport network (+15 Transport, +15 Power).")
     async def industrial_transport(self, ctx):
         """Improve transport network (+15 Transport, +15 Power)."""
         user_id = str(ctx.author.id)
@@ -498,7 +498,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🚚 Transport improved! +15 Network, +15 Power.")
 
-    @commands.command(name='industrial_army')
+    @commands.hybrid_command(name='industrial_army', description="Raise military protection (+20 Military, +10 Power).")
     async def industrial_army(self, ctx):
         """Raise military protection (+20 Military, +10 Power)."""
         user_id = str(ctx.author.id)
@@ -517,7 +517,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🛡️ Military raised! Protection +20, Power +10.")
 
-    @commands.command(name='industrial_policy')
+    @commands.hybrid_command(name='industrial_policy', description="Enact a new policy (+15 Government Support, +10 Public Trust, +10 Power).")
     async def industrial_policy(self, ctx):
         """Enact a new policy (+15 Government Support, +10 Public Trust, +10 Power)."""
         user_id = str(ctx.author.id)
@@ -536,7 +536,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("📜 Policy enacted! Gov Support +15, Trust +10, Power +10.")
 
-    @commands.command(name='industrial_import')
+    @commands.hybrid_command(name='industrial_import', description="Import raw materials (+50 Raw Materials, +20 Power).")
     async def industrial_import(self, ctx):
         """Import raw materials (+50 Raw Materials, +20 Power)."""
         user_id = str(ctx.author.id)
@@ -554,7 +554,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("📦 Imports secured! +50 Raw Materials, +20 Power.")
 
-    @commands.command(name='industrial_export')
+    @commands.hybrid_command(name='industrial_export', description="Export goods (+100 Gold, +15 Trade Influence, +15 Power).")
     async def industrial_export(self, ctx):
         """Export goods (+100 Gold, +15 Trade Influence, +15 Power)."""
         user_id = str(ctx.author.id)
@@ -573,7 +573,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("📤 Exported goods! +100 Gold, +15 Trade, +15 Power.")
 
-    @commands.command(name='industrial_steam')
+    @commands.hybrid_command(name='industrial_steam', description="Research steam power (+20 Steam Pressure, +25 Power).")
     async def industrial_steam(self, ctx):
         """Research steam power (+20 Steam Pressure, +25 Power)."""
         user_id = str(ctx.author.id)
@@ -591,7 +591,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("💨 Steam research done! Pressure +20, Power +25.")
 
-    @commands.command(name='industrial_mine')
+    @commands.hybrid_command(name='industrial_mine', description="Build a mine (+30 Resource Stockpile, +15 Power).")
     async def industrial_mine(self, ctx):
         """Build a mine (+30 Resource Stockpile, +15 Power)."""
         user_id = str(ctx.author.id)
@@ -610,7 +610,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("⛏️ Mine built! +30 Stockpile, +15 Power.")
 
-    @commands.command(name='industrial_hospital')
+    @commands.hybrid_command(name='industrial_hospital', description="Build a hospital (+25 Health, +10 Power).")
     async def industrial_hospital(self, ctx):
         """Build a hospital (+25 Health, +10 Power)."""
         user_id = str(ctx.author.id)
@@ -629,7 +629,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🏥 Hospital built! Health +25, Power +10.")
 
-    @commands.command(name='industrial_school')
+    @commands.hybrid_command(name='industrial_school', description="Build a school (+20 Education, +10 Power).")
     async def industrial_school(self, ctx):
         """Build a school (+20 Education, +10 Power)."""
         user_id = str(ctx.author.id)
@@ -648,7 +648,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("📚 School built! Education +20, Power +10.")
 
-    @commands.command(name='industrial_law')
+    @commands.hybrid_command(name='industrial_law', description="Enforce law and order (-20 Unrest, -10 Power).")
     async def industrial_law(self, ctx):
         """Enforce law and order (-20 Unrest, -10 Power)."""
         user_id = str(ctx.author.id)
@@ -666,7 +666,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("⚖️ Law enforced! Unrest -20, Trust -5, Power -10.")
 
-    @commands.command(name='industrial_trade')
+    @commands.hybrid_command(name='industrial_trade', description="Diplomatic trade (+25 Trade Influence, +30 Power).")
     async def industrial_trade(self, ctx):
         """Diplomatic trade (+25 Trade Influence, +30 Power)."""
         user_id = str(ctx.author.id)
@@ -684,7 +684,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🤝 Diplomatic trade! +25 Influence, +30 Power.")
 
-    @commands.command(name='industrial_aid')
+    @commands.hybrid_command(name='industrial_aid', description="Request foreign aid (+200 Gold, -10 Trade Influence).")
     async def industrial_aid(self, ctx):
         """Request foreign aid (+200 Gold, -10 Trade Influence)."""
         user_id = str(ctx.author.id)
@@ -702,7 +702,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🤲 Aid received! +200 Gold, Power +5.")
 
-    @commands.command(name='industrial_suppress')
+    @commands.hybrid_command(name='industrial_suppress', description="Suppress revolts (-30 Unrest, -15 Public Trust).")
     async def industrial_suppress(self, ctx):
         """Suppress revolts (-30 Unrest, -15 Public Trust)."""
         user_id = str(ctx.author.id)
@@ -719,7 +719,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🔫 Revolt suppressed! Unrest -30, Trust -15.")
 
-    @commands.command(name='industrial_bribe')
+    @commands.hybrid_command(name='industrial_bribe', description="Bribe workers (+20 Morale, -30 Gold).")
     async def industrial_bribe(self, ctx):
         """Bribe workers (+20 Morale, -30 Gold)."""
         user_id = str(ctx.author.id)
@@ -737,7 +737,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("💵 Bribes paid! Morale +20, Unrest -10.")
 
-    @commands.command(name='industrial_automate')
+    @commands.hybrid_command(name='industrial_automate', description="Automate a factory (+15 Efficiency, +10 Power).")
     async def industrial_automate(self, ctx):
         """Automate a factory (+15 Efficiency, +10 Power)."""
         user_id = str(ctx.author.id)
@@ -754,7 +754,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🤖 Automation complete! Efficiency +15, Power +10.")
 
-    @commands.command(name='industrial_upgrade')
+    @commands.hybrid_command(name='industrial_upgrade', description="Upgrade a factory (+30 Power, +10 Pollution).")
     async def industrial_upgrade(self, ctx):
         """Upgrade a factory (+30 Power, +10 Pollution)."""
         user_id = str(ctx.author.id)
@@ -773,7 +773,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("⬆️ Factory upgraded! Power +30, Pollution +10.")
 
-    @commands.command(name='industrial_relief')
+    @commands.hybrid_command(name='industrial_relief', description="Disaster relief (+20 Health, +15 Public Trust, -20 Power).")
     async def industrial_relief(self, ctx):
         """Disaster relief (+20 Health, +15 Public Trust, -20 Power)."""
         user_id = str(ctx.author.id)
@@ -792,7 +792,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🆘 Disaster relief! Health +20, Trust +15, Power -20.")
 
-    @commands.command(name='industrial_expand')
+    @commands.hybrid_command(name='industrial_expand', description="Expand the city (+30 Urbanization, +15 Power).")
     async def industrial_expand(self, ctx):
         """Expand the city (+30 Urbanization, +15 Power)."""
         user_id = str(ctx.author.id)
@@ -811,7 +811,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🏙️ City expanded! Urbanization +30, Power +15.")
 
-    @commands.command(name='industrial_banking')
+    @commands.hybrid_command(name='industrial_banking', description="Invest in banking (+200 Gold, +20 Power).")
     async def industrial_banking(self, ctx):
         """Invest in banking (+200 Gold, +20 Power)."""
         user_id = str(ctx.author.id)
@@ -829,7 +829,7 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🏦 Banking invest! +200 Gold, +20 Power.")
 
-    @commands.command(name='industrial_nationalize')
+    @commands.hybrid_command(name='industrial_nationalize', description="Nationalize industry (+50 Power, -30 Gov Support).")
     async def industrial_nationalize(self, ctx):
         """Nationalize industry (+50 Power, -30 Gov Support)."""
         user_id = str(ctx.author.id)
@@ -847,7 +847,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🏭 Nationalized! Power +50, Gov Support -30.")
 
     # ---------- HELP ----------
-    @commands.command(name='indushelp')
+    @commands.hybrid_command(name='indushelp', description="List ALL Industrial Revolution commands.")
     async def indus_help(self, ctx):
         """List ALL Industrial Revolution commands."""
         embed = discord.Embed(
