@@ -25,7 +25,7 @@ with zipfile.ZipFile(io.BytesIO(r.content)) as z:
 
 world = gpd.read_file("temp_geo/ne_110m_admin_0_countries.shp")
 
-# ---------- FULL MAPPING WITH ALL FIXES ----------
+# ---------- COMPLETE MAPPING WITH ALL COUNTRIES ----------
 region_country_mapping = {
     "Western Europe": ["France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Switzerland", "Austria", "Monaco", "Andorra"],
     "Eastern Europe": ["Poland", "Czech Republic", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
@@ -50,7 +50,7 @@ region_country_mapping = {
         "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles"
     ],
     "Southern Africa": ["Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana", "Namibia", "South Africa", "Eswatini", "Lesotho"],
-    "Western North America": ["Canada", "United States", "United States of America", "USA", "Alaska"],
+    "Western North America": ["Canada", "United States", "United States of America", "USA"],
     "Central North America": ["Mexico"],
     "Eastern North America": ["United States", "United States of America", "USA"],
     "Mexico": ["Mexico"],
@@ -94,6 +94,7 @@ world = world.dropna(subset=['subregion'])
 regions = world.dissolve(by='subregion', aggfunc='sum')
 regions = regions.reset_index()
 
+# Save to GeoJSON
 regions.to_file("regions.geojson", driver="GeoJSON")
 print("✅ regions.geojson created!")
 
