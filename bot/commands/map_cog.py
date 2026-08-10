@@ -47,7 +47,6 @@ class MapCog(commands.Cog):
             provinces = json.loads(row[1]) if row[1] else []
             civ = self.civ_manager.get_civilization(user_id)
             name = civ['name'] if civ else user_id[:6]
-            # Store provinces directly (no subregion conversion)
             data[user_id] = {"provinces": provinces, "name": name}
         return data
 
@@ -72,24 +71,16 @@ class MapCog(commands.Cog):
 
         # Plot each country/province individually
         for idx, row in self.gdf.iterrows():
-            # The 'subregion' column contains the region name
-            # We need to check if this specific country belongs to any player
             country_name = row.get('NAME', 'Unknown')
-            region_name = row.get('subregion', '')
             
-            # Find which user owns this specific country (by checking if any province matches)
+            # Find which user owns this specific country
             owner = None
             for user_id, info in ownership_data.items():
-                # Check if any owned province matches this country name
-                # Also handle the case where provinces might be stored as country names
                 for province in info["provinces"]:
-                    # Check if the province name matches the country name
-                    # Also handle partial matches (e.g., "United States" vs "USA")
-                    if country_name.lower() == province.lower():
-                        owner = user_id
-                        break
-                    # Handle special cases
-                    if province.lower() in country_name.lower() or country_name.lower() in province.lower():
+                    # Check for exact or partial matches (case insensitive)
+                    if country_name.lower() == province.lower() or \
+                       province.lower() in country_name.lower() or \
+                       country_name.lower() in province.lower():
                         owner = user_id
                         break
                 if owner:
@@ -97,18 +88,12 @@ class MapCog(commands.Cog):
 
             color = user_colors.get(owner, (0.8, 0.8, 0.8, 1))  # grey if unowned
 
+            # Draw country with white border
             gpd.GeoDataFrame([row], crs=self.gdf.crs).plot(
                 ax=ax, facecolor=color, edgecolor='white', linewidth=0.5
             )
 
-        # Add labels for each country
-        for idx, row in self.gdf.iterrows():
-            country_name = row.get('NAME', '')
-            if row.geometry and not row.geometry.is_empty:
-                centroid = row.geometry.centroid
-                ax.annotate(country_name, xy=(centroid.x, centroid.y), fontsize=5,
-                            ha='center', va='center',
-                            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
+        # --- CHANGED: Removed the label annotation loop completely ---
 
         # Legend
         patches = []
