@@ -4,18 +4,24 @@ import requests
 import zipfile
 import io
 import os
+import shutil
 
-# Download Natural Earth countries
-url = "https://www.naturalearthdata.com/http//www.naturalearthdata.com/download/110m/cultural/ne_110m_admin_0_countries.zip"
-r = requests.get(url)
+# Use the official Natural Earth S3 mirror (reliable)
+url = "https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip"
+headers = {"User-Agent": "Mozilla/5.0"}
+
+print("Downloading world map data...")
+r = requests.get(url, headers=headers, stream=True)
+if r.status_code != 200:
+    raise Exception(f"Download failed with status {r.status_code}")
+
+print("Extracting...")
 with zipfile.ZipFile(io.BytesIO(r.content)) as z:
     z.extractall("temp_geo")
 
 world = gpd.read_file("temp_geo/ne_110m_admin_0_countries.shp")
 
-# ---------- MAP YOUR SUB‑REGIONS TO COUNTRY NAMES ----------
-# This is the mapping you need to adjust to your own region names.
-# I've made a reasonable guess – you can edit this dictionary.
+# ---------- Your region mapping (same as before) ----------
 region_country_mapping = {
     "Western Europe": ["France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Switzerland", "Austria"],
     "Eastern Europe": ["Poland", "Czech Republic", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
@@ -33,7 +39,7 @@ region_country_mapping = {
     "Southern Africa": ["Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana", "Namibia", "South Africa", "Eswatini", "Lesotho"],
     "Western North America": ["Canada", "United States"],
     "Central North America": ["Mexico"],
-    "Eastern North America": ["United States"],   # <-- comma fixed
+    "Eastern North America": ["United States"],
     "Mexico": ["Mexico"],
     "Central America": ["Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama"],
     "Northern South America": ["Venezuela", "Colombia", "Guyana", "Suriname", "French Guiana"],
@@ -49,7 +55,6 @@ region_country_mapping = {
     "West Antarctica": [],
 }
 
-# Create a column 'subregion' with the region name for each country
 def map_country_to_region(country):
     for region, countries in region_country_mapping.items():
         if country in countries:
@@ -63,12 +68,11 @@ world = world.dropna(subset=['subregion'])
 
 # Dissolve (merge) polygons by subregion
 regions = world.dissolve(by='subregion', aggfunc='sum')
-regions = regions.reset_index()  # make 'subregion' a column again
+regions = regions.reset_index()
 
 # Save to GeoJSON
 regions.to_file("regions.geojson", driver="GeoJSON")
 print("✅ regions.geojson created!")
 
 # Cleanup
-import shutil
 shutil.rmtree("temp_geo")
