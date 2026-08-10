@@ -5,8 +5,12 @@ import zipfile
 import io
 import os
 import shutil
+import logging
 
-# Use the official Natural Earth S3 mirror (reliable)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Use the reliable S3 mirror
 url = "https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip"
 headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -21,25 +25,27 @@ with zipfile.ZipFile(io.BytesIO(r.content)) as z:
 
 world = gpd.read_file("temp_geo/ne_110m_admin_0_countries.shp")
 
-# ---------- Your region mapping (same as before) ----------
+# ---------- UPDATED MAPPING (more complete) ----------
+# These are the country names as they appear in Natural Earth (use .NAME)
+# I've added aliases for common missing ones.
 region_country_mapping = {
-    "Western Europe": ["France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Switzerland", "Austria"],
-    "Eastern Europe": ["Poland", "Czech Republic", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
-    "Southern Europe": ["Portugal", "Spain", "Italy", "Greece", "Croatia", "Slovenia", "Bosnia and Herzegovina", "Serbia", "Montenegro", "Albania", "North Macedonia", "Kosovo"],
+    "Western Europe": ["France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Switzerland", "Austria", "Monaco", "Andorra"],
+    "Eastern Europe": ["Poland", "Czech Republic", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
+    "Southern Europe": ["Portugal", "Spain", "Italy", "Greece", "Croatia", "Slovenia", "Bosnia and Herzegovina", "Serbia", "Montenegro", "Albania", "North Macedonia", "Kosovo", "Malta", "Cyprus"],
     "Northern Europe": ["Norway", "Sweden", "Finland", "Denmark", "Iceland", "Estonia", "Latvia", "Lithuania"],
     "Central Asia": ["Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Afghanistan"],
     "East Asia": ["China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan"],
     "South Asia": ["India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan", "Myanmar"],
-    "Southeast Asia": ["Thailand", "Vietnam", "Indonesia", "Philippines", "Malaysia", "Singapore", "Cambodia", "Laos"],
-    "Middle East": ["Turkey", "Iran", "Iraq", "Syria", "Lebanon", "Israel", "Palestine", "Jordan", "Saudi Arabia", "Yemen", "Oman", "UAE", "Qatar", "Kuwait", "Bahrain", "Georgia", "Armenia", "Azerbaijan"],
+    "Southeast Asia": ["Thailand", "Vietnam", "Indonesia", "Philippines", "Malaysia", "Singapore", "Cambodia", "Laos", "Timor-Leste", "Brunei"],
+    "Middle East": ["Turkey", "Iran", "Iraq", "Syria", "Lebanon", "Israel", "Palestine", "Jordan", "Saudi Arabia", "Yemen", "Oman", "United Arab Emirates", "UAE", "Qatar", "Kuwait", "Bahrain", "Georgia", "Armenia", "Azerbaijan"],
     "North Africa": ["Morocco", "Algeria", "Tunisia", "Libya", "Egypt", "Western Sahara"],
-    "West Africa": ["Mauritania", "Senegal", "Gambia", "Mali", "Burkina Faso", "Benin", "Togo", "Ghana", "Ivory Coast", "Liberia", "Sierra Leone", "Guinea", "Guinea-Bissau", "Cape Verde"],
-    "Central Africa": ["Niger", "Nigeria", "Chad", "Cameroon", "Central African Republic", "DR Congo", "Republic of Congo", "Gabon", "Equatorial Guinea"],
+    "West Africa": ["Mauritania", "Senegal", "Gambia", "Mali", "Burkina Faso", "Benin", "Togo", "Ghana", "Ivory Coast", "Côte d'Ivoire", "Liberia", "Sierra Leone", "Guinea", "Guinea-Bissau", "Cape Verde", "Nigeria", "Niger"],
+    "Central Africa": ["Chad", "Cameroon", "Central African Republic", "C.A.R.", "DR Congo", "Democratic Republic of the Congo", "Republic of Congo", "Gabon", "Equatorial Guinea", "Sao Tome and Principe"],
     "East Africa": ["Sudan", "South Sudan", "Eritrea", "Ethiopia", "Djibouti", "Somalia", "Kenya", "Uganda", "Rwanda", "Burundi", "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles"],
     "Southern Africa": ["Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana", "Namibia", "South Africa", "Eswatini", "Lesotho"],
-    "Western North America": ["Canada", "United States"],
+    "Western North America": ["Canada", "United States", "United States of America", "USA", "Alaska"],  # Alaska is not a country, but we include it as a synonym for USA
     "Central North America": ["Mexico"],
-    "Eastern North America": ["United States"],
+    "Eastern North America": ["United States", "United States of America", "USA"],  # duplicate for consistency
     "Mexico": ["Mexico"],
     "Central America": ["Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama"],
     "Northern South America": ["Venezuela", "Colombia", "Guyana", "Suriname", "French Guiana"],
@@ -50,23 +56,39 @@ region_country_mapping = {
     "Australia": ["Australia"],
     "New Zealand": ["New Zealand"],
     "Pacific Islands": ["Fiji", "Solomon Islands", "Vanuatu", "Papua New Guinea", "Samoa", "Tonga", "Micronesia", "Marshall Islands", "Palau", "Nauru", "Kiribati", "Tuvalu"],
-    "Antarctic Peninsula": [],
+    "Antarctic Peninsula": [],  # Antarctica is not in Natural Earth 110m; we skip
     "East Antarctica": [],
     "West Antarctica": [],
 }
 
+# Function to map a country name (case-insensitive) to a region
 def map_country_to_region(country):
+    if not country:
+        return None
+    country_lower = country.lower()
     for region, countries in region_country_mapping.items():
-        if country in countries:
-            return region
+        for c in countries:
+            if c.lower() == country_lower:
+                return region
     return None
 
+# Apply mapping
 world['subregion'] = world['NAME'].apply(map_country_to_region)
 
-# Drop countries not in our list
+# Log unmapped countries
+unmapped = world[world['subregion'].isna()]
+if not unmapped.empty:
+    logger.warning(f"⚠️ The following countries were not mapped to any region:")
+    for name in unmapped['NAME'].unique():
+        logger.warning(f"  - {name}")
+    logger.warning("Please add them to region_country_mapping in generate_geojson.py and re-run.")
+else:
+    logger.info("✅ All countries mapped successfully.")
+
+# Drop unmapped countries
 world = world.dropna(subset=['subregion'])
 
-# Dissolve (merge) polygons by subregion
+# Dissolve by subregion
 regions = world.dissolve(by='subregion', aggfunc='sum')
 regions = regions.reset_index()
 
