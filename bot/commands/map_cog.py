@@ -19,28 +19,57 @@ class MapCog(commands.Cog):
         # Load the GeoJSON once
         self.geojson_path = "regions.geojson"
         if not os.path.exists(self.geojson_path):
-            raise FileNotFoundError("regions.geojson not found. Run generate_geojson.py first.")
-        self.gdf = gpd.read_file(self.geojson_path)
+            logger.error("regions.geojson not found. Map will not work.")
+            self.gdf = None
+        else:
+            try:
+                self.gdf = gpd.read_file(self.geojson_path)
+            except Exception as e:
+                logger.error(f"Failed to load regions.geojson: {e}")
+                self.gdf = None
         self.cache = {}  # key: hash of ownership data -> BytesIO image
 
     def get_ownership_data(self):
-        """Fetch all users' owned territories from the database."""
+        """Fetch all users' owned provinces from the database."""
+        if self.gdf is None:
+            return {}
         conn = self.db.get_connection()
         cursor = conn.cursor()
+        # FIXED: use owned_provinces instead of owned_territories
         cursor.execute("SELECT user_id, owned_provinces FROM territories")
         rows = cursor.fetchall()
         data = {}
         for row in rows:
             user_id = row[0]
-            territories = json.loads(row[1]) if row[1] else []
+            provinces = json.loads(row[1]) if row[1] else []
             # Get the civilization name for the legend
             civ = self.civ_manager.get_civilization(user_id)
             name = civ['name'] if civ else user_id[:6]
-            data[user_id] = {"territories": territories, "name": name}
+            # Map provinces to subregions (for map display)
+            # We need to convert province names to subregion names for the map
+            from bot.commands.territory import PROVINCE_TO_SUBREGION
+            subregions = set()
+            for province in provinces:
+                sub = PROVINCE_TO_SUBREGION.get(province)
+                if sub:
+                    subregions.add(sub)
+            data[user_id] = {"territories": list(subregions), "name": name}
         return data
 
     def generate_map(self, ownership_data):
         """Generate a Matplotlib figure and return as BytesIO."""
+        if self.gdf is None:
+            # Return a simple error image
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.text(0.5, 0.5, "Map data not available\nRun generate_geojson.py", 
+                    ha='center', va='center', fontsize=14)
+            ax.set_axis_off()
+            buf = BytesIO()
+            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            plt.close(fig)
+            buf.seek(0)
+            return buf
+
         # Assign a colour per user
         colors = plt.cm.tab20.colors  # 20 distinct colours
         user_colors = {}
@@ -64,9 +93,10 @@ class MapCog(commands.Cog):
         # Add labels for each region (centroid)
         for idx, row in self.gdf.iterrows():
             region_name = row['subregion']
-            centroid = row.geometry.centroid
-            ax.annotate(region_name, xy=(centroid.x, centroid.y), fontsize=6, ha='center', va='center',
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
+            if row.geometry and not row.geometry.is_empty:
+                centroid = row.geometry.centroid
+                ax.annotate(region_name, xy=(centroid.x, centroid.y), fontsize=6, ha='center', va='center',
+                            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
 
         # Legend
         patches = []
@@ -89,12 +119,15 @@ class MapCog(commands.Cog):
     @commands.command(name='map')
     async def show_map(self, ctx):
         """Show the world map with your territories coloured."""
+        if self.gdf is None:
+            await ctx.send("❌ Map data is not available. Please run `generate_geojson.py` to create the map file.")
+            return
+
         ownership = self.get_ownership_data()
         # Create a cache key
         key = hashlib.md5(json.dumps(ownership).encode()).hexdigest()
         if key in self.cache:
             buf = self.cache[key]
-            # reset pointer in case it was consumed
             buf.seek(0)
         else:
             buf = self.generate_map(ownership)
