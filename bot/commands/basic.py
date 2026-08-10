@@ -447,194 +447,236 @@ Remember to keep responses engaging but focused on the game.
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
     # ---------- STATIC WARHELP WITH INDUSTRIAL CATEGORY ----------
-    @commands.command(name='warhelp')
-    async def warhelp(self, ctx):
-        """Show all commands grouped by category."""
-        categories = {
-            "🏛️ Basic Commands": {
-                "description": "Essential civilization management",
-                "commands": {
-                    "ideology": "Choose your civilization's government ideology",
-                    "regions": "View or select your civilization's region",
-                    "reset": "Reset your civilization (irreversible!)",
-                    "start": "Start a new civilization with a cinematic intro",
-                    "status": "View your civilization status",
-                    "sv": "Start a saved chat with the AI (no timeout)",
-                    "svc": "Close and delete your saved chat",
-                    "warhelp": "Show this help menu"
-                }
-            },
-            "🤝 Diplomacy Commands": {
-                "description": "Alliances, trade, and messages",
-                "commands": {
-                    "acceptally": "Accept a pending alliance proposal",
-                    "accepttrade": "Accept a pending trade proposal",
-                    "ally": "Propose an alliance with another civilization",
-                    "break": "Break your current alliance",
-                    "coalition": "Form a coalition against another alliance",
-                    "inbox": "Check your pending alliance, trade proposals, and diplomatic messages",
-                    "mail": "Send a diplomatic message to another civilization",
-                    "rejectally": "Reject a pending alliance proposal",
-                    "rejecttrade": "Reject a pending trade proposal",
-                    "send": "Send resources to an ally",
-                    "trade": "Propose a resource trade with another civilization"
-                }
-            },
-            "💰 Economy (Extra)": {
-                "description": "Jobs, gambling, and store",
-                "commands": {
-                    "arrest": "Arrest a target (police job)",
-                    "blackjack": "Play a game of blackjack",
-                    "code": "Start a coding project",
-                    "darkweb": "Purchase risky items from the dark web",
-                    "extracards": "Play a card game against the bot",
-                    "extragamble": "Gamble gold for a chance to win",
-                    "extrainventory": "Show your inventory",
-                    "extrastore": "Buy items from the store",
-                    "extrawork": "Work to earn gold",
-                    "job": "Apply for a specific job",
-                    "jobs": "List available jobs",
-                    "rob": "Attempt to rob another user",
-                    "setbalance": "Set your gold balance (admin only)",
-                    "slots": "Play the slot machine"
-                }
-            },
-            "⚒️ Economy (Core)": {
-                "description": "Resource gathering and management",
-                "commands": {
-                    "advertise": "Run promotional campaigns to attract new citizens",
-                    "census": "Display current gold and population status",
-                    "cheer": "Spread cheer to boost citizen happiness",
-                    "drill": "Extract rare minerals with advanced drilling",
-                    "drive": "Unemploy citizens, freeing them from work",
-                    "farm": "Farm food for your civilization",
-                    "festival": "Hold a grand festival to boost happiness",
-                    "fish": "Fish for food or occasionally find treasure",
-                    "gather": "Gather random resources from your territory",
-                    "harvest": "Large harvest with longer cooldown",
-                    "invest": "Invest gold for delayed profit",
-                    "lottery": "Gamble gold for a chance at the jackpot",
-                    "mine": "Mine stone and wood from your territory",
-                    "raidcaravan": "Raid NPC merchant caravans for loot",
-                    "recruit": "Convert citizens into soldiers",
-                    "sell": "Sell hyper items to wandering merchants",
-                    "tax": "Collect taxes from your citizens",
-                    "work": "Employ citizens to work and gain immediate gold"
-                }
-            },
-            "💎 HyperItem Commands": {
-                "description": "Powerful one‑time items",
-                "commands": {
-                    "backstab": "Use Dagger for assassination attempt",
-                    "bomb": "Use Missiles for mid‑tier military strike",
-                    "boosttech": "Use Ancient Scroll to instantly advance technology",
-                    "hiremercs": "Use Mercenary Contract to hire professional soldiers",
-                    "laststand": "Use Last Stand when under 500 gold",
-                    "luckystrike": "Use Lucky Charm for guaranteed critical success",
-                    "megainvent": "Use Tech Core to advance multiple technology levels",
-                    "mintgold": "Use Gold Mint to generate large amounts of gold",
-                    "mirror": "Display Mirror status – reflects ANY attack",
-                    "nuke": "Launch a devastating nuclear attack (Warhead required)",
-                    "obliterate": "Completely obliterate a civilization (HyperLaser)",
-                    "propaganda": "Use Propaganda Kit to steal enemy soldiers",
-                    "sacrifice": "Destroy both your civilization and another (mutual destruction)",
-                    "shield": "Display Anti‑Nuke Shield status",
-                    "superharvest": "Use Harvest Engine for massive food",
-                    "superspy": "Use Spy Network for elite espionage"
-                }
-            },
-            "⚔️ Military Commands": {
-                "description": "War, borders, and cards",
-                "commands": {
-                    "accept_peace": "Accept a peace offer from another civilization",
-                    "addborder": "Build a defensive border (5min cooldown)",
-                    "attack": "Launch a direct attack (3min cooldown)",
-                    "borderinfo": "Check your border status (1min cooldown)",
-                    "cards": "View or use your unlocked cards",
-                    "declare": "Declare war on another civilization",
-                    "find": "Search for wandering soldiers (1min cooldown)",
-                    "peace": "Offer peace to an enemy civilization",
-                    "rectract": "Assign soldiers to the border (1min cooldown)",
-                    "removeborder": "Remove your border and retrieve soldiers (2min)",
-                    "retrieve": "Retrieve soldiers from the border (1min cooldown)",
-                    "siege": "Lay siege to an enemy (10min cooldown)",
-                    "stealthbattle": "Conduct a spy‑based stealth attack (4min)",
-                    "train": "Train military units (2min cooldown)"
-                }
-            },
-            "🏪 Store Commands": {
-                "description": "Upgrades and black market",
-                "commands": {
-                    "blackmarket": "Purchase random HyperItems (no cooldown)",
-                    "inventory": "View your HyperItems and store upgrades",
-                    "market": "Display information about the Black Market",
-                    "store": "View the civilization store and purchase upgrades"
-                }
-            },
-            # ---------- NEW INDUSTRIAL CATEGORY ----------
-            "🏭 Industrial Revolution": {
-                "description": "Micromanagement challenge (once per player)",
-                "commands": {
-                    "industrial_start": "Begin the revolution (confirmation required)",
-                    "industrial_status": "View all 25+ stats",
-                    "industrial_build": "Build a factory",
-                    "industrial_tech": "Research technology",
-                    "industrial_workers": "Train workers",
-                    "industrial_cleanup": "Reduce pollution",
-                    "industrial_railway": "Build railways",
-                    "industrial_transport": "Improve transport",
-                    "industrial_army": "Raise military protection",
-                    "industrial_policy": "Enact a new policy",
-                    "industrial_import": "Import raw materials",
-                    "industrial_export": "Export goods",
-                    "industrial_steam": "Research steam power",
-                    "industrial_mine": "Build a mine",
-                    "industrial_hospital": "Build a hospital",
-                    "industrial_school": "Build a school",
-                    "industrial_law": "Enforce law and order",
-                    "industrial_trade": "Diplomatic trade",
-                    "industrial_aid": "Request foreign aid",
-                    "industrial_suppress": "Suppress revolts",
-                    "industrial_bribe": "Bribe workers",
-                    "industrial_automate": "Automate factories",
-                    "industrial_upgrade": "Upgrade factories",
-                    "industrial_relief": "Disaster relief",
-                    "industrial_expand": "Expand cities",
-                    "industrial_banking": "Invest in banking",
-                    "industrial_nationalize": "Nationalize industry",
-                    "indushelp": "Show all Industrial Revolution commands"
-                }
-            },
-            # --------------------------------------------
-            "📌 Other": {
-                "description": "Miscellaneous commands",
-                "commands": {
-                    "help": "Shows this message"
-                }
+  # In bot/commands/basic.py, inside BasicCommands class
+
+@commands.hybrid_command(name="warhelp", description="Show all command categories or get help for a specific category")
+@app_commands.describe(category="Category name (optional)")
+@app_commands.choices(category=[
+    app_commands.Choice(name="Basic", value="basic"),
+    app_commands.Choice(name="Diplomacy", value="diplomacy"),
+    app_commands.Choice(name="Economy (Extra)", value="economy_extra"),
+    app_commands.Choice(name="Economy (Core)", value="economy_core"),
+    app_commands.Choice(name="HyperItems", value="hyperitems"),
+    app_commands.Choice(name="Military", value="military"),
+    app_commands.Choice(name="Store", value="store"),
+    app_commands.Choice(name="Industrial", value="industrial"),
+    app_commands.Choice(name="Other", value="other"),
+])
+async def warhelp(self, ctx, category: Optional[Literal["basic", "diplomacy", "economy_extra", "economy_core", "hyperitems", "military", "store", "industrial", "other"]] = None):
+    """Show all commands grouped by category, or drill into one category."""
+    
+    # Define categories exactly as before, but keep them in a dict for easy lookup
+    categories = {
+        "basic": {
+            "name": "🏛️ Basic Commands",
+            "description": "Essential civilization management",
+            "commands": {
+                "ideology": "Choose your civilization's government ideology",
+                "regions": "View or select your civilization's region",
+                "reset": "Reset your civilization (irreversible!)",
+                "start": "Start a new civilization with a cinematic intro",
+                "status": "View your civilization status",
+                "sv": "Start a saved chat with the AI (no timeout)",
+                "svc": "Close and delete your saved chat",
+                "warhelp": "Show this help menu"
+            }
+        },
+        "diplomacy": {
+            "name": "🤝 Diplomacy Commands",
+            "description": "Alliances, trade, and messages",
+            "commands": {
+                "acceptally": "Accept a pending alliance proposal",
+                "accepttrade": "Accept a pending trade proposal",
+                "ally": "Propose an alliance with another civilization",
+                "break": "Break your current alliance",
+                "coalition": "Form a coalition against another alliance",
+                "inbox": "Check your pending alliance, trade proposals, and diplomatic messages",
+                "mail": "Send a diplomatic message to another civilization",
+                "rejectally": "Reject a pending alliance proposal",
+                "rejecttrade": "Reject a pending trade proposal",
+                "send": "Send resources to an ally",
+                "trade": "Propose a resource trade with another civilization"
+            }
+        },
+        "economy_extra": {
+            "name": "💰 Economy (Extra)",
+            "description": "Jobs, gambling, and store",
+            "commands": {
+                "arrest": "Arrest a target (police job)",
+                "blackjack": "Play a game of blackjack",
+                "code": "Start a coding project",
+                "darkweb": "Purchase risky items from the dark web",
+                "extracards": "Play a card game against the bot",
+                "extragamble": "Gamble gold for a chance to win",
+                "extrainventory": "Show your inventory",
+                "extrastore": "Buy items from the store",
+                "extrawork": "Work to earn gold",
+                "job": "Apply for a specific job",
+                "jobs": "List available jobs",
+                "rob": "Attempt to rob another user",
+                "setbalance": "Set your gold balance (admin only)",
+                "slots": "Play the slot machine"
+            }
+        },
+        "economy_core": {
+            "name": "⚒️ Economy (Core)",
+            "description": "Resource gathering and management",
+            "commands": {
+                "advertise": "Run promotional campaigns to attract new citizens",
+                "census": "Display current gold and population status",
+                "cheer": "Spread cheer to boost citizen happiness",
+                "drill": "Extract rare minerals with advanced drilling",
+                "drive": "Unemploy citizens, freeing them from work",
+                "farm": "Farm food for your civilization",
+                "festival": "Hold a grand festival to boost happiness",
+                "fish": "Fish for food or occasionally find treasure",
+                "gather": "Gather random resources from your territory",
+                "harvest": "Large harvest with longer cooldown",
+                "invest": "Invest gold for delayed profit",
+                "lottery": "Gamble gold for a chance at the jackpot",
+                "mine": "Mine stone and wood from your territory",
+                "raidcaravan": "Raid NPC merchant caravans for loot",
+                "recruit": "Convert citizens into soldiers",
+                "sell": "Sell hyper items to wandering merchants",
+                "tax": "Collect taxes from your citizens",
+                "work": "Employ citizens to work and gain immediate gold"
+            }
+        },
+        "hyperitems": {
+            "name": "💎 HyperItem Commands",
+            "description": "Powerful one‑time items",
+            "commands": {
+                "backstab": "Use Dagger for assassination attempt",
+                "bomb": "Use Missiles for mid‑tier military strike",
+                "boosttech": "Use Ancient Scroll to instantly advance technology",
+                "hiremercs": "Use Mercenary Contract to hire professional soldiers",
+                "laststand": "Use Last Stand when under 500 gold",
+                "luckystrike": "Use Lucky Charm for guaranteed critical success",
+                "megainvent": "Use Tech Core to advance multiple technology levels",
+                "mintgold": "Use Gold Mint to generate large amounts of gold",
+                "mirror": "Display Mirror status – reflects ANY attack",
+                "nuke": "Launch a devastating nuclear attack (Warhead required)",
+                "obliterate": "Completely obliterate a civilization (HyperLaser)",
+                "propaganda": "Use Propaganda Kit to steal enemy soldiers",
+                "sacrifice": "Destroy both your civilization and another (mutual destruction)",
+                "shield": "Display Anti‑Nuke Shield status",
+                "superharvest": "Use Harvest Engine for massive food",
+                "superspy": "Use Spy Network for elite espionage"
+            }
+        },
+        "military": {
+            "name": "⚔️ Military Commands",
+            "description": "War, borders, and cards",
+            "commands": {
+                "accept_peace": "Accept a peace offer from another civilization",
+                "addborder": "Build a defensive border (5min cooldown)",
+                "attack": "Launch a direct attack (3min cooldown)",
+                "borderinfo": "Check your border status (1min cooldown)",
+                "cards": "View or use your unlocked cards",
+                "declare": "Declare war on another civilization",
+                "find": "Search for wandering soldiers (1min cooldown)",
+                "peace": "Offer peace to an enemy civilization",
+                "rectract": "Assign soldiers to the border (1min cooldown)",
+                "removeborder": "Remove your border and retrieve soldiers (2min)",
+                "retrieve": "Retrieve soldiers from the border (1min cooldown)",
+                "siege": "Lay siege to an enemy (10min cooldown)",
+                "stealthbattle": "Conduct a spy‑based stealth attack (4min)",
+                "train": "Train military units (2min cooldown)"
+            }
+        },
+        "store": {
+            "name": "🏪 Store Commands",
+            "description": "Upgrades and black market",
+            "commands": {
+                "blackmarket": "Purchase random HyperItems (no cooldown)",
+                "inventory": "View your HyperItems and store upgrades",
+                "market": "Display information about the Black Market",
+                "store": "View the civilization store and purchase upgrades"
+            }
+        },
+        "industrial": {
+            "name": "🏭 Industrial Revolution",
+            "description": "Micromanagement challenge (once per player)",
+            "commands": {
+                "industrial_start": "Begin the revolution (confirmation required)",
+                "industrial_status": "View all 25+ stats",
+                "industrial_build": "Build a factory",
+                "industrial_tech": "Research technology",
+                "industrial_workers": "Train workers",
+                "industrial_cleanup": "Reduce pollution",
+                "industrial_railway": "Build railways",
+                "industrial_transport": "Improve transport",
+                "industrial_army": "Raise military protection",
+                "industrial_policy": "Enact a new policy",
+                "industrial_import": "Import raw materials",
+                "industrial_export": "Export goods",
+                "industrial_steam": "Research steam power",
+                "industrial_mine": "Build a mine",
+                "industrial_hospital": "Build a hospital",
+                "industrial_school": "Build a school",
+                "industrial_law": "Enforce law and order",
+                "industrial_trade": "Diplomatic trade",
+                "industrial_aid": "Request foreign aid",
+                "industrial_suppress": "Suppress revolts",
+                "industrial_bribe": "Bribe workers",
+                "industrial_automate": "Automate factories",
+                "industrial_upgrade": "Upgrade factories",
+                "industrial_relief": "Disaster relief",
+                "industrial_expand": "Expand cities",
+                "industrial_banking": "Invest in banking",
+                "industrial_nationalize": "Nationalize industry",
+                "indushelp": "Show all Industrial Revolution commands"
+            }
+        },
+        "other": {
+            "name": "📌 Other",
+            "description": "Miscellaneous commands",
+            "commands": {
+                "help": "Shows this message"
             }
         }
+    }
 
+    # If no category specified, show the main overview
+    if category is None:
         embed = discord.Embed(
-            title="🤖 NationBot – Complete Command List",
-            description="All commands work with both `.` prefix and `/` slash.\nSome commands have cooldowns – see descriptions for details.",
+            title="🤖 NationBot – Command Categories",
+            description="Use `/warhelp <category>` to see commands in that category.",
             color=discord.Color.blue()
         )
-
-        for category_name, category_data in categories.items():
-            cmd_list = []
-            for cmd, desc in category_data["commands"].items():
-                cmd_list.append(f"`{cmd}` – {desc}")
-            if cmd_list:
-                if len(cmd_list) > 20:
-                    cmd_list = cmd_list[:20] + ["… and more"]
-                embed.add_field(
-                    name=f"{category_name}",
-                    value=f"*{category_data['description']}*\n" + "\n".join(cmd_list),
-                    inline=False
-                )
-
-        embed.set_footer(text="Use .help <command> for more details on a specific command.")
+        for key, data in categories.items():
+            embed.add_field(
+                name=data["name"],
+                value=f"*{data['description']}*",
+                inline=False
+            )
+        embed.set_footer(text="Type /warhelp <category> for detailed command lists")
         await ctx.send(embed=embed)
+        return
+
+    # Show commands for a specific category
+    category_key = category.lower()
+    if category_key not in categories:
+        await ctx.send(f"❌ Unknown category `{category}`. Use `/warhelp` to see all categories.")
+        return
+
+    cat = categories[category_key]
+    cmd_list = []
+    for cmd, desc in cat["commands"].items():
+        cmd_list.append(f"`/{cmd}` – {desc}")
+
+    # If the list is too long, split or truncate
+    if len(cmd_list) > 25:
+        cmd_list = cmd_list[:25] + ["… and more"]
+
+    embed = discord.Embed(
+        title=f"{cat['name']}",
+        description=f"*{cat['description']}*",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Commands", value="\n".join(cmd_list), inline=False)
+    embed.set_footer(text="Use the command directly with /")
+    await ctx.send(embed=embed)
 
     # ---------- EXISTING COMMANDS ----------
     @commands.command(name='regions')
