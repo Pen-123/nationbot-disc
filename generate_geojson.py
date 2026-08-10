@@ -18,7 +18,7 @@ world = gpd.read_file("temp_geo/ne_110m_admin_0_countries.shp")
 # I've made a reasonable guess – you can edit this dictionary.
 region_country_mapping = {
     "Western Europe": ["France", "Germany", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Switzerland", "Austria"],
-    "Eastern Europe": ["Poland", "Czech Republic", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],  # Russia is huge; you may want to split later
+    "Eastern Europe": ["Poland", "Czech Republic", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
     "Southern Europe": ["Portugal", "Spain", "Italy", "Greece", "Croatia", "Slovenia", "Bosnia and Herzegovina", "Serbia", "Montenegro", "Albania", "North Macedonia", "Kosovo"],
     "Northern Europe": ["Norway", "Sweden", "Finland", "Denmark", "Iceland", "Estonia", "Latvia", "Lithuania"],
     "Central Asia": ["Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Afghanistan"],
@@ -31,20 +31,20 @@ region_country_mapping = {
     "Central Africa": ["Niger", "Nigeria", "Chad", "Cameroon", "Central African Republic", "DR Congo", "Republic of Congo", "Gabon", "Equatorial Guinea"],
     "East Africa": ["Sudan", "South Sudan", "Eritrea", "Ethiopia", "Djibouti", "Somalia", "Kenya", "Uganda", "Rwanda", "Burundi", "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles"],
     "Southern Africa": ["Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana", "Namibia", "South Africa", "Eswatini", "Lesotho"],
-    "Western North America": ["Canada", "United States"],  # USA is huge; you might want to split, but we'll keep it as one
-    "Central North America": ["Mexico"],  # Actually Mexico is in North America, but we put it as separate.
-    "Eastern North America": ["United States"]  # We'll duplicate USA for simplicity; you can split by states if you want later.
+    "Western North America": ["Canada", "United States"],
+    "Central North America": ["Mexico"],
+    "Eastern North America": ["United States"],   # <-- comma fixed
     "Mexico": ["Mexico"],
     "Central America": ["Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama"],
     "Northern South America": ["Venezuela", "Colombia", "Guyana", "Suriname", "French Guiana"],
     "Western South America": ["Ecuador", "Peru", "Bolivia", "Chile"],
-    "Eastern South America": ["Brazil"],  # Brazil is its own sub‑region
+    "Eastern South America": ["Brazil"],
     "Brazil": ["Brazil"],
     "Southern Cone": ["Argentina", "Uruguay", "Paraguay"],
     "Australia": ["Australia"],
     "New Zealand": ["New Zealand"],
     "Pacific Islands": ["Fiji", "Solomon Islands", "Vanuatu", "Papua New Guinea", "Samoa", "Tonga", "Micronesia", "Marshall Islands", "Palau", "Nauru", "Kiribati", "Tuvalu"],
-    "Antarctic Peninsula": [],  # Antarctica is not in the Natural Earth dataset; you can add it manually if needed
+    "Antarctic Peninsula": [],
     "East Antarctica": [],
     "West Antarctica": [],
 }
