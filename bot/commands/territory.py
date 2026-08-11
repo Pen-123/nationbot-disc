@@ -645,19 +645,39 @@ class TerritoryCog(commands.Cog):
         subregion = PROVINCE_TO_SUBREGION[province]
         province_count = len(PROVINCES[subregion])
         
-        # ---- NEW BASE COSTS: wood & stone drastically reduced ----
         base_cost = {
             "gold": 300 + (100 // max(1, province_count)),
             "food": 100 + (50 // max(1, province_count)),
-            "wood": 20 + (10 // max(1, province_count)),   # was 50 + 25
-            "stone": 20 + (10 // max(1, province_count)), # was 50 + 25
+            "wood": 20 + (10 // max(1, province_count)),
+            "stone": 20 + (10 // max(1, province_count)),
         }
-        # ---- Apply 25% reduction and area multiplier ----
+        
+        # ---- Apply area multiplier and 25% reduction ----
         cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
+
+        # ---- CROSS-SUBREGION PENALTY: 50% more expensive ----
+        if owned:
+            owned_subregions = set()
+            for p in owned:
+                sub = PROVINCE_TO_SUBREGION.get(p)
+                if sub:
+                    owned_subregions.add(sub)
+            
+            target_subregion = PROVINCE_TO_SUBREGION.get(province)
+            
+            if target_subregion and target_subregion not in owned_subregions:
+                cross_region_multiplier = 1.5
+                cost = {k: int(v * cross_region_multiplier) for k, v in cost.items()}
+                is_cross_region = True
+            else:
+                is_cross_region = False
+        else:
+            is_cross_region = False
 
         if not self.civ_manager.can_afford(user_id, cost):
             cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
-            await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.")
+            extra = " (cross-subregion penalty: +50%)" if is_cross_region else ""
+            await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.{extra}")
             return
 
         soldier_cost = self._calculate_soldier_cost(civ)
@@ -670,10 +690,115 @@ class TerritoryCog(commands.Cog):
 
         if self._add_province(user_id, province, ctx):
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
-            embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers", inline=True)
+            cost_display = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
+            extra = " (+50% cross-subregion penalty)" if is_cross_region else ""
+            embed.add_field(name="Cost", value=cost_display + f"\n⚔️ {soldier_cost} soldiers{extra}", inline=True)
             embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province}")
+        else:
+            await ctx.send("❌ Failed to claim province.")
+
+    @commands.command(name='rapidexpansion')
+    @app_commands.describe(province="Name of the province to claim")
+    async def rapid_expansion(self, ctx, *, province: str = None):
+        """
+        Rapidly expand using soldiers instead of resources.
+        Cost: 1 soldier per 595 km² (minimum 100 soldiers).
+        """
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need a civilization first! Use `.start`.")
+            return
+
+        owned = self._get_owned_provinces(user_id)
+
+        if province is None:
+            possible = self._get_expansion_options(user_id)
+            if not possible:
+                await ctx.send("❌ No available provinces to expand into.")
+                return
+            embed = discord.Embed(
+                title="⚡ Rapid Expansion",
+                description="Claim a province using soldiers instead of resources.\n"
+                            "Cost: **1 soldier per 595 km²** (minimum 100).",
+                color=discord.Color.orange()
+            )
+            by_subregion = {}
+            for p in possible:
+                subregion = PROVINCE_TO_SUBREGION.get(p, "Unknown")
+                by_subregion.setdefault(subregion, []).append(p)
+            for subregion, names in by_subregion.items():
+                embed.add_field(name=subregion, value=", ".join(names), inline=False)
+            embed.set_footer(text="Use `.rapidexpansion <province>` to claim.")
+            await ctx.send(embed=embed)
+            return
+
+        # Find match
+        match = None
+        for p in ALL_PROVINCES:
+            if p.lower() == province.lower():
+                match = p
+                break
+        if not match:
+            for p in ALL_PROVINCES:
+                if province.lower() in p.lower():
+                    match = p
+                    break
+        if not match:
+            await ctx.send(f"❌ Unknown province: `{province}`. Use `.rapidexpansion` to see available provinces.")
+            return
+        province = match
+
+        if province in owned:
+            await ctx.send(f"❌ You already own **{province}**.")
+            return
+
+        possible = self._get_expansion_options(user_id)
+        if province not in possible:
+            await ctx.send(f"❌ **{province}** is not currently available for expansion.")
+            return
+
+        # ---- Calculate soldier cost based on area ----
+        area = self.province_areas.get(province, 1000)
+        soldier_cost = max(100, int(area / 595))  # 1 soldier per 595 km², minimum 100
+
+        # ---- Cross-subregion penalty ----
+        if owned:
+            owned_subregions = set()
+            for p in owned:
+                sub = PROVINCE_TO_SUBREGION.get(p)
+                if sub:
+                    owned_subregions.add(sub)
+            target_subregion = PROVINCE_TO_SUBREGION.get(province)
+            if target_subregion and target_subregion not in owned_subregions:
+                soldier_cost = int(soldier_cost * 1.5)
+                is_cross_region = True
+            else:
+                is_cross_region = False
+        else:
+            is_cross_region = False
+
+        # Check if player has enough soldiers
+        if civ['military']['soldiers'] < soldier_cost:
+            await ctx.send(f"❌ You need at least {soldier_cost} soldiers to rapidly expand into **{province}**! You have {civ['military']['soldiers']}.")
+            return
+
+        # ---- Deduct soldiers and add province ----
+        self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
+
+        if self._add_province(user_id, province, ctx):
+            embed = discord.Embed(
+                title="⚡ Rapid Expansion Successful!",
+                description=f"**{civ['name']}** has rapidly expanded into **{province}** using {soldier_cost} soldiers!",
+                color=discord.Color.gold()
+            )
+            extra = " (+50% cross-region penalty)" if is_cross_region else ""
+            embed.add_field(name="Soldiers Spent", value=f"⚔️ {soldier_cost}{extra}", inline=True)
+            embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
+            await ctx.send(embed=embed)
+            self.db.log_event(user_id, "rapid_expansion", "Rapid Expansion", f"Expanded into {province} using {soldier_cost} soldiers")
         else:
             await ctx.send("❌ Failed to claim province.")
 
