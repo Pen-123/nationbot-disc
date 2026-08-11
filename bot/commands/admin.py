@@ -32,7 +32,6 @@ class AdminCommands(commands.Cog):
         """
         scope = (scope or "global").lower().strip()
 
-        # Helper to send messages for both Context and Interaction
         async def _send(message: str, **kwargs):
             if isinstance(ctx, discord.Interaction):
                 try:
@@ -41,7 +40,6 @@ class AdminCommands(commands.Cog):
                     else:
                         await ctx.followup.send(message, **kwargs)
                 except Exception:
-                    # Best-effort fallback
                     try:
                         await ctx.followup.send(message, **kwargs)
                     except Exception:
@@ -83,7 +81,7 @@ class AdminCommands(commands.Cog):
             await _send(f"❌ Sync failed: {e}")
 
     @commands.hybrid_command(name='forcesync')
-    @commands.is_owner()
+    # @commands.is_owner()  <-- REMOVED: no permission required anymore
     async def force_sync_db(self, ctx):
         """Force‑sync the database from Dropbox (overwrites local)."""
         if not self.bot.db.dropbox_client:
