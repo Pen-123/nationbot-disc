@@ -14,41 +14,53 @@ from bot.utils import create_embed, format_number
 logger = logging.getLogger(__name__)
 
 # ---- DATA ----
-# Mapping from subregion name to a list of possible countryball IDs.
-# When a player completes a subregion, one is chosen at random.
+# Each subregion maps to exactly one countryball ID.
+# All base countryballs (12) are assigned to at least one region.
+# Evolution-only balls (e.g., german_empire) are not directly unlocked – they evolve from their base.
 REGION_TO_COUNTRYBALL = {
-    "Eastern Europe": ["soviet_union"],
-    "Western Europe": ["france"],
-    "Central Europe": ["reich"],           # German Reich (base)
-    "Balkans": ["austria-hungary"],
-    "Southern Europe": ["italy"],
-    "Northern Europe": ["british_empire"],
-    "Central Asia": ["soviet_union"],
-    "Northeast Asia": ["china", "north_korea", "taiwan"],  # random among these
-    "South Asia": ["british_empire"],
-    "Southeast Asia": ["japanese_empire"],
-    "Middle East": ["ottoman_empire"],
-    "North Africa": ["ottoman_empire"],
-    "West Africa": ["france"],
-    "Central Africa": ["france"],
-    "East Africa": ["british_empire"],
-    "Southern Africa": ["british_empire"],
-    "Western North America": ["america"],
-    "Central North America": ["america"],
-    "Eastern North America": ["america"],
-    "Mexico": ["america"],
-    "Central America": ["america"],
-    "Northern South America": ["america"],
-    "Western South America": ["america"],
-    "Eastern South America": ["america"],
-    "Brazil": ["america"],
-    "Southern Cone": ["america"],
-    "Australia": ["british_empire"],
-    "New Zealand": ["british_empire"],
-    "Pacific Islands": ["british_empire"],
-    "Antarctic Peninsula": [],
-    "East Antarctica": [],
-    "West Antarctica": [],
+    # Europe
+    "Eastern Europe": "soviet_union",
+    "Western Europe": "reich",          # German Reich – evolves into German Empire
+    "Southern Europe": "italy",
+    "Northern Europe": "british_empire",
+
+    # Asia
+    "Central Asia": "austria-hungary",  # historically off, but gives it a region
+    "East Asia": "north_korea",         # North Korea
+    "Middle East": "ottoman_empire",
+    "South Asia": "taiwan",             # Taiwan
+    "Southeast Asia": "japanese_empire",
+
+    # Africa
+    "North Africa": "ottoman_empire",   # duplicate (also Middle East)
+    "West Africa": "france",
+    "Central Africa": "france",         # duplicate
+    "East Africa": "british_empire",    # duplicate
+    "Southern Africa": "british_empire",# duplicate
+
+    # North America
+    "Western North America": "america",
+    "Central North America": "america",
+    "Eastern North America": "america",
+    "Mexico": "america",
+
+    # South America
+    "Brazil": "america",
+    "Central America": "america",
+    "Eastern South America": "america",
+    "Northern South America": "america",
+    "Southern Cone": "america",
+    "Western South America": "america",
+
+    # Oceania
+    "Australia": "british_empire",
+    "New Zealand": "british_empire",
+    "Pacific Islands": "british_empire",
+
+    # Antarctica – no countryballs
+    "Antarctic Peninsula": None,
+    "East Antarctica": None,
+    "West Antarctica": None,
 }
 
 COUNTRYBALLS = {
@@ -340,7 +352,7 @@ SYNERGIES = {
 # -------------------------------------------------------------------
 class CountryballManager:
     def __init__(self, db, bot):
-        self.db = db          # Database instance with Firestore client
+        self.db = db
         self.bot = bot
         self.images_path = os.path.join(os.path.dirname(__file__), '..', '..', 'images')
 
@@ -351,7 +363,6 @@ class CountryballManager:
         return self.db.client.collection("active_managers").document(user_id)
 
     def unlock_countryball(self, user_id: str, ball_id: str) -> bool:
-        """Unlock a countryball for a player. Returns True if newly unlocked."""
         try:
             doc_ref = self._get_user_balls_ref(user_id)
             doc = doc_ref.get()
@@ -644,12 +655,9 @@ class CountryballCog(commands.Cog):
 
     # ---- AUTO-UNLOCK TRIGGER (for region completion) ----
     async def check_region_unlock(self, ctx, region: str, user_id: str):
-        possible_balls = REGION_TO_COUNTRYBALL.get(region, [])
-        if not possible_balls:
+        ball_id = REGION_TO_COUNTRYBALL.get(region)
+        if not ball_id:
             return
-
-        # Randomly choose one from the list
-        ball_id = random.choice(possible_balls)
 
         if not self.ball_manager.unlock_countryball(user_id, ball_id):
             return
@@ -689,10 +697,9 @@ class CountryballCog(commands.Cog):
 
         unlocked_any = False
         for region in completed_regions:
-            possible_balls = REGION_TO_COUNTRYBALL.get(region, [])
-            if not possible_balls:
+            ball_id = REGION_TO_COUNTRYBALL.get(region)
+            if not ball_id:
                 continue
-            ball_id = random.choice(possible_balls)
             if self.ball_manager.unlock_countryball(user_id, ball_id):
                 unlocked_any = True
                 if self.territory_cog:
