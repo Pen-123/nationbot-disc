@@ -35,37 +35,27 @@ class Database:
             self.init_dropbox()
 
         # ---- Decide whether to download from Dropbox ----
-        # Check if local file exists and is newer than the remote one.
-        # We'll store a timestamp file to track the last upload time.
-        self._local_timestamp_file = f"{self.db_path}.timestamp"
-        self._remote_timestamp = None
-        self._local_timestamp = None
-
         if self.dropbox_client:
-            # Get remote file metadata to check modification time
+            # Get remote file metadata
+            remote_timestamp = 0
             try:
                 meta = self.dropbox_client.files_get_metadata(f"/{os.path.basename(self.db_path)}")
-                self._remote_timestamp = meta.server_modified.timestamp()
+                remote_timestamp = meta.server_modified.timestamp()
             except ApiError as e:
                 if e.error.is_path() and e.error.get_path().is_not_found():
-                    self._remote_timestamp = 0
+                    remote_timestamp = 0
                 else:
                     logger.error(f"Error getting remote metadata: {e}")
-                    self._remote_timestamp = 0
+                    remote_timestamp = 0
 
-            # Read local timestamp if exists
-            if os.path.exists(self._local_timestamp_file):
-                try:
-                    with open(self._local_timestamp_file, 'r') as f:
-                        self._local_timestamp = float(f.read().strip())
-                except:
-                    self._local_timestamp = 0
-            else:
-                self._local_timestamp = 0
+            # Get local file mtime (if exists)
+            local_timestamp = 0
+            if os.path.exists(self.db_path):
+                local_timestamp = os.path.getmtime(self.db_path)
 
-            # Only download if remote is newer than local, or if local doesn't exist
-            if not os.path.exists(self.db_path) or (self._remote_timestamp and self._remote_timestamp > self._local_timestamp):
-                logger.info("Remote database is newer; downloading...")
+            # Download if remote is newer or local doesn't exist
+            if not os.path.exists(self.db_path) or remote_timestamp > local_timestamp:
+                logger.info(f"Remote is newer ({remote_timestamp} > {local_timestamp}); downloading...")
                 # Backup existing local file (optional)
                 if os.path.exists(self.db_path):
                     backup_path = f"{self.db_path}.backup"
@@ -150,10 +140,6 @@ class Database:
                 logger.info(f"Set permissions on {self.db_path} to 666 (read/write for all).")
             except Exception as e:
                 logger.warning(f"Could not change permissions on {self.db_path}: {e}")
-            # Update local timestamp to match remote
-            if self._remote_timestamp:
-                with open(self._local_timestamp_file, 'w') as f:
-                    f.write(str(self._remote_timestamp))
             logger.info(f"Downloaded latest database from Dropbox: {dropbox_path}")
         except ApiError as e:
             logger.error(f"Error downloading database: {e}")
@@ -167,20 +153,16 @@ class Database:
         reraise=True
     )
     def _upload_to_dropbox(self):
-        """Internal method that actually uploads; retries on any exception.
-        This is synchronous and blocking.
-        """
+        """Internal method that actually uploads; retries on any exception."""
         if not self._upload_enabled or not self.dropbox_client:
             logger.warning("Dropbox upload skipped – client not available.")
             return
 
-        # Rate limit: at most once every 30 seconds (but we can still call if needed)
+        # Rate limit: at most once every 30 seconds, but skip if shutdown
         now = time.time()
         if now - self._last_upload < 30 and not self._shutdown:
             logger.debug("Skipping upload – less than 30s since last upload.")
-            # We still upload if it's critical (shutdown)
-            if not self._shutdown:
-                return
+            return
 
         try:
             # Verify database integrity before upload
@@ -199,9 +181,6 @@ class Database:
                     mode=dropbox.files.WriteMode('overwrite')
                 )
             self._last_upload = now
-            # Update local timestamp file
-            with open(self._local_timestamp_file, 'w') as f:
-                f.write(str(now))
             logger.info(f"Successfully uploaded database to Dropbox: {dropbox_path}")
         except ApiError as e:
             logger.error(f"Dropbox API error during upload: {e}")
@@ -222,7 +201,7 @@ class Database:
         try:
             self._upload_to_dropbox()
         finally:
-            if not force:  # if we acquired the lock, release it
+            if not force:
                 self._upload_lock.release()
 
     def get_connection(self):
@@ -240,7 +219,6 @@ class Database:
         def cleanup_task():
             logger.info("Running scheduled cleanup...")
             self.cleanup_expired_requests()
-            # Schedule next cleanup in 24 hours
             timer = threading.Timer(86400, cleanup_task)
             timer.daemon = True
             timer.start()
@@ -447,7 +425,6 @@ class Database:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_peace_offers_status ON peace_offers(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)')
         conn.commit()
-        # Upload after initialization (if needed)
         self.upload_database(force=True)
         logger.info("Database initialized")
 
@@ -491,7 +468,7 @@ class Database:
             ))
             self.generate_card_selection(user_id, 1)
             conn.commit()
-            self.upload_database(force=True)  # Force immediate upload
+            self.upload_database(force=True)
             logger.info(f"Created civilization '{name}' for user {user_id}")
             return True
         except sqlite3.IntegrityError:
