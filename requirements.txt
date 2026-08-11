@@ -3,8 +3,6 @@ Flask
 aiohttp
 python-dotenv
 firebase-admin
-dropbox
-tenacity
 geopandas
 matplotlib
 shapely
