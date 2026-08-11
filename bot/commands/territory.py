@@ -22,7 +22,7 @@ except FileNotFoundError:
     logger.warning("province_areas.json not found; using default area of 1000 km².")
     PROVINCE_AREAS = {}
 
-# --- Province definitions (all UN members except tiny islands, plus Palestine/Kosovo) ---
+# --- Province definitions ---
 PROVINCES = {
     "Eastern Europe": [
         "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
@@ -94,7 +94,7 @@ PROVINCES = {
         "Mexico"
     ],
     "Eastern North America": [
-        "United States"  # duplicate? We'll keep as is.
+        "United States"
     ],
     "Mexico": ["Mexico"],
     "Central America": [
@@ -245,7 +245,6 @@ class TerritoryCog(commands.Cog):
         conn.commit()
 
     def _add_province(self, user_id: str, province: str) -> bool:
-        """Add a province and update territory land size appropriately."""
         owned = self._get_owned_provinces(user_id)
         if province in owned:
             return False
@@ -254,18 +253,16 @@ class TerritoryCog(commands.Cog):
         owned.append(province)
         self._set_owned_provinces(user_id, owned)
 
-        area = self.province_areas.get(province, 1000)  # default 1000 km²
+        area = self.province_areas.get(province, 1000)
         civ = self.civ_manager.get_civilization(user_id)
         if civ:
             if is_first:
-                # First province: set land size to the area directly
                 new_land = area
             else:
                 current_land = civ['territory']['land_size']
                 new_land = current_land + area
             self.civ_manager.update_territory(user_id, {"land_size": new_land})
 
-        # Log history
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
@@ -386,7 +383,7 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # Resource cost: 5x original
+        # ---------- RESOURCE COST: 2x less than before (now 2.5× original) ----------
         subregion = PROVINCE_TO_SUBREGION[province]
         province_count = len(PROVINCES[subregion])
         base_cost = {
@@ -395,7 +392,9 @@ class TerritoryCog(commands.Cog):
             "wood": 50 + (25 // max(1, province_count)),
             "stone": 50 + (25 // max(1, province_count)),
         }
-        cost = {k: v * 5 for k, v in base_cost.items()}
+        # Previously 5×, now 2.5× (half of 5)
+        COST_MULTIPLIER = 2.5
+        cost = {k: int(v * COST_MULTIPLIER) for k, v in base_cost.items()}
 
         if not self.civ_manager.can_afford(user_id, cost):
             cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
@@ -419,7 +418,6 @@ class TerritoryCog(commands.Cog):
             self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province}")
         else:
             await ctx.send("❌ Failed to claim province.")
-
 
 async def setup(bot):
     await bot.add_cog(TerritoryCog(bot))
