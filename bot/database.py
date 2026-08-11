@@ -26,13 +26,16 @@ class Database:
         self._upload_lock = threading.Lock()
         self._upload_enabled = False
 
+        # Ensure the database file exists and is writable
+        self._ensure_db_writable()
+
         # Initialize Dropbox if credentials exist
         if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
             self.init_dropbox()
 
-        # -------- FIX: ALWAYS DOWNLOAD FROM DROPBOX IF AVAILABLE --------
+        # Always download the latest from Dropbox if available
         if self.dropbox_client:
-            # Back up any existing local file before downloading (optional but safe)
+            # Backup existing local file (optional)
             if os.path.exists(self.db_path):
                 backup_path = f"{self.db_path}.backup"
                 try:
@@ -40,17 +43,34 @@ class Database:
                     logger.info(f"Local database backed up to {backup_path}")
                 except Exception as e:
                     logger.warning(f"Could not backup local database: {e}")
-            # Download the latest from Dropbox (will create new file if not found)
+            # Download latest from Dropbox
             self.download_database()
         else:
-            # No Dropbox; ensure local file exists or initialize
+            # No Dropbox; ensure local file exists
             if not os.path.exists(self.db_path):
-                # Create empty file; init_database will create tables
                 open(self.db_path, 'w').close()
 
         # Always initialize database schema
         self.init_database()
         self.setup_cleanup_scheduler()
+
+    def _ensure_db_writable(self):
+        """Ensure the database file exists and is writable."""
+        if not os.path.exists(self.db_path):
+            try:
+                open(self.db_path, 'w').close()
+                os.chmod(self.db_path, 0o666)
+                logger.info(f"Created new database file: {self.db_path}")
+            except Exception as e:
+                logger.error(f"Could not create database file: {e}")
+        else:
+            # Check if writable
+            if not os.access(self.db_path, os.W_OK):
+                try:
+                    os.chmod(self.db_path, 0o666)
+                    logger.info(f"Set permissions on {self.db_path} to 666 (read/write for all).")
+                except Exception as e:
+                    logger.error(f"Could not change permissions on {self.db_path}: {e}")
 
     def init_dropbox(self):
         try:
@@ -89,6 +109,12 @@ class Database:
                 raise
             # Download to local file
             self.dropbox_client.files_download_to_file(self.db_path, dropbox_path)
+            # Ensure writable
+            try:
+                os.chmod(self.db_path, 0o666)
+                logger.info(f"Set permissions on {self.db_path} to 666 (read/write for all).")
+            except Exception as e:
+                logger.warning(f"Could not change permissions on {self.db_path}: {e}")
             logger.info(f"Downloaded latest database from Dropbox: {dropbox_path}")
         except ApiError as e:
             logger.error(f"Error downloading database: {e}")
@@ -154,9 +180,16 @@ class Database:
             logger.debug("Upload already in progress; skipping.")
 
     def get_connection(self):
+        """Get a thread-local connection, ensuring it's writable and optimized."""
         if not hasattr(self.local, 'connection'):
+            # Make sure the file is writable before connecting
+            self._ensure_db_writable()
             self.local.connection = sqlite3.connect(self.db_path, check_same_thread=False)
             self.local.connection.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency and reduce locking
+            self.local.connection.execute("PRAGMA journal_mode=WAL")
+            self.local.connection.execute("PRAGMA synchronous=NORMAL")
+            self.local.connection.execute("PRAGMA busy_timeout=5000")
         return self.local.connection
 
     def setup_cleanup_scheduler(self):
