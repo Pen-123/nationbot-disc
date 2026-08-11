@@ -1,39 +1,3 @@
-"""
-database.py — Firestore backend for Nation Bot
-================================================
-DROP-IN REPLACEMENT for the old SQLite + Dropbox database.py.
-
-All method signatures and return types are identical.
-No changes needed in any other bot file.
-Just replace this file, add firebase-admin to requirements.txt,
-set one environment variable, and run.
-
-SETUP:
-  1. pip install firebase-admin
-  2. Download service account JSON from Firebase Console
-  3. On Railway: add variable FIREBASE_SERVICE_ACCOUNT_JSON with the full JSON
-     OR locally: set FIREBASE_SERVICE_ACCOUNT_PATH to the file path
-
-FIRESTORE STRUCTURE:
-  Collection civilizations      doc: {user_id}
-  └── subcollection cooldowns   doc: {command}  → { last_used_at: ISO string }
-  └── subcollection cards       doc: {tech_level} → { available_cards, status, created_at }
-  Collection alliances          doc: (auto-id)   → { name, leader_id, members[], join_requests[], ... }
-  Collection messages           doc: (auto-id)
-  Collection trade_requests     doc: (auto-id)
-  Collection events             doc: (auto-id)
-  Collection alliance_invitations doc: (auto-id)
-  Collection territories        doc: {territory_name} → { owner_id, conquered_at, previous_owner }
-  Collection territory_history  doc: (auto-id) → { user_id, territory_name, action, claimed_at }
-  Collection wars               doc: (auto-id)   (if used, kept for compatibility)
-  Collection peace_offers       doc: (auto-id)
-
-BUGS FIXED:
-  • Territory conquest now tracks NAMED territories for every player.
-  • Added new methods: conquer_territory, get_player_territories,
-    get_territory_owner, get_all_territories, get_territory_history.
-"""
-
 import os
 import json
 import random
