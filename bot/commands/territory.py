@@ -437,21 +437,35 @@ class TerritoryCog(commands.Cog):
         return self.db.get_player_territories(user_id)
 
     def _add_province(self, user_id: str, province: str, ctx=None) -> bool:
-        """Add a province to a player's territory (conquer from unowned or from NPC)."""
-        # Check if province already owned by someone else
+        """
+        Add a province to a player's territory.
+        Returns True if added (or already owned), False on failure.
+        Does NOT add if already owned.
+        Updates land_size only if newly added.
+        """
+        # First, check if the user already owns this province
+        owned = self._get_owned_provinces(user_id)
+        if province in owned:
+            logger.debug(f"Province {province} already owned by {user_id}")
+            return True  # Already owned, consider success
+
+        # Check if another player owns it
         owner = self.db.get_territory_owner(province)
         if owner and owner != user_id:
-            # It's owned by another player – we should not allow simple add; use conquest via war.
-            logger.warning(f"Tried to add province {province} owned by {owner} to {user_id}")
+            logger.warning(f"Province {province} owned by {owner}, cannot add to {user_id}")
             return False
 
-        # If unowned, use conquer_territory with loser_id=None
+        # Use conquer_territory to claim it (loser_id=None for unowned)
         success = self.db.conquer_territory(user_id, None, province)
         if success:
-            # Update the civilization's land_size
+            # Update civilization's land_size with the province area
             area = self.province_areas.get(province, 1000)
             self.civ_manager.update_territory(user_id, {"land_size": area})
-        return success
+            logger.info(f"Added province {province} to {user_id}, land_size +{area}")
+            return True
+        else:
+            logger.error(f"Failed to conquer province {province} for {user_id}")
+            return False
 
     def _calculate_soldier_cost(self, area: int) -> int:
         """
@@ -591,6 +605,7 @@ class TerritoryCog(commands.Cog):
             return
         province = match
 
+        # Double-check ownership (in case of race condition)
         if province in owned:
             await ctx.send(f"❌ You already own **{province}**.")
             return
@@ -650,10 +665,15 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to claim **{province}**! You have {civ['military']['soldiers']}.")
             return
 
+        # ---- Deduct costs and add province ----
         self.civ_manager.spend_resources(user_id, cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
-        # Claim province
+        # Final ownership check before adding (to avoid double-add)
+        if province in self._get_owned_provinces(user_id):
+            await ctx.send(f"❌ You already own **{province}** (appeared between checks).")
+            return
+
         if self._add_province(user_id, province, ctx):
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
             cost_display = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
@@ -663,7 +683,7 @@ class TerritoryCog(commands.Cog):
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province}")
         else:
-            await ctx.send("❌ Failed to claim province.")
+            await ctx.send("❌ Failed to claim province. Please try again.")
 
     @commands.command(name='rapidexpansion')
     @app_commands.describe(province="Name of the province to claim")
@@ -753,6 +773,11 @@ class TerritoryCog(commands.Cog):
         # ---- Deduct soldiers and add province ----
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
+        # Final ownership check
+        if province in self._get_owned_provinces(user_id):
+            await ctx.send(f"❌ You already own **{province}** (appeared between checks).")
+            return
+
         if self._add_province(user_id, province, ctx):
             embed = discord.Embed(
                 title="⚡ Rapid Expansion Successful!",
@@ -765,7 +790,7 @@ class TerritoryCog(commands.Cog):
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "rapid_expansion", "Rapid Expansion", f"Expanded into {province} using {soldier_cost} soldiers")
         else:
-            await ctx.send("❌ Failed to claim province.")
+            await ctx.send("❌ Failed to claim province. Please try again.")
 
 async def setup(bot):
     await bot.add_cog(TerritoryCog(bot))
