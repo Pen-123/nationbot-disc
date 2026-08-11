@@ -436,12 +436,6 @@ class TerritoryCog(commands.Cog):
         """Return list of province names owned by the player."""
         return self.db.get_player_territories(user_id)
 
-    def _set_owned_provinces(self, user_id: str, provinces: List[str]):
-        """Overwrite ownership – not used in this Firestore version; we use conquer_territory."""
-        # Not directly used; we handle via conquest operations.
-        # We keep it for compatibility but it's a stub.
-        pass
-
     def _add_province(self, user_id: str, province: str, ctx=None) -> bool:
         """Add a province to a player's territory (conquer from unowned or from NPC)."""
         # Check if province already owned by someone else
@@ -450,8 +444,22 @@ class TerritoryCog(commands.Cog):
             # It's owned by another player – we should not allow simple add; use conquest via war.
             logger.warning(f"Tried to add province {province} owned by {owner} to {user_id}")
             return False
+
         # If unowned, use conquer_territory with loser_id=None
-        return self.db.conquer_territory(user_id, None, province)
+        success = self.db.conquer_territory(user_id, None, province)
+        if success:
+            # Update the civilization's land_size
+            area = self.province_areas.get(province, 1000)
+            self.civ_manager.update_territory(user_id, {"land_size": area})
+        return success
+
+    def _calculate_soldier_cost(self, area: int) -> int:
+        """
+        Cost in soldiers to claim a province based on its area.
+        1 soldier per 595 km², minimum 10, maximum 5000 to prevent insane numbers.
+        """
+        cost = max(10, int(area / 595))
+        return min(cost, 5000)
 
     # ---- Other methods ----
     async def _check_subregion_completion(self, user_id: str, ctx=None):
@@ -515,11 +523,6 @@ class TerritoryCog(commands.Cog):
 
         return sorted(list(possible))
 
-    def _calculate_soldier_cost(self, civ) -> int:
-        soldiers = civ['military']['soldiers']
-        cost = math.ceil(soldiers * 0.1)
-        return max(10, cost)
-
     @commands.command(name='territories')
     async def list_territories(self, ctx):
         user_id = str(ctx.author.id)
@@ -568,7 +571,7 @@ class TerritoryCog(commands.Cog):
                 by_subregion.setdefault(subregion, []).append(p)
             for subregion, names in by_subregion.items():
                 embed.add_field(name=subregion, value=", ".join(names), inline=False)
-            embed.set_footer(text="Each expansion costs resources + minimum 10 soldiers.")
+            embed.set_footer(text="Each expansion costs resources + soldiers based on area.")
             await ctx.send(embed=embed)
             return
 
@@ -638,9 +641,13 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.{extra}")
             return
 
-        soldier_cost = self._calculate_soldier_cost(civ)
+        # ---- Soldier cost based on area ----
+        soldier_cost = self._calculate_soldier_cost(area)
+        if is_cross_region:
+            soldier_cost = int(soldier_cost * 1.5)
+
         if civ['military']['soldiers'] < soldier_cost:
-            await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army, minimum 10) to expand! You have {civ['military']['soldiers']}.")
+            await ctx.send(f"❌ You need at least {soldier_cost} soldiers to claim **{province}**! You have {civ['military']['soldiers']}.")
             return
 
         self.civ_manager.spend_resources(user_id, cost)
@@ -663,7 +670,7 @@ class TerritoryCog(commands.Cog):
     async def rapid_expansion(self, ctx, *, province: str = None):
         """
         Rapidly expand using soldiers instead of resources.
-        Cost: 1 soldier per 595 km² (minimum 100 soldiers).
+        Cost: 1 soldier per 595 km² (minimum 10, capped at 5000).
         """
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -681,7 +688,7 @@ class TerritoryCog(commands.Cog):
             embed = discord.Embed(
                 title="⚡ Rapid Expansion",
                 description="Claim a province using soldiers instead of resources.\n"
-                            "Cost: **1 soldier per 595 km²** (minimum 100).",
+                            "Cost: **1 soldier per 595 km²** (min 10, max 5000).",
                 color=discord.Color.orange()
             )
             by_subregion = {}
@@ -721,7 +728,7 @@ class TerritoryCog(commands.Cog):
 
         # ---- Calculate soldier cost based on area ----
         area = self.province_areas.get(province, 1000)
-        soldier_cost = max(100, int(area / 595))  # 1 soldier per 595 km², minimum 100
+        soldier_cost = self._calculate_soldier_cost(area)
 
         # ---- Cross-subregion penalty ----
         if owned:
