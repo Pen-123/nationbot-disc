@@ -537,33 +537,54 @@ class TerritoryCog(commands.Cog):
         return fully_owned
 
     def _get_expansion_options(self, user_id: str) -> List[str]:
+        """Return useful expansion options:
+        - If the player fully owns any subregion, allow expansion into any province not owned.
+        - Otherwise allow expansion into other provinces in the player's owned subregions and neighbouring subregions.
+        """
         owned = set(self._get_owned_provinces(user_id))
+        if not owned:
+            return []
+
         fully_owned_subregions = self._get_owned_subregions(user_id)
 
         possible = set()
+        # If fully owns a subregion, open up the whole map (excluding already owned)
         if fully_owned_subregions:
             for province in ALL_PROVINCES:
                 if province not in owned:
                     possible.add(province)
-        else:
-            for province in owned:
-                subregion = PROVINCE_TO_SUBREGION.get(province)
-                if subregion:
-                    for p in PROVINCES.get(subregion, []):
-                        if p not in owned:
-                            possible.add(p)
-            for subregion in fully_owned_subregions:
-                neighbours = SUBREGION_DATA.get(subregion, {}).get("neighbours", [])
-                for neighbour_subregion in neighbours:
-                    for province in PROVINCES.get(neighbour_subregion, []):
-                        if province not in owned:
-                            possible.add(province)
+            return sorted(possible)
+
+        # Otherwise, collect provinces in same subregions and neighbours
+        owned_subregions = set()
+        for p in owned:
+            sub = PROVINCE_TO_SUBREGION.get(p)
+            if sub:
+                owned_subregions.add(sub)
+
+        for sub in owned_subregions:
+            # provinces in same subregion
+            for p in PROVINCES.get(sub, []):
+                if p not in owned:
+                    possible.add(p)
+            # provinces in neighbouring subregions
+            neighbours = SUBREGION_DATA.get(sub, {}).get('neighbours', [])
+            for nsub in neighbours:
+                for p in PROVINCES.get(nsub, []):
+                    if p not in owned:
+                        possible.add(p)
+
         return sorted(list(possible))
 
     def _calculate_soldier_cost(self, civ) -> int:
-        soldiers = civ['military']['soldiers']
+        soldiers = 0
+        try:
+            soldiers = int(civ.get('military', {}).get('soldiers', 0))
+        except Exception:
+            soldiers = 0
+        # 10% of army, min 5, max 20 to keep expansion accessible but not trivial
         cost = math.ceil(soldiers * 0.1)
-        return max(10, cost)
+        return max(5, min(cost, 20))
 
     @commands.command(name='territories')
     async def list_territories(self, ctx):
@@ -573,111 +594,4 @@ class TerritoryCog(commands.Cog):
             await ctx.send("🌍 You don't own any provinces yet! Use `.expand` to claim your first.")
             return
 
-        embed = discord.Embed(title="🗺️ Your Provinces", color=discord.Color.green())
-        by_subregion = {}
-        for province in owned:
-            subregion = PROVINCE_TO_SUBREGION.get(province, "Unknown")
-            by_subregion.setdefault(subregion, []).append(province)
-
-        total_provinces = len(owned)
-        fully_owned = self._get_owned_subregions(user_id)
-
-        for subregion, provinces in by_subregion.items():
-            total_in_subregion = len(PROVINCES.get(subregion, []))
-            status = "✅ Complete" if subregion in fully_owned else f"{len(provinces)}/{total_in_subregion}"
-            embed.add_field(name=f"{subregion} ({status})", value=", ".join(provinces), inline=False)
-
-        embed.set_footer(text=f"Total: {total_provinces} provinces")
-        await ctx.send(embed=embed)
-
-    @commands.command(name='expand')
-    @app_commands.describe(province="Name of the province to claim")
-    async def expand(self, ctx, *, province: str = None):
-        user_id = str(ctx.author.id)
-        civ = self.civ_manager.get_civilization(user_id)
-        if not civ:
-            await ctx.send("❌ You need a civilization first! Use `.start`.")
-            return
-
-        owned = self._get_owned_provinces(user_id)
-
-        if province is None:
-            possible = self._get_expansion_options(user_id)
-            if not possible:
-                await ctx.send("❌ No available provinces to expand into.")
-                return
-            embed = discord.Embed(title="🌍 Available Provinces", description="Use `.expand <province>` to claim one.", color=discord.Color.blue())
-            by_subregion = {}
-            for p in possible:
-                subregion = PROVINCE_TO_SUBREGION.get(p, "Unknown")
-                by_subregion.setdefault(subregion, []).append(p)
-            for subregion, names in by_subregion.items():
-                embed.add_field(name=subregion, value=", ".join(names), inline=False)
-            embed.set_footer(text="Each expansion costs resources + minimum 10 soldiers.")
-            await ctx.send(embed=embed)
-            return
-
-        # Find match
-        match = None
-        for p in ALL_PROVINCES:
-            if p.lower() == province.lower():
-                match = p
-                break
-        if not match:
-            for p in ALL_PROVINCES:
-                if province.lower() in p.lower():
-                    match = p
-                    break
-        if not match:
-            await ctx.send(f"❌ Unknown province: `{province}`. Use `.expand` to see available provinces.")
-            return
-        province = match
-
-        if province in owned:
-            await ctx.send(f"❌ You already own **{province}**.")
-            return
-
-        possible = self._get_expansion_options(user_id)
-        if province not in possible:
-            await ctx.send(f"❌ **{province}** is not currently available for expansion.")
-            return
-
-        # ---- Area and cost ----
-        area = self.province_areas.get(province, 1000)
-        # Cost multiplier based on area: sqrt(area/1000), capped at 20
-        cost_multiplier = min(math.sqrt(area / 1000), 20.0)
-
-        subregion = PROVINCE_TO_SUBREGION[province]
-        province_count = len(PROVINCES[subregion])
-        base_cost = {
-            "gold": 300 + (100 // max(1, province_count)),
-            "food": 100 + (50 // max(1, province_count)),
-            "wood": 50 + (25 // max(1, province_count)),
-            "stone": 50 + (25 // max(1, province_count)),
-        }
-        cost = {k: int(v * cost_multiplier) for k, v in base_cost.items()}
-
-        if not self.civ_manager.can_afford(user_id, cost):
-            cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
-            await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.")
-            return
-
-        soldier_cost = self._calculate_soldier_cost(civ)
-        if civ['military']['soldiers'] < soldier_cost:
-            await ctx.send(f"❌ You need at least {soldier_cost} soldiers (10% of your army, minimum 10) to expand! You have {civ['military']['soldiers']}.")
-            return
-
-        self.civ_manager.spend_resources(user_id, cost)
-        self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
-
-        if self._add_province(user_id, province):
-            embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
-            embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers", inline=True)
-            embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
-            await ctx.send(embed=embed)
-            self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province}")
-        else:
-            await ctx.send("❌ Failed to claim province.")
-
-async def setup(bot):
-    await bot.add_cog(TerritoryCog(bot))
+    ],
