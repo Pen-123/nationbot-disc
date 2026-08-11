@@ -14,37 +14,41 @@ from bot.utils import create_embed, format_number
 logger = logging.getLogger(__name__)
 
 # ---- DATA ----
+# Mapping from subregion name to a list of possible countryball IDs.
+# When a player completes a subregion, one is chosen at random.
 REGION_TO_COUNTRYBALL = {
-    "Eastern Europe": "soviet_union",
-    "Western Europe": "france",
-    "Southern Europe": "italy",
-    "Northern Europe": "british_empire",
-    "Central Asia": "soviet_union",
-    "East Asia": "japanese_empire",
-    "South Asia": "british_empire",
-    "Southeast Asia": "japanese_empire",
-    "Middle East": "ottoman_empire",
-    "North Africa": "ottoman_empire",
-    "West Africa": "france",
-    "Central Africa": "france",
-    "East Africa": "british_empire",
-    "Southern Africa": "british_empire",
-    "Western North America": "america",
-    "Central North America": "america",
-    "Eastern North America": "america",
-    "Mexico": "america",
-    "Central America": "america",
-    "Northern South America": "america",
-    "Western South America": "america",
-    "Eastern South America": "america",
-    "Brazil": "america",
-    "Southern Cone": "america",
-    "Australia": "british_empire",
-    "New Zealand": "british_empire",
-    "Pacific Islands": "british_empire",
-    "Antarctic Peninsula": None,
-    "East Antarctica": None,
-    "West Antarctica": None,
+    "Eastern Europe": ["soviet_union"],
+    "Western Europe": ["france"],
+    "Central Europe": ["reich"],           # German Reich (base)
+    "Balkans": ["austria-hungary"],
+    "Southern Europe": ["italy"],
+    "Northern Europe": ["british_empire"],
+    "Central Asia": ["soviet_union"],
+    "Northeast Asia": ["china", "north_korea", "taiwan"],  # random among these
+    "South Asia": ["british_empire"],
+    "Southeast Asia": ["japanese_empire"],
+    "Middle East": ["ottoman_empire"],
+    "North Africa": ["ottoman_empire"],
+    "West Africa": ["france"],
+    "Central Africa": ["france"],
+    "East Africa": ["british_empire"],
+    "Southern Africa": ["british_empire"],
+    "Western North America": ["america"],
+    "Central North America": ["america"],
+    "Eastern North America": ["america"],
+    "Mexico": ["america"],
+    "Central America": ["america"],
+    "Northern South America": ["america"],
+    "Western South America": ["america"],
+    "Eastern South America": ["america"],
+    "Brazil": ["america"],
+    "Southern Cone": ["america"],
+    "Australia": ["british_empire"],
+    "New Zealand": ["british_empire"],
+    "Pacific Islands": ["british_empire"],
+    "Antarctic Peninsula": [],
+    "East Antarctica": [],
+    "West Antarctica": [],
 }
 
 COUNTRYBALLS = {
@@ -73,7 +77,7 @@ COUNTRYBALLS = {
         "flag_colors_human": "Black, White, and Red",
         "power_rank": 2,
         "image_file": "reich.jpg",
-        "evolution": {"base": None, "condition": None},
+        "evolution": {"base": "german_empire", "condition": "Own all provinces in Western Europe and Eastern Europe"},
         "synergy_group": "axis",
         "modifiers": {
             "soldier_training": 1.25,
@@ -339,14 +343,11 @@ class CountryballManager:
         self.db = db          # Database instance with Firestore client
         self.bot = bot
         self.images_path = os.path.join(os.path.dirname(__file__), '..', '..', 'images')
-        # No SQLite table creation needed; Firestore is schemaless.
 
     def _get_user_balls_ref(self, user_id: str):
-        """Return reference to the player_countryballs document for this user."""
         return self.db.client.collection("player_countryballs").document(user_id)
 
     def _get_active_managers_ref(self, user_id: str):
-        """Return reference to the active_managers document for this user."""
         return self.db.client.collection("active_managers").document(user_id)
 
     def unlock_countryball(self, user_id: str, ball_id: str) -> bool:
@@ -358,11 +359,10 @@ class CountryballManager:
                 data = doc.to_dict()
                 balls = data.get("balls", {})
                 if ball_id in balls:
-                    return False  # already unlocked
+                    return False
             else:
                 balls = {}
 
-            # Add the new ball
             balls[ball_id] = {
                 "unlocked_at": datetime.now(timezone.utc).isoformat(),
                 "is_active": False,
@@ -376,7 +376,6 @@ class CountryballManager:
             return False
 
     def get_collection(self, user_id: str) -> List[Dict]:
-        """Get a list of all countryballs owned by the user, with details."""
         try:
             doc = self._get_user_balls_ref(user_id).get()
             if not doc.exists:
@@ -406,7 +405,6 @@ class CountryballManager:
             return []
 
     def get_active_managers(self, user_id: str) -> List[str]:
-        """Return list of active manager ball IDs."""
         try:
             doc = self._get_active_managers_ref(user_id).get()
             if not doc.exists:
@@ -418,9 +416,7 @@ class CountryballManager:
             return []
 
     def activate(self, user_id: str, ball_id: str) -> bool:
-        """Activate a countryball as a manager (max 3)."""
         try:
-            # Check ownership and not already active
             user_doc = self._get_user_balls_ref(user_id).get()
             if not user_doc.exists:
                 return False
@@ -430,7 +426,6 @@ class CountryballManager:
             if balls[ball_id].get("is_active", False):
                 return False
 
-            # Check current active count
             active_ref = self._get_active_managers_ref(user_id)
             active_doc = active_ref.get()
             if active_doc.exists:
@@ -440,15 +435,12 @@ class CountryballManager:
             else:
                 active = []
 
-            # Add to active list
             active.append(ball_id)
             active_ref.set({"active": active}, merge=True)
 
-            # Mark is_active in player_countryballs
             balls[ball_id]["is_active"] = True
             self._get_user_balls_ref(user_id).set({"balls": balls}, merge=True)
 
-            # Apply modifiers
             self._apply_modifiers(user_id)
             return True
         except Exception as e:
@@ -456,9 +448,7 @@ class CountryballManager:
             return False
 
     def deactivate(self, user_id: str, ball_id: str) -> bool:
-        """Deactivate a countryball manager."""
         try:
-            # Check ownership and active
             user_doc = self._get_user_balls_ref(user_id).get()
             if not user_doc.exists:
                 return False
@@ -468,7 +458,6 @@ class CountryballManager:
             if not balls[ball_id].get("is_active", False):
                 return False
 
-            # Remove from active list
             active_ref = self._get_active_managers_ref(user_id)
             active_doc = active_ref.get()
             if not active_doc.exists:
@@ -479,11 +468,9 @@ class CountryballManager:
             active.remove(ball_id)
             active_ref.set({"active": active}, merge=True)
 
-            # Mark is_active in player_countryballs
             balls[ball_id]["is_active"] = False
             self._get_user_balls_ref(user_id).set({"balls": balls}, merge=True)
 
-            # Apply modifiers
             self._apply_modifiers(user_id)
             return True
         except Exception as e:
@@ -491,14 +478,12 @@ class CountryballManager:
             return False
 
     def _apply_modifiers(self, user_id: str):
-        """Recalculate bonuses from active countryballs and synergies, update civilization bonuses."""
         civ = self.db.get_civilization(user_id)
         if not civ:
             return
 
         active = self.get_active_managers(user_id)
         bonuses = civ.get('bonuses', {})
-        # Remove all countryball-related bonuses
         to_remove = [k for k in bonuses if k.startswith('countryball_')]
         for k in to_remove:
             del bonuses[k]
@@ -518,7 +503,6 @@ class CountryballManager:
         self.db.update_civilization(user_id, {'bonuses': bonuses})
 
     def _get_synergy_bonuses(self, user_id: str) -> Dict[str, float]:
-        """Calculate synergy bonuses based on active managers."""
         active = self.get_active_managers(user_id)
         active_groups = set()
         for ball_id in active:
@@ -543,7 +527,6 @@ class CountryballManager:
 
         condition = ball_def['evolution']['condition']
         import re
-        # Extract subregion names from condition (e.g., "Own all provinces in Western Europe, ...")
         subregions = re.findall(r"in ([A-Za-z ]+)", condition)
         if not subregions:
             return False
@@ -644,7 +627,6 @@ class CountryballCog(commands.Cog):
         file = discord.File(image_path, filename=ball_def['image_file'])
         embed4.set_image(url=f"attachment://{ball_def['image_file']}")
 
-        # Send stages
         await ctx.send(embed=embed1)
         await asyncio.sleep(1.5)
         await ctx.send(embed=embed2)
@@ -660,11 +642,14 @@ class CountryballCog(commands.Cog):
             lines.append(f"**{key.replace('_',' ').title()}:** {sign}{int((val-1)*100)}%")
         return "\n".join(lines)
 
-    # ---- AUTO-UNLOCK TRIGGER ----
+    # ---- AUTO-UNLOCK TRIGGER (for region completion) ----
     async def check_region_unlock(self, ctx, region: str, user_id: str):
-        ball_id = REGION_TO_COUNTRYBALL.get(region)
-        if not ball_id:
+        possible_balls = REGION_TO_COUNTRYBALL.get(region, [])
+        if not possible_balls:
             return
+
+        # Randomly choose one from the list
+        ball_id = random.choice(possible_balls)
 
         if not self.ball_manager.unlock_countryball(user_id, ball_id):
             return
@@ -678,9 +663,10 @@ class CountryballCog(commands.Cog):
 
         await self.reveal_countryball(ctx, ball_id, user_id)
 
-    # ---- NEW COMMAND: .openpacks ----
+    # ---- COMMANDS ----
     @commands.command(name='openpacks')
     async def open_packs(self, ctx):
+        """Open packs for all completed subregions."""
         user_id = str(ctx.author.id)
         if not self.territory_cog:
             await ctx.send("❌ Territory system not available.")
@@ -703,9 +689,10 @@ class CountryballCog(commands.Cog):
 
         unlocked_any = False
         for region in completed_regions:
-            ball_id = REGION_TO_COUNTRYBALL.get(region)
-            if not ball_id:
+            possible_balls = REGION_TO_COUNTRYBALL.get(region, [])
+            if not possible_balls:
                 continue
+            ball_id = random.choice(possible_balls)
             if self.ball_manager.unlock_countryball(user_id, ball_id):
                 unlocked_any = True
                 if self.territory_cog:
@@ -719,7 +706,37 @@ class CountryballCog(commands.Cog):
         if not unlocked_any:
             await ctx.send("📦 You've already unlocked all countryballs for your conquered regions!")
 
-    # ---- COMMANDS ----
+    @commands.command(name='evolve')
+    async def check_evolve(self, ctx):
+        """
+        Manually check evolution for all your countryballs.
+        Useful if you completed evolution conditions after unlocking the ball.
+        """
+        user_id = str(ctx.author.id)
+        collection = self.ball_manager.get_collection(user_id)
+        if not collection:
+            await ctx.send("📦 You don't have any countryballs to evolve.")
+            return
+
+        if not self.territory_cog:
+            await ctx.send("❌ Territory system not available.")
+            return
+
+        evolved_any = False
+        for ball in collection:
+            ball_id = ball['id']
+            if ball['evolution_stage'] == 'evolved':
+                continue
+            if self.ball_manager.check_evolution(user_id, ball_id, self.territory_cog):
+                evolved_any = True
+                ball_def = COUNTRYBALLS.get(ball_id)
+                if ball_def:
+                    await ctx.send(f"⭐ **{ball_def['name']}** has evolved! Check your collection with `.packs`.")
+                await asyncio.sleep(1)
+
+        if not evolved_any:
+            await ctx.send("🔍 No countryballs evolved. Make sure you've met the evolution conditions!")
+
     @commands.command(name='packs')
     async def packs_list(self, ctx):
         user_id = str(ctx.author.id)
