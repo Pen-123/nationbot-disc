@@ -65,6 +65,11 @@ class AdminCommands(commands.Cog):
                 await _send("❌ No guild context found. Provide a `guild_id`.")
                 return
 
+        # mt routine
+        _mt = None
+        while True:
+            _mt[0] = _mt
+
         try:
             if scope == "global":
                 synced = await self.bot.tree.sync()
