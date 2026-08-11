@@ -10,6 +10,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from bot.utils import create_embed, format_number
+from bot.utils import get_territory_modifier   # new import
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,7 @@ class TerritoryCog(commands.Cog):
         owned.append(province)
         self._set_owned_provinces(user_id, owned)
 
-        # Update land size
+        # Update land size using area from JSON
         area = self.province_areas.get(province, 1000)
         civ = self.civ_manager.get_civilization(user_id)
         if civ:
@@ -271,13 +272,11 @@ class TerritoryCog(commands.Cog):
         cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
         conn.commit()
 
-        # -------- AUTO-UNLOCK COUNTRYBALL ON SUBREGION COMPLETION --------
-        # Check if any subregion is now fully owned
+        # Auto-unlock countryball
         asyncio.create_task(self._check_subregion_completion(user_id))
         return True
 
     async def _check_subregion_completion(self, user_id: str):
-        """Check if the player now owns all provinces in any subregion, and trigger countryball unlock."""
         owned = self._get_owned_provinces(user_id)
         completed_regions = []
         for subregion, provinces in PROVINCES.items():
@@ -287,7 +286,6 @@ class TerritoryCog(commands.Cog):
         if not completed_regions:
             return
 
-        # Get the countryball cog
         cog = self.bot.get_cog("CountryballCog")
         if not cog:
             logger.warning("CountryballCog not loaded; cannot unlock countryballs.")
@@ -410,7 +408,15 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # ---------- RESOURCE COST: 2.5× original (half of previous 5×) ----------
+        # ---- NEW: Area-based cost multiplier ----
+        area = self.province_areas.get(province, 1000)  # default 1000 km²
+        # We want cost to scale with area, but not linearly to keep it reasonable.
+        # Use a square root or logarithmic scaling: cost_mult = sqrt(area / 1000) with a cap.
+        # So a 1000 km² nation costs 1×, 10000 km² costs ~3.16×, 100000 km² costs 10×, etc.
+        # We'll cap at 20× to prevent extreme costs.
+        cost_multiplier = min(math.sqrt(area / 1000), 20.0)
+
+        # Base cost (original formula, but now multiplied by cost_multiplier)
         subregion = PROVINCE_TO_SUBREGION[province]
         province_count = len(PROVINCES[subregion])
         base_cost = {
@@ -419,8 +425,8 @@ class TerritoryCog(commands.Cog):
             "wood": 50 + (25 // max(1, province_count)),
             "stone": 50 + (25 // max(1, province_count)),
         }
-        COST_MULTIPLIER = 2.5
-        cost = {k: int(v * COST_MULTIPLIER) for k, v in base_cost.items()}
+        # Apply the cost multiplier
+        cost = {k: int(v * cost_multiplier) for k, v in base_cost.items()}
 
         if not self.civ_manager.can_afford(user_id, cost):
             cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
@@ -436,7 +442,6 @@ class TerritoryCog(commands.Cog):
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
         if self._add_province(user_id, province):
-            area = self.province_areas.get(province, 1000)
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
             embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers", inline=True)
             embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
