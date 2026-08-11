@@ -466,7 +466,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- WARHELP ----------
+    # ---------- WARHELP (UPDATED CATEGORIES) ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
         """
@@ -506,9 +506,9 @@ Remember to keep responses engaging but focused on the game.
                     "trade": "Propose a resource trade with another civilization"
                 }
             },
-            "economy_extra": {
-                "name": "💰 Economy (Extra)",
-                "description": "Jobs, gambling, and store",
+            "economy_extra": {   # This was "economy_extra" – now its name changes
+                "name": "🎲 ExtraEconomy",
+                "description": "Jobs, gambling, and extra economy commands",
                 "commands": {
                     "arrest": "Arrest a target (police job)",
                     "blackjack": "Play a game of blackjack",
@@ -526,9 +526,9 @@ Remember to keep responses engaging but focused on the game.
                     "slots": "Play the slot machine"
                 }
             },
-            "economy_core": {
-                "name": "⚒️ Economy (Core)",
-                "description": "Resource gathering and management",
+            "economy_core": {   # This was "economy_core" – now its name changes
+                "name": "💰 Economy",
+                "description": "Core resource gathering and management",
                 "commands": {
                     "advertise": "Run promotional campaigns to attract new citizens",
                     "census": "Display current gold and population status",
@@ -683,7 +683,7 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- REGIONS COMMAND (FIXED) ----------
+    # ---------- REGIONS COMMAND ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
@@ -788,7 +788,7 @@ Remember to keep responses engaging but focused on the game.
                 current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
                 self.db.update_civilization(user_id, {'bonuses': current_bonuses})
 
-        # Update civ with region, resources, population – but let _add_province handle territory
+        # Update civ with region, resources, population – let _add_province handle territory
         update_data = {
             'region': matched_subregion,
             'resources': updated_resources,
@@ -796,7 +796,6 @@ Remember to keep responses engaging but focused on the game.
         }
 
         if self.db.update_civilization(user_id, update_data):
-            # Now add the province (this will set land size correctly)
             territory_cog = self.bot.get_cog("TerritoryCog")
             if territory_cog:
                 success = territory_cog._add_province(user_id, chosen_province)
@@ -821,7 +820,7 @@ Remember to keep responses engaging but focused on the game.
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
-    # ---------- START COMMAND (FIXED: accepts multi-word) ----------
+    # ---------- START COMMAND (multi-word) ----------
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, *, civ_name: str = None):
