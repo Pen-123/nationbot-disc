@@ -134,7 +134,7 @@ class Database:
             return False
 
     def force_sync(self) -> bool:
-        """Force download the previous version of the database from Dropbox."""
+        """Force download the previous version (warbot_prev.db) from Dropbox."""
         if not self.dropbox_client:
             logger.warning("Dropbox client not available.")
             return False
@@ -156,10 +156,12 @@ class Database:
         if not self._upload_enabled or not self.dropbox_client:
             logger.warning("Dropbox upload skipped – client not available.")
             return
+
         now = time.time()
         if now - self._last_upload < 30 and not self._shutdown:
             logger.debug("Skipping upload – less than 30s since last upload.")
             return
+
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -170,21 +172,34 @@ class Database:
 
             dropbox_path = f"/{os.path.basename(self.db_path)}"
             prev_dropbox_path = f"/warbot_prev.db"
-            temp_prev_path = f"{self.db_path}.prev"
-            if os.path.exists(temp_prev_path):
-                os.remove(temp_prev_path)
 
-            # Download current remote db (if exists) to use as previous
+            # ---- Step 1: Move the current remote DB to previous version ----
             try:
-                self.dropbox_client.files_download_to_file(temp_prev_path, dropbox_path)
-                logger.info("Downloaded current remote db to use as previous version.")
+                # Check if current exists
+                self.dropbox_client.files_get_metadata(dropbox_path)
+                # Move it to previous (overwrite previous if exists)
+                self.dropbox_client.files_move(
+                    from_path=dropbox_path,
+                    to_path=prev_dropbox_path,
+                    autorename=False,
+                    allow_shared_folder=False,
+                    allow_ownership_transfer=False
+                )
+                logger.info(f"Moved existing {dropbox_path} to {prev_dropbox_path}")
             except ApiError as e:
                 if e.error.is_path() and e.error.get_path().is_not_found():
-                    logger.info("No remote database found; this is the first upload.")
+                    # No current remote, nothing to move
+                    # Delete any stale previous file
+                    try:
+                        self.dropbox_client.files_delete(prev_dropbox_path)
+                        logger.info(f"Deleted stale {prev_dropbox_path}")
+                    except ApiError as del_e:
+                        if not (del_e.error.is_path() and del_e.error.get_path().is_not_found()):
+                            raise
                 else:
                     raise
 
-            # Upload the new current database
+            # ---- Step 2: Upload the new local database as the main file ----
             with open(self.db_path, 'rb') as f:
                 self.dropbox_client.files_upload(
                     f.read(),
@@ -192,30 +207,10 @@ class Database:
                     mode=dropbox.files.WriteMode('overwrite')
                 )
             logger.info(f"Uploaded new current database: {dropbox_path}")
-
-            # Upload the previous version (if exists)
-            if os.path.exists(temp_prev_path):
-                with open(temp_prev_path, 'rb') as f:
-                    self.dropbox_client.files_upload(
-                        f.read(),
-                        prev_dropbox_path,
-                        mode=dropbox.files.WriteMode('overwrite')
-                    )
-                os.remove(temp_prev_path)
-                logger.info(f"Uploaded previous database: {prev_dropbox_path}")
-            else:
-                try:
-                    self.dropbox_client.files_delete(prev_dropbox_path)
-                    logger.info(f"Deleted stale previous database: {prev_dropbox_path}")
-                except ApiError as e:
-                    if e.error.is_path() and e.error.get_path().is_not_found():
-                        pass
-                    else:
-                        raise
-
             self._last_upload = now
+
         except Exception as e:
-            logger.error(f"Error in upload process: {e}")
+            logger.error(f"Upload error: {e}")
             raise
 
     def upload_database(self, force=False):
@@ -239,10 +234,6 @@ class Database:
             self.local.connection.execute("PRAGMA synchronous=NORMAL")
             self.local.connection.execute("PRAGMA busy_timeout=5000")
         return self.local.connection
-
-    # ---- All other methods (migrations, CRUD, etc.) remain unchanged ----
-    # I'm omitting them here to keep the answer readable, but the full file includes them.
-    # They are identical to the previous version.
 
     def setup_cleanup_scheduler(self):
         def cleanup_task():
@@ -295,7 +286,6 @@ class Database:
             conn.commit()
             logger.info("Created missing cooldowns table")
             return
-
         cursor.execute("PRAGMA table_info(cooldowns)")
         columns = [col[1] for col in cursor.fetchall()]
         expected = {
@@ -334,7 +324,6 @@ class Database:
         ''')
         self._migrate_civilizations_table()
         self._migrate_cooldowns_table()
-
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cards (
                 user_id TEXT,
@@ -458,7 +447,7 @@ class Database:
         self.upload_database(force=True)
         logger.info("Database initialized")
 
-    # ---- CRUD operations (unchanged) ----
+    # ---- CRUD operations ----
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         try:
             default_resources = {"gold": 500, "food": 300, "stone": 100, "wood": 100}
@@ -618,7 +607,6 @@ class Database:
     def update_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         return self.set_command_cooldown(user_id, command, timestamp)
 
-    # ---- Card methods ----
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         try:
             conn = self.get_connection()
@@ -731,11 +719,379 @@ class Database:
         except Exception as e:
             logger.error(f"Error logging event: {e}")
 
-    # ---- Trade, messages, wars, etc. (all unchanged) ----
-    # I'm omitting them for brevity, but they are identical to the previous version.
-    # The full file includes all methods.
+    def get_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                SELECT e.*, c.name as civ_name
+                FROM events e
+                LEFT JOIN civilizations c ON e.user_id = c.user_id
+                ORDER BY e.timestamp DESC LIMIT ?
+            ''', (limit,))
+            events = []
+            for row in cursor.fetchall():
+                event = dict(row)
+                event['effects'] = json.loads(event['effects'])
+                events.append(event)
+            return events
+        except Exception as e:
+            logger.error(f"Error getting recent events: {e}")
+            return []
 
-    # ---- Cleanup, backup, shutdown ----
+    def create_trade_request(self, sender_id: str, recipient_id: str, offer: Dict, request: Dict) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO trade_requests (sender_id, recipient_id, offer, request) VALUES (?, ?, ?, ?)',
+                           (sender_id, recipient_id, json.dumps(offer), json.dumps(request)))
+            conn.commit()
+            self.upload_database(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating trade request: {e}")
+            return False
+
+    def get_trade_requests(self, user_id: str) -> List[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                SELECT t.*, c.name as sender_name
+                FROM trade_requests t
+                JOIN civilizations c ON t.sender_id = c.user_id
+                WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
+            ''', (user_id,))
+            requests = []
+            for row in cursor.fetchall():
+                req = dict(row)
+                req['offer'] = json.loads(req['offer'])
+                req['request'] = json.loads(req['request'])
+                requests.append(req)
+            return requests
+        except Exception as e:
+            logger.error(f"Error getting trade requests: {e}")
+            return []
+
+    def get_trade_request_by_id(self, request_id: int) -> Optional[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('SELECT * FROM trade_requests WHERE id = ? AND expires_at > CURRENT_TIMESTAMP', (request_id,))
+            row = cursor.fetchone()
+            if row:
+                req = dict(row)
+                req['offer'] = json.loads(req['offer'])
+                req['request'] = json.loads(req['request'])
+                return req
+            return None
+        except Exception as e:
+            logger.error(f"Error getting trade request by ID: {e}")
+            return None
+
+    def delete_trade_request(self, request_id: int) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM trade_requests WHERE id = ?', (request_id,))
+            conn.commit()
+            self.upload_database(force=True)
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting trade request: {e}")
+            return False
+
+    def create_alliance_invite(self, alliance_id: int, sender_id: str, recipient_id: str) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO alliance_invitations (alliance_id, sender_id, recipient_id) VALUES (?, ?, ?)',
+                           (alliance_id, sender_id, recipient_id))
+            conn.commit()
+            self.upload_database(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating alliance invite: {e}")
+            return False
+
+    def get_alliance_invites(self, user_id: str) -> List[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                SELECT ai.*, a.name as alliance_name
+                FROM alliance_invitations ai
+                JOIN alliances a ON ai.alliance_id = a.id
+                WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
+            ''', (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting alliance invites: {e}")
+            return []
+
+    def get_alliance_invite_by_id(self, invite_id: int) -> Optional[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                SELECT ai.*, a.name as alliance_name
+                FROM alliance_invitations ai
+                JOIN alliances a ON ai.alliance_id = a.id
+                WHERE ai.id = ? AND expires_at > CURRENT_TIMESTAMP
+            ''', (invite_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting alliance invite by ID: {e}")
+            return None
+
+    def delete_alliance_invite(self, invite_id: int) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM alliance_invitations WHERE id = ?', (invite_id,))
+            conn.commit()
+            self.upload_database(force=True)
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting alliance invite: {e}")
+            return False
+
+    def send_message(self, sender_id: str, recipient_id: str, message: str) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO messages (sender_id, recipient_id, message) VALUES (?, ?, ?)',
+                           (sender_id, recipient_id, message))
+            conn.commit()
+            self.upload_database(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+            return False
+
+    def get_messages(self, user_id: str) -> List[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                SELECT m.*, c.name as sender_name
+                FROM messages m
+                JOIN civilizations c ON m.sender_id = c.user_id
+                WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting messages: {e}")
+            return []
+
+    def delete_message(self, message_id: int) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM messages WHERE id = ?', (message_id,))
+            conn.commit()
+            self.upload_database(force=True)
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting message: {e}")
+            return False
+
+    def get_alliance(self, alliance_id: int) -> Optional[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('SELECT * FROM alliances WHERE id = ?', (alliance_id,))
+            row = cursor.fetchone()
+            if row:
+                alliance = dict(row)
+                alliance['members'] = json.loads(alliance['members'])
+                alliance['join_requests'] = json.loads(alliance['join_requests'])
+                return alliance
+            return None
+        except Exception as e:
+            logger.error(f"Error getting alliance: {e}")
+            return None
+
+    def get_alliance_by_name(self, name: str) -> Optional[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('SELECT * FROM alliances WHERE name = ?', (name,))
+            row = cursor.fetchone()
+            if row:
+                alliance = dict(row)
+                alliance['members'] = json.loads(alliance['members'])
+                alliance['join_requests'] = json.loads(alliance['join_requests'])
+                return alliance
+            return None
+        except Exception as e:
+            logger.error(f"Error getting alliance by name: {e}")
+            return None
+
+    def add_alliance_member(self, alliance_id: int, user_id: str) -> bool:
+        try:
+            alliance = self.get_alliance(alliance_id)
+            if not alliance:
+                return False
+            if user_id in alliance['members']:
+                return True
+            members = alliance['members'] + [user_id]
+            join_requests = [u for u in alliance['join_requests'] if u != user_id]
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('UPDATE alliances SET members = ?, join_requests = ? WHERE id = ?',
+                           (json.dumps(members), json.dumps(join_requests), alliance_id))
+            conn.commit()
+            self.upload_database(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error adding alliance member: {e}")
+            return False
+
+    def get_wars(self, user_id: str = None, status: str = 'ongoing') -> List[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            if user_id:
+                cursor.execute('''
+                    SELECT w.*, ac.name as attacker_name, dc.name as defender_name
+                    FROM wars w
+                    JOIN civilizations ac ON w.attacker_id = ac.user_id
+                    JOIN civilizations dc ON w.defender_id = dc.user_id
+                    WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.result = ?
+                ''', (user_id, user_id, status))
+            else:
+                cursor.execute('''
+                    SELECT w.*, ac.name as attacker_name, dc.name as defender_name
+                    FROM wars w
+                    JOIN civilizations ac ON w.attacker_id = ac.user_id
+                    JOIN civilizations dc ON w.defender_id = dc.user_id
+                    WHERE w.result = ?
+                ''', (status,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting wars: {e}")
+            return []
+
+    def get_peace_offers(self, user_id: str = None) -> List[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            if user_id:
+                cursor.execute('''
+                    SELECT po.*, oc.name as offerer_name, rc.name as receiver_name
+                    FROM peace_offers po
+                    JOIN civilizations oc ON po.offerer_id = oc.user_id
+                    JOIN civilizations rc ON po.receiver_id = rc.user_id
+                    WHERE (po.offerer_id = ? OR po.receiver_id = ?) AND po.status = 'pending'
+                ''', (user_id, user_id))
+            else:
+                cursor.execute('''
+                    SELECT po.*, oc.name as offerer_name, rc.name as receiver_name
+                    FROM peace_offers po
+                    JOIN civilizations oc ON po.offerer_id = oc.user_id
+                    JOIN civilizations rc ON po.receiver_id = rc.user_id
+                    WHERE po.status = 'pending'
+                ''')
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting peace offers: {e}")
+            return []
+
+    def create_peace_offer(self, offerer_id: str, receiver_id: str) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO peace_offers (offerer_id, receiver_id) VALUES (?, ?)', (offerer_id, receiver_id))
+            conn.commit()
+            self.upload_database(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating peace offer: {e}")
+            return False
+
+    def update_peace_offer(self, offer_id: int, status: str) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('UPDATE peace_offers SET status = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?',
+                           (status, offer_id))
+            conn.commit()
+            self.upload_database(force=True)
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating peace offer: {e}")
+            return False
+
+    def end_war(self, attacker_id: str, defender_id: str, result: str) -> bool:
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE wars SET result = ?, ended_at = CURRENT_TIMESTAMP
+                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                AND result = 'ongoing'
+            ''', (result, attacker_id, defender_id, defender_id, attacker_id))
+            conn.commit()
+            self.upload_database(force=True)
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error ending war: {e}")
+            return False
+
+    def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
+        try:
+            civ = self.get_civilization(user_id)
+            if not civ:
+                return {}
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                SELECT COUNT(*) as total_wars,
+                       SUM(CASE WHEN result = 'victory' THEN 1 ELSE 0 END) as victories,
+                       SUM(CASE WHEN result = 'defeat' THEN 1 ELSE 0 END) as defeats,
+                       SUM(CASE WHEN result = 'peace' THEN 1 ELSE 0 END) as peace_treaties
+                FROM wars WHERE attacker_id = ? OR defender_id = ?
+            ''', (user_id, user_id))
+            war_stats = dict(cursor.fetchone()) if cursor.rowcount > 0 else {'total_wars': 0, 'victories': 0, 'defeats': 0, 'peace_treaties': 0}
+            cursor.execute('SELECT COUNT(*) FROM events WHERE user_id = ?', (user_id,))
+            total_events = cursor.fetchone()[0]
+            military_power = civ['military']['soldiers'] * 10 + civ['military']['spies'] * 5 + civ['military']['tech_level'] * 50
+            economic_power = sum(civ['resources'].values())
+            territorial_power = civ['territory']['land_size']
+            total_power = military_power + economic_power + territorial_power
+            return {
+                'civilization': civ,
+                'war_statistics': war_stats,
+                'total_events': total_events,
+                'power_scores': {'military': military_power, 'economic': economic_power, 'territorial': territorial_power, 'total': total_power}
+            }
+        except Exception as e:
+            logger.error(f"Error getting user statistics: {e}")
+            return {}
+
+    def get_leaderboard(self, category: str = 'power', limit: int = 10) -> List[Dict]:
+        try:
+            cursor = self.get_connection().cursor()
+            if category == 'power':
+                cursor.execute('SELECT user_id, name, resources, military, territory FROM civilizations')
+                civs = []
+                for row in cursor.fetchall():
+                    civ = dict(row)
+                    resources = json.loads(civ['resources'])
+                    military = json.loads(civ['military'])
+                    territory = json.loads(civ['territory'])
+                    mil_pow = military['soldiers'] * 10 + military['spies'] * 5 + military['tech_level'] * 50
+                    eco_pow = sum(resources.values())
+                    ter_pow = territory['land_size']
+                    total = mil_pow + eco_pow + ter_pow
+                    civs.append({'user_id': civ['user_id'], 'name': civ['name'], 'score': total})
+                return sorted(civs, key=lambda x: x['score'], reverse=True)[:limit]
+            elif category == 'gold':
+                cursor.execute('SELECT user_id, name, resources FROM civilizations ORDER BY json_extract(resources, "$.gold") DESC LIMIT ?', (limit,))
+                return [{'user_id': row['user_id'], 'name': row['name'], 'score': json.loads(row['resources'])['gold']} for row in cursor.fetchall()]
+            elif category == 'military':
+                cursor.execute('SELECT user_id, name, military FROM civilizations ORDER BY (json_extract(military, "$.soldiers") + json_extract(military, "$.spies")) DESC LIMIT ?', (limit,))
+                return [{'user_id': row['user_id'], 'name': row['name'], 'score': json.loads(row['military'])['soldiers'] + json.loads(row['military'])['spies']} for row in cursor.fetchall()]
+            elif category == 'territory':
+                cursor.execute('SELECT user_id, name, territory FROM civilizations ORDER BY json_extract(territory, "$.land_size") DESC LIMIT ?', (limit,))
+                return [{'user_id': row['user_id'], 'name': row['name'], 'score': json.loads(row['territory'])['land_size']} for row in cursor.fetchall()]
+            return []
+        except Exception as e:
+            logger.error(f"Error getting leaderboard: {e}")
+            return []
+
     def cleanup_expired_requests(self):
         try:
             conn = self.get_connection()
