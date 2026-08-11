@@ -2,6 +2,7 @@ discord.py
 Flask
 aiohttp
 python-dotenv
+firebase-admin
 dropbox
 tenacity
 geopandas
