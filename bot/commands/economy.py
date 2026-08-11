@@ -8,7 +8,6 @@ import logging
 from bot.utils import format_number, create_embed, get_territory_modifier
 from functools import wraps
 from typing import List
-from bot.utils import get_territory_modifier
 
 logger = logging.getLogger(__name__)
 
@@ -89,33 +88,33 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Random resource generation
         possible_resources = ['gold', 'wood', 'stone', 'food']
         gathered = {}
         
-        employment_rate = self.civ_manager.get_employment_rate(user_id)
-        employment_modifier = employment_rate / 100 + 0.5  # Base 50% + employment rate
+        # ---- EMPLOYMENT and TERRITORY (softened) ----
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100  # 0.0 to 1.0
+        employment_factor = 1 + employment_rate * 0.8  # 1.0 to 1.8 (high employment matters)
         
-        # Use the nerfed territory modifier
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])  # 1.0 to 2.0
+        # Reduce territory impact: only 40% of the bonus above 1.0
+        territory_factor = 1 + (territory_modifier - 1) * 0.4  # 1.0 to 1.4
         
         for resource in possible_resources:
             if random.random() < 0.7:  # 70% chance for each resource
                 base_amount = random.randint(10, 50)
-                amount = int(base_amount * territory_modifier * employment_modifier)
+                amount = int(base_amount * employment_factor * territory_factor)
                 gathered[resource] = amount
         
         if not gathered:
             await ctx.send("🔍 Your scouts searched but found nothing of value this time.")
             return
             
-        # Apply luck modifier
+        # Apply luck modifier (unchanged)
         luck_modifier = self.civ_manager.calculate_total_modifier(user_id, "luck")
         if luck_modifier > 1.0:
             for resource in gathered:
                 gathered[resource] = int(gathered[resource] * luck_modifier)
         
-        # Update resources
         self.civ_manager.update_resources(user_id, gathered)
         
         embed = create_embed(
@@ -128,8 +127,8 @@ class EconomyCommands(commands.Cog):
         resource_text = "\n".join([f"{resource_icons[res]} {format_number(amt)} {res.capitalize()}" 
                                   for res, amt in gathered.items()])
         embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
-        embed.add_field(name="Employment Rate", value=f"{employment_rate:.1f}%", inline=True)
-        embed.add_field(name="Territory Modifier", value=f"{territory_modifier:.2f}x", inline=True)
+        embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
+        embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
         
         await ctx.send(embed=embed)
 
@@ -160,13 +159,10 @@ class EconomyCommands(commands.Cog):
             await ctx.send(f"❌ Only {unemployed} unemployed citizens available!")
             return
             
-        # Update employment
         self.civ_manager.update_employment(user_id, amount)
         
-        # Calculate gold gain based on amount employed
-        gold_gain = amount * random.randint(1, 3)  # Base gain per employed citizen
-        
-        # Apply ideology modifiers if any
+        # Gold gain based on employment (unchanged)
+        gold_gain = amount * random.randint(1, 3)
         ideology = civ.get('ideology', '')
         if ideology == 'communism':
             gold_gain = int(gold_gain * 1.15)
@@ -199,25 +195,26 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Calculate food production
+        # ---- SOFTER TERRITORY, MORE EMPLOYMENT ----
         base_food = random.randint(20, 80)
         citizen_bonus = civ['population']['citizens'] // 10
         
-        # Use nerfed territory modifier instead of linear scaling
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
-        total_food = base_food + citizen_bonus + territory_bonus
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
         
-        # Apply ideology modifier
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
+        
+        total_food = int((base_food + citizen_bonus) * employment_factor * territory_factor)
+        
         if civ.get('ideology') == 'communism':
-            total_food = int(total_food * 1.1)  # Communism bonus
+            total_food = int(total_food * 1.1)
             
         # Random events
         event_text = ""
-        if random.random() < 0.1:  # 10% chance
+        if random.random() < 0.1:
             event_multiplier = random.choice([0.5, 1.5, 2.0])
             total_food = int(total_food * event_multiplier)
-            
             if event_multiplier < 1:
                 event_text = "🦗 Locust swarm damaged some crops!"
             else:
@@ -251,23 +248,27 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Mining yields
+        # ---- SOFTER TERRITORY, MORE EMPLOYMENT ----
         stone_yield = random.randint(15, 60)
         wood_yield = random.randint(10, 40)
         
-        # Apply nerfed territory modifier instead of linear scaling
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        stone_yield = int(stone_yield * territory_modifier)
-        wood_yield = int(wood_yield * territory_modifier)
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
         
-        # Tech level bonus
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
+        
+        stone_yield = int(stone_yield * employment_factor * territory_factor)
+        wood_yield = int(wood_yield * employment_factor * territory_factor)
+        
+        # Tech level bonus (unchanged)
         tech_bonus = 1 + (civ['military']['tech_level'] * 0.1)
         stone_yield = int(stone_yield * tech_bonus)
         wood_yield = int(wood_yield * tech_bonus)
         
         # Small chance for bonus gold
         bonus_gold = 0
-        if random.random() < 0.2:  # 20% chance
+        if random.random() < 0.2:
             bonus_gold = random.randint(5, 25)
             
         updates = {"stone": stone_yield, "wood": wood_yield}
@@ -287,10 +288,10 @@ class EconomyCommands(commands.Cog):
             result_text += f"\n🪙 {format_number(bonus_gold)} Gold (Lucky find!)"
             
         embed.add_field(name="Resources Extracted", value=result_text, inline=False)
-        embed.add_field(name="Territory Modifier", value=f"{territory_modifier:.2f}x", inline=True)
+        embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
+        embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
         
         mine_gif = 'https://media.tenor.com/9W0oJK5k7pYAAAAC/minecraft-mining.gif'
-        
         await ctx.send(content=mine_gif, embed=embed)
 
     @commands.command(name='harvest')
@@ -307,24 +308,22 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Large food production
         base_harvest = random.randint(100, 200)
         population_bonus = civ['population']['citizens'] // 5
         happiness_bonus = civ['population']['happiness'] // 2
         
-        # Use nerfed territory modifier
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
+        
         territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
+        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
         
-        total_harvest = base_harvest + population_bonus + happiness_bonus + territory_bonus
+        total_harvest = int((base_harvest + population_bonus + happiness_bonus) * employment_factor * territory_factor)
         
-        # Apply ideology bonuses
         if civ.get('ideology') == 'theocracy':
-            total_harvest = int(total_harvest * 1.1)  # Divine blessing
+            total_harvest = int(total_harvest * 1.1)
             
         self.civ_manager.update_resources(user_id, {"food": total_harvest})
-        
-        # Happiness increase from successful harvest
         self.civ_manager.update_population(user_id, {"happiness": 3})
         
         embed = create_embed(
@@ -351,23 +350,24 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Requires higher tech level
         if civ['military']['tech_level'] < 2:
             await ctx.send("❌ You need Tech Level 2 or higher to use advanced drilling equipment!")
             return
             
-        # High-value resource extraction
         rare_minerals = random.randint(50, 150)
-        gold_value = rare_minerals * 2  # Convert to gold
+        gold_value = rare_minerals * 2
         
-        # Apply nerfed territory modifier
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
+        
         territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        gold_value = int(gold_value * territory_modifier)
-        stone_value = int(rare_minerals // 2 * territory_modifier)
+        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
         
-        # Chance for extra bonus
+        gold_value = int(gold_value * employment_factor * territory_factor)
+        stone_value = int((rare_minerals // 2) * employment_factor * territory_factor)
+        
         bonus_text = ""
-        if random.random() < 0.15:  # 15% chance
+        if random.random() < 0.15:
             bonus_gold = random.randint(100, 300)
             gold_value += bonus_gold
             bonus_text = f"💎 Struck a rich vein! (+{format_number(bonus_gold)} gold)"
@@ -382,9 +382,8 @@ class EconomyCommands(commands.Cog):
         
         if bonus_text:
             embed.add_field(name="Lucky Strike!", value=bonus_text, inline=False)
-            
-        drill_gif = 'https://media.tenor.com/3F2q8X5e3xAAAAAC/thunderbirds-mole.gif'
         
+        drill_gif = 'https://media.tenor.com/3F2q8X5e3xAAAAAC/thunderbirds-mole.gif'
         await ctx.send(content=drill_gif, embed=embed)
 
     @commands.command(name='fish')
@@ -402,23 +401,23 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Fishing results
-        # Apply nerfed territory modifier
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6
         
-        if random.random() < 0.8:  # 80% chance for food
-            food_caught = int(random.randint(15, 45) * territory_modifier)
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_factor = 1 + (territory_modifier - 1) * 0.3
+        
+        if random.random() < 0.8:
+            food_caught = int(random.randint(15, 45) * employment_factor * territory_factor)
             self.civ_manager.update_resources(user_id, {"food": food_caught})
-            
             embed = create_embed(
                 "🎣 Fishing",
                 f"Your fishermen caught {format_number(food_caught)} food from the waters!",
                 guilded.Color.teal()
             )
-        else:  # 20% chance for treasure
-            treasure_gold = int(random.randint(20, 100) * territory_modifier)
+        else:
+            treasure_gold = int(random.randint(20, 100) * employment_factor * territory_factor)
             self.civ_manager.update_resources(user_id, {"gold": treasure_gold})
-            
             embed = create_embed(
                 "🎣 Fishing - Lucky Find!",
                 f"Your nets pulled up a treasure chest worth {format_number(treasure_gold)} gold!",
@@ -444,34 +443,33 @@ class EconomyCommands(commands.Cog):
             
         population = civ['population']
         
-        # Base tax calculation
+        # ---- TAX BASED ON EMPLOYMENT AND TERRITORY (softer) ----
         base_tax = population['citizens'] * 2
-        happiness_modifier = population['happiness'] / 100  # Happy citizens pay more
+        happiness_modifier = population['happiness'] / 100
         
-        # Use nerfed territory modifier
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.5  # up to 1.5
+        
         territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
+        territory_factor = 1 + (territory_modifier - 1) * 0.3  # up to 1.3
         
-        total_tax = int(base_tax * happiness_modifier * territory_bonus)
+        total_tax = int(base_tax * happiness_modifier * employment_factor * territory_factor)
         
-        # Ideology effects
+        # Ideology effects (unchanged)
         ideology = civ.get('ideology', '')
         if ideology == 'democracy':
-            total_tax = int(total_tax * 1.1)  # Democratic bonus
+            total_tax = int(total_tax * 1.1)
         elif ideology == 'fascism':
-            total_tax = int(total_tax * 1.2)  # Forced taxation
+            total_tax = int(total_tax * 1.2)
             self.civ_manager.update_population(user_id, {"happiness": -5})
         elif ideology == 'communism':
-            total_tax = int(total_tax * 0.8)  # Lower individual taxes
+            total_tax = int(total_tax * 0.8)
             
         self.civ_manager.update_resources(user_id, {"gold": total_tax})
-        
-        # Slight happiness decrease from taxation
         self.civ_manager.update_population(user_id, {"happiness": -2})
         
-        # Risk of population loss due to unhappy citizens
         population_loss = 0
-        if population['happiness'] < 40 and random.random() < 0.3:  # 30% chance if happiness is low
+        if population['happiness'] < 40 and random.random() < 0.3:
             population_loss = random.randint(5, 20)
             self.civ_manager.update_population(user_id, {"citizens": -population_loss})
         
@@ -518,29 +516,27 @@ class EconomyCommands(commands.Cog):
             await ctx.send(f"❌ You don't have {format_number(bet)} gold to bet!")
             return
             
-        # Spend the bet
         self.civ_manager.spend_resources(user_id, {"gold": bet})
         
-        # Lottery chances
         roll = random.random()
         
-        if roll < 0.01:  # 1% - Massive jackpot
+        if roll < 0.01:
             winnings = bet * 50
             result = f"🎰 **MEGA JACKPOT!** You won {format_number(winnings)} gold!"
             color = guilded.Color.gold()
-        elif roll < 0.05:  # 4% - Big win
+        elif roll < 0.05:
             winnings = bet * 10
             result = f"🎰 **Big Win!** You won {format_number(winnings)} gold!"
             color = guilded.Color.green()
-        elif roll < 0.20:  # 15% - Small win
+        elif roll < 0.20:
             winnings = bet * 2
             result = f"🎰 **Winner!** You won {format_number(winnings)} gold!"
             color = guilded.Color.green()
-        elif roll < 0.40:  # 20% - Break even
+        elif roll < 0.40:
             winnings = bet
             result = f"🎰 **Break Even** - You got your {format_number(bet)} gold back."
             color = guilded.Color.blue()
-        else:  # 60% - Loss
+        else:
             winnings = 0
             result = f"🎰 **No Luck** - Better luck next time!"
             color = guilded.Color.red()
@@ -586,7 +582,6 @@ class EconomyCommands(commands.Cog):
             await ctx.send(f"❌ You don't have {format_number(amount)} gold to invest!")
             return
             
-        # Spend the investment
         self.civ_manager.spend_resources(user_id, {"gold": amount})
         
         embed = create_embed(
@@ -597,36 +592,27 @@ class EconomyCommands(commands.Cog):
         
         await ctx.send(embed=embed)
         
-        # Schedule the return after 2 hours
         async def investment_return():
-            await asyncio.sleep(7200)  # 2 hours in seconds
-            
-            # 80% chance of profit
+            await asyncio.sleep(7200)
             if random.random() < 0.8:
-                profit_multiplier = random.uniform(1.2, 1.8)  # 20-80% profit
+                profit_multiplier = random.uniform(1.2, 1.8)
                 returns = int(amount * profit_multiplier)
-                
                 self.civ_manager.update_resources(user_id, {"gold": returns})
-                
                 try:
                     user = await self.bot.fetch_user(int(user_id))
                     await user.send(f"💰 **Investment Return**: Your investment of {format_number(amount)} gold has returned {format_number(returns)} gold! (Profit: {format_number(returns - amount)})")
                 except:
-                    pass  # User might have DMs disabled
+                    pass
             else:
-                # 20% chance of loss
-                loss_multiplier = random.uniform(0.3, 0.7)  # Return 30-70% of investment
+                loss_multiplier = random.uniform(0.3, 0.7)
                 returns = int(amount * loss_multiplier)
-                
                 self.civ_manager.update_resources(user_id, {"gold": returns})
-                
                 try:
                     user = await self.bot.fetch_user(int(user_id))
                     await user.send(f"📉 **Investment Loss**: Market crash! Your investment of {format_number(amount)} gold only returned {format_number(returns)} gold. (Loss: {format_number(amount - returns)})")
                 except:
                     pass
         
-        # Start the investment return task
         asyncio.create_task(investment_return())
 
     @commands.command(name='raidcaravan')
@@ -646,34 +632,34 @@ class EconomyCommands(commands.Cog):
             
         military = civ['military']
         
-        # Need soldiers for raiding
         if military['soldiers'] < 5:
             await ctx.send("❌ You need at least 5 soldiers to raid caravans!")
             return
             
-        # Success chance based on military strength
         base_success = 0.6
-        soldier_bonus = min(0.3, military['soldiers'] / 100)  # Max 30% bonus
-        spy_bonus = min(0.1, military['spies'] / 50)  # Max 10% bonus
+        soldier_bonus = min(0.3, military['soldiers'] / 100)
+        spy_bonus = min(0.1, military['spies'] / 50)
         
         success_chance = base_success + soldier_bonus + spy_bonus
         
-        # Apply ideology modifier
         if civ.get('ideology') == 'anarchy':
-            success_chance += 0.1  # Anarchy bonus for raiding
+            success_chance += 0.1
             
         if random.random() < success_chance:
-            # Successful raid
-            # Apply nerfed territory modifier for loot amount
+            # ---- LOOT SCALES WITH EMPLOYMENT AND TERRITORY (softer) ----
+            employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+            employment_factor = 1 + employment_rate * 0.5  # up to 1.5
+            
             territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+            territory_factor = 1 + (territory_modifier - 1) * 0.3  # up to 1.3
+            
             loot = {
-                "gold": int(random.randint(100, 400) * territory_modifier),
-                "food": int(random.randint(50, 150) * territory_modifier),
-                "wood": int(random.randint(20, 80) * territory_modifier),
-                "stone": int(random.randint(15, 60) * territory_modifier)
+                "gold": int(random.randint(100, 400) * employment_factor * territory_factor),
+                "food": int(random.randint(50, 150) * employment_factor * territory_factor),
+                "wood": int(random.randint(20, 80) * employment_factor * territory_factor),
+                "stone": int(random.randint(15, 60) * employment_factor * territory_factor)
             }
             
-            # Small chance for special loot
             if random.random() < 0.1:
                 bonus_gold = random.randint(200, 500)
                 loot["gold"] += bonus_gold
@@ -691,7 +677,6 @@ class EconomyCommands(commands.Cog):
             embed.add_field(name="Loot Acquired", value=loot_text, inline=False)
             
         else:
-            # Failed raid - lose some soldiers
             soldier_loss = random.randint(1, 3)
             self.civ_manager.update_military(user_id, {"soldiers": -soldier_loss})
             
@@ -728,10 +713,7 @@ class EconomyCommands(commands.Cog):
             await ctx.send(f"❌ Only {current_employed} employed citizens available to unemploy!")
             return
             
-        # Update employment by reducing employed citizens
         self.civ_manager.update_employment(user_id, -amount)
-        
-        # Slight happiness decrease due to unemployment
         self.civ_manager.update_population(user_id, {"happiness": -2})
         
         new_rate = self.civ_manager.get_employment_rate(user_id)
@@ -761,23 +743,19 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Check if enough resources for festival
         festival_cost = {"gold": 200, "food": 100}
         if not self.civ_manager.can_afford(user_id, festival_cost):
             await ctx.send("❌ You need 200 gold and 100 food to hold a festival!")
             return
             
-        # Spend resources
         self.civ_manager.spend_resources(user_id, festival_cost)
         
-        # Large happiness increase
         happiness_boost = 10
         self.civ_manager.update_population(user_id, {"happiness": happiness_boost})
         
-        # Apply ideology bonuses
         ideology = civ.get('ideology', '')
         if ideology == 'theocracy':
-            happiness_boost = int(happiness_boost * 1.2)  # Divine celebration bonus
+            happiness_boost = int(happiness_boost * 1.2)
             
         embed = create_embed(
             "🎉 Grand Festival",
@@ -807,23 +785,19 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Check if enough resources for cheer
         cheer_cost = {"gold": 50}
         if not self.civ_manager.can_afford(user_id, cheer_cost):
             await ctx.send("❌ You need 50 gold to spread cheer!")
             return
             
-        # Spend resources
         self.civ_manager.spend_resources(user_id, cheer_cost)
         
-        # Moderate happiness increase
         happiness_boost = 5
         self.civ_manager.update_population(user_id, {"happiness": happiness_boost})
         
-        # Apply ideology bonuses
         ideology = civ.get('ideology', '')
         if ideology == 'democracy':
-            happiness_boost = int(happiness_boost * 1.1)  # Democratic unity bonus
+            happiness_boost = int(happiness_boost * 1.1)
             
         embed = create_embed(
             "😊 Spreading Cheer",
@@ -862,12 +836,10 @@ class EconomyCommands(commands.Cog):
             
         hyper_items = civ['hyper_items']
         
-        # Check if user has the item
         if item_name not in hyper_items:
             await ctx.send(f"❌ You don't have the '{item_name}' hyper item!")
             return
             
-        # Determine gold value based on item rarity
         item_values = {
             "Lucky-Charm": random.randint(100, 200),
             "Ancient-Relic": random.randint(200, 400),
@@ -876,10 +848,8 @@ class EconomyCommands(commands.Cog):
             "Phoenix-Feather": random.randint(300, 600)
         }
         
-        # Default value for unknown items
         gold_value = item_values.get(item_name, random.randint(50, 150))
         
-        # Remove item and give gold
         self.civ_manager.use_hyper_item(user_id, item_name)
         self.civ_manager.update_resources(user_id, {"gold": gold_value})
         
@@ -906,33 +876,31 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Check if enough gold for advertising
         ad_cost = 50
         if not self.civ_manager.can_afford(user_id, {"gold": ad_cost}):
             await ctx.send(f"❌ You need {ad_cost} gold to run advertising campaigns!")
             return
             
-        # Spend gold
         self.civ_manager.spend_resources(user_id, {"gold": ad_cost})
         
-        # Calculate new citizens attracted
+        # ---- NEW CITIZENS: EMPLOYMENT and TERRITORY (softer) ----
         base_new_citizens = random.randint(100, 300)
-        happiness_bonus = civ['population']['happiness'] // 10  # Happiness attracts more people
+        happiness_bonus = civ['population']['happiness'] // 10
         
-        # Use nerfed territory modifier instead of linear scaling
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.5  # up to 1.5
+        
         territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
+        territory_factor = 1 + (territory_modifier - 1) * 0.2  # up to 1.2
         
-        total_new_citizens = base_new_citizens + happiness_bonus + territory_bonus
+        total_new_citizens = int((base_new_citizens + happiness_bonus) * employment_factor * territory_factor)
         
-        # Apply ideology bonuses
         ideology = civ.get('ideology', '')
         if ideology == 'democracy':
-            total_new_citizens = int(total_new_citizens * 1.2)  # Democracy is attractive
+            total_new_citizens = int(total_new_citizens * 1.2)
         elif ideology == 'fascism':
-            total_new_citizens = int(total_new_citizens * 0.8)  # Fascism is less attractive
+            total_new_citizens = int(total_new_citizens * 0.8)
             
-        # Add new citizens
         self.civ_manager.update_population(user_id, {"citizens": total_new_citizens})
         
         embed = create_embed(
@@ -970,7 +938,6 @@ class EconomyCommands(commands.Cog):
             guilded.Color.blue()
         )
         
-        # Resource section
         resource_text = (
             f"🪙 **Gold**: {format_number(resources['gold'])}\n"
             f"🌾 **Food**: {format_number(resources['food'])}\n"
@@ -979,7 +946,6 @@ class EconomyCommands(commands.Cog):
         )
         embed.add_field(name="💰 Resources", value=resource_text, inline=True)
         
-        # Population section
         population_text = (
             f"👥 **Total Citizens**: {format_number(population['citizens'])}\n"
             f"💼 **Employed**: {format_number(population.get('employed', 0))}\n"
@@ -1016,21 +982,18 @@ class EconomyCommands(commands.Cog):
             await ctx.send(f"❌ You only have {format_number(current_citizens)} citizens available for recruitment!")
             return
             
-        # Calculate success chance based on various factors
-        base_success = 0.7  # 70% base success rate
-        happiness_modifier = population['happiness'] / 100  # Happy citizens are more willing
-        population_ratio = number / current_citizens  # Higher ratio = higher risk
+        base_success = 0.7
+        happiness_modifier = population['happiness'] / 100
+        population_ratio = number / current_citizens
         
-        # Penalty for recruiting too many at once
         ratio_penalty = 0
-        if population_ratio > 0.1:  # More than 10% of population
-            ratio_penalty = (population_ratio - 0.1) * 2  # Significant penalty
+        if population_ratio > 0.1:
+            ratio_penalty = (population_ratio - 0.1) * 2
         
         success_chance = base_success * happiness_modifier - ratio_penalty
-        success_chance = max(0.1, min(0.9, success_chance))  # Clamp between 10% and 90%
+        success_chance = max(0.1, min(0.9, success_chance))
         
         if random.random() < success_chance:
-            # Successful recruitment
             self.civ_manager.update_population(user_id, {"citizens": -number})
             self.civ_manager.update_military(user_id, {"soldiers": number})
             
@@ -1043,8 +1006,7 @@ class EconomyCommands(commands.Cog):
                            value=f"🛡️ {format_number(civ['military']['soldiers'] + number)} Soldiers", 
                            inline=True)
         else:
-            # Failed recruitment - population flees
-            citizens_lost = min(number * 2, current_citizens // 2)  # Lose up to double the attempted number, but max half population
+            citizens_lost = min(number * 2, current_citizens // 2)
             self.civ_manager.update_population(user_id, {"citizens": -citizens_lost, "happiness": -5})
             
             embed = create_embed(
