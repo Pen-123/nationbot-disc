@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import asyncio
 from typing import List, Optional, Set
 import discord
 from discord.ext import commands
@@ -22,7 +23,7 @@ except FileNotFoundError:
     logger.warning("province_areas.json not found; using default area of 1000 km².")
     PROVINCE_AREAS = {}
 
-# --- Province definitions ---
+# --- Province definitions (full list) ---
 PROVINCES = {
     "Eastern Europe": [
         "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
@@ -253,6 +254,7 @@ class TerritoryCog(commands.Cog):
         owned.append(province)
         self._set_owned_provinces(user_id, owned)
 
+        # Update land size
         area = self.province_areas.get(province, 1000)
         civ = self.civ_manager.get_civilization(user_id)
         if civ:
@@ -263,11 +265,36 @@ class TerritoryCog(commands.Cog):
                 new_land = current_land + area
             self.civ_manager.update_territory(user_id, {"land_size": new_land})
 
+        # Log history
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
         conn.commit()
+
+        # -------- AUTO-UNLOCK COUNTRYBALL ON SUBREGION COMPLETION --------
+        # Check if any subregion is now fully owned
+        asyncio.create_task(self._check_subregion_completion(user_id))
         return True
+
+    async def _check_subregion_completion(self, user_id: str):
+        """Check if the player now owns all provinces in any subregion, and trigger countryball unlock."""
+        owned = self._get_owned_provinces(user_id)
+        completed_regions = []
+        for subregion, provinces in PROVINCES.items():
+            if provinces and all(p in owned for p in provinces):
+                completed_regions.append(subregion)
+
+        if not completed_regions:
+            return
+
+        # Get the countryball cog
+        cog = self.bot.get_cog("CountryballCog")
+        if not cog:
+            logger.warning("CountryballCog not loaded; cannot unlock countryballs.")
+            return
+
+        for region in completed_regions:
+            await cog.check_region_unlock(user_id, region)
 
     def _get_owned_subregions(self, user_id: str) -> Set[str]:
         owned = self._get_owned_provinces(user_id)
@@ -383,7 +410,7 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # ---------- RESOURCE COST: 2x less than before (now 2.5× original) ----------
+        # ---------- RESOURCE COST: 2.5× original (half of previous 5×) ----------
         subregion = PROVINCE_TO_SUBREGION[province]
         province_count = len(PROVINCES[subregion])
         base_cost = {
@@ -392,7 +419,6 @@ class TerritoryCog(commands.Cog):
             "wood": 50 + (25 // max(1, province_count)),
             "stone": 50 + (25 // max(1, province_count)),
         }
-        # Previously 5×, now 2.5× (half of 5)
         COST_MULTIPLIER = 2.5
         cost = {k: int(v * COST_MULTIPLIER) for k, v in base_cost.items()}
 
