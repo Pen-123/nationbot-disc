@@ -39,7 +39,7 @@ import json
 import random
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
 import firebase_admin
@@ -48,62 +48,86 @@ from firebase_admin import credentials, firestore
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# FIREBASE INITIALISATION
+# FIREBASE INITIALISATION (thread‑safe)
 # ──────────────────────────────────────────────────────────────────────────────
 
+_init_lock = threading.Lock()
+
 def _init_firebase() -> bool:
-    """Initialise Firebase Admin SDK using environment variables."""
-    if firebase_admin._apps:
-        return True  # Already initialised
-
-    cred = None
-    source = None
-
-    # 1. Raw JSON string from environment (best for Railway)
-    raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
-    if raw:
+    """Initialise Firebase Admin SDK using environment variables (thread‑safe)."""
+    with _init_lock:
         try:
-            cred = credentials.Certificate(json.loads(raw))
-            source = "FIREBASE_SERVICE_ACCOUNT_JSON"
+            firebase_admin.get_app()
+            return True  # Already initialised
+        except ValueError:
+            pass
+
+        cred = None
+        source = None
+
+        # 1. Raw JSON string from environment (best for Railway)
+        raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if raw:
+            try:
+                cred = credentials.Certificate(json.loads(raw))
+                source = "FIREBASE_SERVICE_ACCOUNT_JSON"
+            except Exception as e:
+                logger.error(f"Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
+
+        # 2. Path to JSON file
+        if cred is None:
+            path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH")
+            if path and os.path.isfile(path):
+                try:
+                    cred = credentials.Certificate(path)
+                    source = f"FIREBASE_SERVICE_ACCOUNT_PATH ({path})"
+                except Exception as e:
+                    logger.error(f"Failed to load {path}: {e}")
+
+        # 3. GCP default
+        if cred is None:
+            gcp = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            if gcp and os.path.isfile(gcp):
+                try:
+                    cred = credentials.Certificate(gcp)
+                    source = f"GOOGLE_APPLICATION_CREDENTIALS ({gcp})"
+                except Exception as e:
+                    logger.error(f"Failed to load {gcp}: {e}")
+
+        if cred is None:
+            logger.critical(
+                "NO FIREBASE CREDENTIALS FOUND.\n"
+                "Set one of: FIREBASE_SERVICE_ACCOUNT_JSON, "
+                "FIREBASE_SERVICE_ACCOUNT_PATH, or GOOGLE_APPLICATION_CREDENTIALS"
+            )
+            return False
+
+        try:
+            firebase_admin.initialize_app(cred)
+            logger.info(f"Firebase initialised (via {source})")
+            return True
         except Exception as e:
-            logger.error(f"Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
+            logger.critical(f"Firebase init failed: {e}")
+            return False
 
-    # 2. Path to JSON file
-    if cred is None:
-        path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH")
-        if path and os.path.isfile(path):
-            try:
-                cred = credentials.Certificate(path)
-                source = f"FIREBASE_SERVICE_ACCOUNT_PATH ({path})"
-            except Exception as e:
-                logger.error(f"Failed to load {path}: {e}")
 
-    # 3. GCP default
-    if cred is None:
-        gcp = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        if gcp and os.path.isfile(gcp):
-            try:
-                cred = credentials.Certificate(gcp)
-                source = f"GOOGLE_APPLICATION_CREDENTIALS ({gcp})"
-            except Exception as e:
-                logger.error(f"Failed to load {gcp}: {e}")
+# ──────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
 
-    if cred is None:
-        logger.critical(
-            "NO FIREBASE CREDENTIALS FOUND.\n"
-            "Set one of: FIREBASE_SERVICE_ACCOUNT_JSON, "
-            "FIREBASE_SERVICE_ACCOUNT_PATH, or GOOGLE_APPLICATION_CREDENTIALS"
-        )
-        return False
+def _utc_now_iso() -> str:
+    """Return an ISO‑formatted naive UTC datetime string."""
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
+def _parse_iso_to_utc(iso_string: str) -> Optional[datetime]:
+    """Parse an ISO string to a naive UTC datetime. Returns None on failure."""
     try:
-        firebase_admin.initialize_app(cred)
-        logger.info(f"Firebase initialised (via {source})")
-        return True
-    except Exception as e:
-        logger.critical(f"Firebase init failed: {e}")
-        return False
-
+        dt = datetime.fromisoformat(iso_string)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return None
 
 # ──────────────────────────────────────────────────────────────────────────────
 # DATABASE CLASS
@@ -117,7 +141,6 @@ class Database:
         db_path:       IGNORED (kept for compatibility)
         database_url:  IGNORED for Firestore (project is determined by credentials)
         """
-        # database_url argument is accepted but not used for Firestore
         self.db_path = db_path  # kept for backward compatibility (e.g. backup_database)
 
         if not _init_firebase():
@@ -196,7 +219,7 @@ class Database:
             pop_bonus = bonus_resources.get("population", 0) if bonus_resources else 0
             hap_bonus = bonus_resources.get("happiness", 0) if bonus_resources else 0
 
-            now = datetime.utcnow().isoformat()
+            now = _utc_now_iso()
 
             data = {
                 "name": name,
@@ -230,64 +253,65 @@ class Database:
             return False
 
     def delete_civilization(self, user_id: str) -> bool:
+        """Delete a civilization and all related data efficiently."""
         try:
-            civ = self.get_civilization(user_id)
-
-            # Release owned territories
-            if civ and civ.get("owned_territories"):
-                for tname in civ["owned_territories"]:
-                    self.client.collection("territories").document(tname).delete()
-
-            # Delete core document (includes subcollections we will delete manually)
+            batch = self.client.batch()
             civ_ref = self.client.collection("civilizations").document(user_id)
 
-            # Delete subcollections (cooldowns, cards)
+            # 1. Release owned territories
+            civ_doc = civ_ref.get()
+            if civ_doc.exists:
+                civ_data = civ_doc.to_dict()
+                if civ_data.get("owned_territories"):
+                    for tname in civ_data["owned_territories"]:
+                        self.client.collection("territories").document(tname).delete()
+
+            # 2. Delete subcollections (cooldowns, cards) manually
             for sub in ["cooldowns", "cards"]:
-                docs = civ_ref.collection(sub).stream()
-                for d in docs:
-                    d.reference.delete()
+                for d in civ_ref.collection(sub).stream():
+                    batch.delete(d.reference)
 
-            civ_ref.delete()
-
-            # Clean alliances
-            alliances = self.client.collection("alliances").stream()
+            # 3. Remove from alliances using array_contains (much faster)
+            alliances = self.client.collection("alliances") \
+                            .where("members", "array_contains", user_id) \
+                            .stream()
             for al_doc in alliances:
-                data = al_doc.to_dict()
-                members = list(data.get("members", []))
-                join_reqs = list(data.get("join_requests", []))
-                changed = False
-                if user_id in members:
-                    members.remove(user_id)
-                    changed = True
-                if user_id in join_reqs:
-                    join_reqs.remove(user_id)
-                    changed = True
-                if changed:
-                    al_doc.reference.update({
-                        "members": members,
-                        "join_requests": join_reqs,
-                    })
+                batch.update(al_doc.reference, {
+                    "members": firestore.ArrayRemove([user_id]),
+                    "join_requests": firestore.ArrayRemove([user_id])
+                })
 
-            # Delete relevant documents from other collections
-            for collection_name, fields in [
-                ("messages", ["sender_id", "recipient_id"]),
-                ("trade_requests", ["sender_id", "recipient_id"]),
-                ("alliance_invitations", ["sender_id", "recipient_id"]),
-                ("wars", ["attacker_id", "defender_id"]),
-                ("peace_offers", ["offerer_id", "receiver_id"]),
+            # 4. Delete messages, trade_requests, invitations, wars, peace_offers
+            #    using indexed queries (sender/recipient) to avoid full scans.
+            for col_name, sender_field, recipient_field in [
+                ("messages", "sender_id", "recipient_id"),
+                ("trade_requests", "sender_id", "recipient_id"),
+                ("alliance_invitations", "sender_id", "recipient_id"),
+                ("wars", "attacker_id", "defender_id"),
+                ("peace_offers", "offerer_id", "receiver_id"),
             ]:
-                docs = self.client.collection(collection_name).stream()
-                for d in docs:
-                    data = d.to_dict()
-                    if any(data.get(f) == user_id for f in fields):
-                        d.reference.delete()
+                # Delete documents where user is sender
+                for doc in self.client.collection(col_name) \
+                                   .where(sender_field, "==", user_id) \
+                                   .stream():
+                    batch.delete(doc.reference)
+                # Delete documents where user is recipient
+                for doc in self.client.collection(col_name) \
+                                   .where(recipient_field, "==", user_id) \
+                                   .stream():
+                    batch.delete(doc.reference)
 
-            # Anonymise events (set user_id to None)
-            events = self.client.collection("events").stream()
+            # 5. Anonymise events (set user_id to None)
+            events = self.client.collection("events") \
+                         .where("user_id", "==", user_id) \
+                         .stream()
             for e in events:
-                if e.to_dict().get("user_id") == user_id:
-                    e.reference.update({"user_id": None})
+                batch.update(e.reference, {"user_id": None})
 
+            # 6. Delete the civilization document itself
+            batch.delete(civ_ref)
+
+            batch.commit()
             logger.info(f"Deleted civilization and all related data for {user_id}")
             return True
         except Exception as e:
@@ -326,7 +350,7 @@ class Database:
         Automatically bumps last_active.
         """
         try:
-            updates["last_active"] = datetime.utcnow().isoformat()
+            updates["last_active"] = _utc_now_iso()
             self.client.collection("civilizations").document(user_id).update(updates)
             return True
         except Exception as e:
@@ -350,7 +374,7 @@ class Database:
         """
         try:
             batch = self.client.batch()
-            now = datetime.utcnow().isoformat()
+            now = _utc_now_iso()
 
             victor_ref = self.client.collection("civilizations").document(victor_id)
             victor_doc = victor_ref.get()
@@ -464,7 +488,7 @@ class Database:
             if doc.exists:
                 ts = doc.to_dict().get("last_used_at")
                 if ts:
-                    return datetime.fromisoformat(ts)
+                    return _parse_iso_to_utc(ts)
             return None
         except Exception as e:
             logger.error(f"get_command_cooldown error: {e}")
@@ -475,7 +499,7 @@ class Database:
 
     def set_command_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         try:
-            ts = (timestamp or datetime.utcnow()).isoformat()
+            ts = (timestamp or datetime.now(timezone.utc)).replace(tzinfo=None).isoformat()
             self.client.collection("civilizations") \
                 .document(user_id) \
                 .collection("cooldowns") \
@@ -520,7 +544,7 @@ class Database:
                 .set({
                     "available_cards": available,
                     "status": "pending",
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": _utc_now_iso(),
                 })
             return True
         except Exception as e:
@@ -604,7 +628,7 @@ class Database:
                 "description": description,
                 "members": [leader_id],
                 "join_requests": [],
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": _utc_now_iso(),
             })
             logger.info(f"Created alliance '{name}' by {leader_id}")
             return True
@@ -642,17 +666,11 @@ class Database:
             return None
 
     def add_alliance_member(self, alliance_id: str, user_id: str) -> bool:
+        """Atomically add a user to the alliance and remove any join request."""
         try:
-            alliance = self.get_alliance(alliance_id)
-            if not alliance:
-                return False
-            if user_id in alliance["members"]:
-                return True
-            members = alliance["members"] + [user_id]
-            join_requests = [u for u in alliance.get("join_requests", []) if u != user_id]
             self.client.collection("alliances").document(alliance_id).update({
-                "members": members,
-                "join_requests": join_requests,
+                "members": firestore.ArrayUnion([user_id]),
+                "join_requests": firestore.ArrayRemove([user_id])
             })
             return True
         except Exception as e:
@@ -671,27 +689,38 @@ class Database:
                 "title": title,
                 "description": description,
                 "effects": effects or {},
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": _utc_now_iso(),
             })
         except Exception as e:
             logger.error(f"log_event error: {e}")
 
     def get_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return recent events with civilisation names preloaded."""
         try:
             docs = self.client.collection("events") \
                        .order_by("timestamp", direction=firestore.Query.DESCENDING) \
                        .limit(limit) \
                        .stream()
-            events = []
+            raw_events = []
+            user_ids = set()
             for doc in docs:
                 data = doc.to_dict()
                 data["id"] = doc.id
                 uid = data.get("user_id")
                 if uid:
-                    civ = self.get_civilization(uid)
-                    data["civ_name"] = civ["name"] if civ else "Unknown"
-                else:
-                    data["civ_name"] = "System"
+                    user_ids.add(uid)
+                raw_events.append(data)
+
+            # Preload civilisation names (1 read per distinct user)
+            civ_names = {}
+            for uid in user_ids:
+                civ = self.get_civilization(uid)
+                civ_names[uid] = civ["name"] if civ else "Unknown"
+
+            events = []
+            for data in raw_events:
+                uid = data.get("user_id")
+                data["civ_name"] = civ_names.get(uid, "System") if uid else "System"
                 events.append(data)
             return events
         except Exception as e:
@@ -709,8 +738,8 @@ class Database:
                 "recipient_id": recipient_id,
                 "offer": offer,
                 "request": request,
-                "created_at": datetime.utcnow().isoformat(),
-                "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+                "created_at": _utc_now_iso(),
+                "expires_at": (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)).isoformat(),
             })
             return True
         except Exception as e:
@@ -719,7 +748,7 @@ class Database:
 
     def get_trade_requests(self, user_id: str) -> List[Dict]:
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             docs = self.client.collection("trade_requests") \
                        .where("recipient_id", "==", user_id) \
                        .stream()
@@ -728,11 +757,9 @@ class Database:
                 data = doc.to_dict()
                 expires = data.get("expires_at", "")
                 if expires:
-                    try:
-                        if datetime.fromisoformat(expires) <= now:
-                            continue
-                    except ValueError:
-                        pass
+                    exp_dt = _parse_iso_to_utc(expires)
+                    if exp_dt and exp_dt <= now:
+                        continue
                 sender_civ = self.get_civilization(data.get("sender_id", ""))
                 data["sender_name"] = sender_civ["name"] if sender_civ else "Unknown"
                 data["id"] = doc.id
@@ -751,11 +778,9 @@ class Database:
             data = doc.to_dict()
             expires = data.get("expires_at", "")
             if expires:
-                try:
-                    if datetime.fromisoformat(expires) <= datetime.utcnow():
-                        return None
-                except ValueError:
-                    pass
+                exp_dt = _parse_iso_to_utc(expires)
+                if exp_dt and exp_dt <= datetime.now(timezone.utc).replace(tzinfo=None):
+                    return None
             data["id"] = rid
             return data
         except Exception as e:
@@ -784,8 +809,8 @@ class Database:
                 "alliance_id": str(alliance_id),
                 "sender_id": sender_id,
                 "recipient_id": recipient_id,
-                "created_at": datetime.utcnow().isoformat(),
-                "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+                "created_at": _utc_now_iso(),
+                "expires_at": (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)).isoformat(),
             })
             return True
         except Exception as e:
@@ -794,7 +819,7 @@ class Database:
 
     def get_alliance_invites(self, user_id: str) -> List[Dict]:
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             docs = self.client.collection("alliance_invitations") \
                        .where("recipient_id", "==", user_id) \
                        .stream()
@@ -803,11 +828,9 @@ class Database:
                 data = doc.to_dict()
                 expires = data.get("expires_at", "")
                 if expires:
-                    try:
-                        if datetime.fromisoformat(expires) <= now:
-                            continue
-                    except ValueError:
-                        pass
+                    exp_dt = _parse_iso_to_utc(expires)
+                    if exp_dt and exp_dt <= now:
+                        continue
                 al = self.get_alliance(data.get("alliance_id", ""))
                 data["alliance_name"] = al["name"] if al else "Unknown"
                 data["id"] = doc.id
@@ -826,11 +849,9 @@ class Database:
             data = doc.to_dict()
             expires = data.get("expires_at", "")
             if expires:
-                try:
-                    if datetime.fromisoformat(expires) <= datetime.utcnow():
-                        return None
-                except ValueError:
-                    pass
+                exp_dt = _parse_iso_to_utc(expires)
+                if exp_dt and exp_dt <= datetime.now(timezone.utc).replace(tzinfo=None):
+                    return None
             al = self.get_alliance(data.get("alliance_id", ""))
             data["alliance_name"] = al["name"] if al else "Unknown"
             data["id"] = iid
@@ -861,8 +882,8 @@ class Database:
                 "sender_id": sender_id,
                 "recipient_id": recipient_id,
                 "message": message,
-                "created_at": datetime.utcnow().isoformat(),
-                "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+                "created_at": _utc_now_iso(),
+                "expires_at": (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)).isoformat(),
             })
             return True
         except Exception as e:
@@ -871,7 +892,7 @@ class Database:
 
     def get_messages(self, user_id: str) -> List[Dict]:
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             docs = self.client.collection("messages") \
                        .where("recipient_id", "==", user_id) \
                        .order_by("created_at", direction=firestore.Query.DESCENDING) \
@@ -881,11 +902,9 @@ class Database:
                 data = doc.to_dict()
                 expires = data.get("expires_at", "")
                 if expires:
-                    try:
-                        if datetime.fromisoformat(expires) <= now:
-                            continue
-                    except ValueError:
-                        pass
+                    exp_dt = _parse_iso_to_utc(expires)
+                    if exp_dt and exp_dt <= now:
+                        continue
                 sender_civ = self.get_civilization(data.get("sender_id", ""))
                 data["sender_name"] = sender_civ["name"] if sender_civ else "Unknown"
                 data["id"] = doc.id
@@ -919,7 +938,7 @@ class Database:
                 "attacker_id": attacker_id,
                 "defender_id": defender_id,
                 "war_type": war_type,
-                "declared_at": datetime.utcnow().isoformat(),
+                "declared_at": _utc_now_iso(),
                 "ended_at": None,
                 "result": "ongoing",
             })
@@ -951,7 +970,7 @@ class Database:
 
     def end_war(self, attacker_id: str, defender_id: str, result: str) -> bool:
         try:
-            now = datetime.utcnow().isoformat()
+            now = _utc_now_iso()
             # Find the ongoing war between these two
             docs = self.client.collection("wars") \
                        .where("result", "==", "ongoing") \
@@ -980,7 +999,7 @@ class Database:
                 "offerer_id": offerer_id,
                 "receiver_id": receiver_id,
                 "status": "pending",
-                "offered_at": datetime.utcnow().isoformat(),
+                "offered_at": _utc_now_iso(),
                 "responded_at": None,
             })
             return doc_ref.id
@@ -1016,7 +1035,7 @@ class Database:
             if doc_ref.get().exists:
                 doc_ref.update({
                     "status": status,
-                    "responded_at": datetime.utcnow().isoformat(),
+                    "responded_at": _utc_now_iso(),
                 })
                 return True
             return False
@@ -1034,13 +1053,26 @@ class Database:
             if not civ:
                 return {}
 
-            # Count wars
+            # Count wars using indexed queries (two separate queries)
             war_stats = {"total_wars": 0, "victories": 0, "defeats": 0, "peace_treaties": 0}
-            wars = self.client.collection("wars").stream()
-            for w in wars:
+            # Attacker side
+            for w in self.client.collection("wars") \
+                         .where("attacker_id", "==", user_id) \
+                         .stream():
                 data = w.to_dict()
-                if data.get("attacker_id") != user_id and data.get("defender_id") != user_id:
-                    continue
+                war_stats["total_wars"] += 1
+                r = data.get("result", "")
+                if r == "victory":
+                    war_stats["victories"] += 1
+                elif r == "defeat":
+                    war_stats["defeats"] += 1
+                elif r == "peace":
+                    war_stats["peace_treaties"] += 1
+            # Defender side
+            for w in self.client.collection("wars") \
+                         .where("defender_id", "==", user_id) \
+                         .stream():
+                data = w.to_dict()
                 war_stats["total_wars"] += 1
                 r = data.get("result", "")
                 if r == "victory":
@@ -1135,26 +1167,29 @@ class Database:
             return False
 
     # ────────────────────────────────────────────────────────────────
-    # Cleanup
+    # Cleanup (efficient, index‑based)
     # ────────────────────────────────────────────────────────────────
 
     def cleanup_expired_requests(self):
+        """Delete all expired documents using range queries (requires single‑field indexes)."""
         try:
-            now = datetime.utcnow()
+            now_iso = _utc_now_iso()
             deleted = 0
-            for collection in ["messages", "trade_requests", "alliance_invitations"]:
-                docs = self.client.collection(collection).stream()
+            for collection_name in ["messages", "trade_requests", "alliance_invitations"]:
+                docs = self.client.collection(collection_name) \
+                            .where("expires_at", "<=", now_iso) \
+                            .stream()
+                batch = self.client.batch()
+                count = 0
                 for doc in docs:
-                    data = doc.to_dict()
-                    expires = data.get("expires_at", "")
-                    if not expires:
-                        continue
-                    try:
-                        if datetime.fromisoformat(expires) <= now:
-                            doc.reference.delete()
-                            deleted += 1
-                    except ValueError:
-                        pass
+                    batch.delete(doc.reference)
+                    count += 1
+                    if count % 500 == 0:   # Firestore batch limit
+                        batch.commit()
+                        batch = self.client.batch()
+                if count % 500 != 0:
+                    batch.commit()
+                deleted += count
             logger.info(f"Cleanup: removed {deleted} expired items")
             return True
         except Exception as e:
@@ -1162,28 +1197,51 @@ class Database:
             return False
 
     # ────────────────────────────────────────────────────────────────
-    # Backup / Info
+    # Backup / Info (now includes subcollections)
     # ────────────────────────────────────────────────────────────────
 
     def backup_database(self, backup_path: str = None) -> bool:
-        """Export all Firestore data as a local JSON file."""
+        """Export all Firestore data (including subcollections) as a local JSON file."""
         try:
-            import shutil  # kept for compatibility, but we use json dump
             path = backup_path or f"firestore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             all_data = {}
-            # Export all top-level collections
-            collections = [
-                "civilizations", "alliances", "messages", "trade_requests",
+
+            # Top‑level collections
+            top_collections = [
+                "alliances", "messages", "trade_requests",
                 "events", "alliance_invitations", "territories",
                 "territory_history", "wars", "peace_offers",
             ]
-            for col_name in collections:
+            for col_name in top_collections:
                 col_data = {}
                 for doc in self.client.collection(col_name).stream():
                     doc_data = doc.to_dict()
                     doc_data["_id"] = doc.id
                     col_data[doc.id] = doc_data
                 all_data[col_name] = col_data
+
+            # Civilizations + subcollections
+            civs_data = {}
+            civs_sub = {}
+            for doc in self.client.collection("civilizations").stream():
+                user_id = doc.id
+                civ_data = doc.to_dict()
+                civ_data["_id"] = user_id
+                civs_data[user_id] = civ_data
+
+                # Subcollections: cooldowns, cards
+                sub_data = {}
+                for sub_name in ["cooldowns", "cards"]:
+                    sub_col = {}
+                    for sub_doc in doc.reference.collection(sub_name).stream():
+                        sub_doc_data = sub_doc.to_dict()
+                        sub_doc_data["_id"] = sub_doc.id
+                        sub_col[sub_doc.id] = sub_doc_data
+                    sub_data[sub_name] = sub_col
+                civs_sub[user_id] = sub_data
+
+            all_data["civilizations"] = civs_data
+            all_data["civilizations_subcollections"] = civs_sub
 
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(all_data, f, indent=2, default=str)
@@ -1207,30 +1265,18 @@ class Database:
                 info[f"{col_name}_count"] = sum(1 for _ in docs)
 
             # Active users in last 7 days
-            week_ago = datetime.utcnow() - timedelta(days=7)
+            week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
             active = 0
             civs = self.client.collection("civilizations").stream()
             for doc in civs:
                 last = doc.to_dict().get("last_active", "")
                 if last:
-                    try:
-                        if datetime.fromisoformat(last) >= week_ago:
-                            active += 1
-                    except ValueError:
-                        pass
+                    dt = _parse_iso_to_utc(last)
+                    if dt and dt >= week_ago:
+                        active += 1
             info["active_users_week"] = active
             info["database_type"] = "Firestore"
             return info
         except Exception as e:
             logger.error(f"get_database_info error: {e}")
             return {}
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Module-level logging configuration
-# ──────────────────────────────────────────────────────────────────────────────
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
