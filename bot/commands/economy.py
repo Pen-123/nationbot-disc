@@ -8,6 +8,7 @@ import logging
 from bot.utils import format_number, create_embed, get_territory_modifier
 from functools import wraps
 from typing import List
+from bot.utils import get_territory_modifier
 
 logger = logging.getLogger(__name__)
 
