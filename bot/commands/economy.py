@@ -96,8 +96,7 @@ class EconomyCommands(commands.Cog):
         employment_factor = 1 + employment_rate * 0.8  # 1.0 to 1.8 (high employment matters)
         
         territory_modifier = get_territory_modifier(civ['territory']['land_size'])  # 1.0 to 2.0
-        # Reduce territory impact: only 40% of the bonus above 1.0
-        territory_factor = 1 + (territory_modifier - 1) * 0.4  # 1.0 to 1.4
+        # Reduce territory im
         
         for resource in possible_resources:
             if random.random() < 0.7:  # 70% chance for each resource
