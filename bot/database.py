@@ -8,6 +8,15 @@ from typing import Dict, List, Optional, Any, Tuple
 import os
 import time
 
+# Attempt to import Dropbox SDK – graceful fallback if missing
+try:
+    import dropbox
+    from dropbox.exceptions import ApiError, AuthError
+    DROPBOX_AVAILABLE = True
+except ImportError:
+    DROPBOX_AVAILABLE = False
+    logging.warning("dropbox package not installed. Dropbox sync disabled. Install with: pip install dropbox")
+
 logger = logging.getLogger(__name__)
 
 class Database:
@@ -15,9 +24,92 @@ class Database:
         self.db_path = db_path
         self.local = threading.local()
         self._ensure_db_writable()
+
+        # --- Dropbox synchronization ---
+        self.dropbox_client = None
+        self._init_dropbox_client()
+        downloaded = self._download_from_dropbox() if self.dropbox_client else False
+
+        # Initialise the database tables (creates if new, updates if old)
         self.init_database()
         self.setup_cleanup_scheduler()
 
+        # If no remote file existed and we have a Dropbox client, upload the fresh DB
+        if self.dropbox_client and not downloaded:
+            self.upload_to_dropbox()
+
+    # ------------------------------------------------------------
+    #  Dropbox helpers
+    # ------------------------------------------------------------
+    def _init_dropbox_client(self):
+        """Initialise Dropbox API client using refresh token from environment."""
+        if not DROPBOX_AVAILABLE:
+            return
+        try:
+            app_key = os.environ.get('DROPBOX_APP_KEY')
+            app_secret = os.environ.get('DROPBOX_APP_SECRET')
+            refresh_token = os.environ.get('DROPBOX_REFRESH_TOKEN')
+            if not all([app_key, app_secret, refresh_token]):
+                logger.warning("Missing Dropbox environment variables. Sync disabled.")
+                return
+            self.dropbox_client = dropbox.Dropbox(
+                app_key=app_key,
+                app_secret=app_secret,
+                oauth2_refresh_token=refresh_token
+            )
+            self.dropbox_client.check_user()
+            logger.info("Dropbox client initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialise Dropbox client: {e}")
+            self.dropbox_client = None
+
+    def _download_from_dropbox(self) -> bool:
+        """Download /warbot.db from Dropbox and replace local file. Returns True if download succeeded."""
+        if not self.dropbox_client:
+            return False
+        try:
+            metadata, res = self.dropbox_client.files_download('/warbot.db')
+            temp_path = self.db_path + '.tmp'
+            with open(temp_path, 'wb') as f:
+                f.write(res.content)
+            os.replace(temp_path, self.db_path)
+            logger.info("Downloaded warbot.db from Dropbox and replaced local file.")
+            return True
+        except ApiError as e:
+            if isinstance(e.error, dropbox.files.DownloadError) and e.error.is_path() and e.error.get_path().is_not_found():
+                logger.info("No warbot.db found in Dropbox. Local/empty database will be used.")
+                return False
+            else:
+                logger.error(f"Dropbox download API error: {e}")
+                return False
+        except Exception as e:
+            logger.error(f"Error downloading from Dropbox: {e}")
+            return False
+
+    def upload_to_dropbox(self) -> bool:
+        """Upload the current local database to Dropbox (overwrites /warbot.db)."""
+        if not self.dropbox_client:
+            return False
+        try:
+            with open(self.db_path, 'rb') as f:
+                self.dropbox_client.files_upload(
+                    f.read(),
+                    '/warbot.db',
+                    mode=dropbox.files.WriteMode.overwrite
+                )
+            logger.info("Uploaded database to Dropbox.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to upload database to Dropbox: {e}")
+            return False
+
+    def backup_to_dropbox(self) -> bool:
+        """Alias for upload_to_dropbox, for manual backups."""
+        return self.upload_to_dropbox()
+
+    # ------------------------------------------------------------
+    #  Original database methods (unchanged from here onwards)
+    # ------------------------------------------------------------
     def _ensure_db_writable(self):
         """Ensure the database file exists and is writable."""
         if not os.path.exists(self.db_path):
