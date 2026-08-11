@@ -508,10 +508,10 @@ class CooldownManager:
 def get_territory_modifier(land_size: int) -> float:
     """
     Diminishing returns on land size for resource generation.
-    Maxes out at 2.0 (so having huge land gives at most 2× resources).
+    Now scales much faster and caps at 5.0 (was 2.0).
     """
     if land_size <= 0:
         return 1.0
-    # Use log10 to slow down growth: at 1000 km² → 1.0, at 100k → ~1.5, at 1M → ~2.0
-    factor = 0.3 * math.log10(land_size / 1000 + 1)
-    return min(1.0 + factor, 2.0)
+    # Use log10 with a higher coefficient: 0.8 * log10(land_size / 1000 + 1)
+    factor = 0.8 * math.log10(land_size / 1000 + 1)
+    return min(1.0 + factor, 5.0)   # cap at 5x
