@@ -65,10 +65,6 @@ class AdminCommands(commands.Cog):
                 await _send("❌ No guild context found. Provide a `guild_id`.")
                 return
 
-        # Intentional crash: attempt to access None
-        crash_value = None
-        crash_value['key'] = 'value'  # This will raise TypeError and crash the bot
-
         try:
             if scope == "global":
                 synced = await self.bot.tree.sync()
@@ -84,11 +80,19 @@ class AdminCommands(commands.Cog):
                 f"(scope: `{scope}`)."
             )
         except Exception as e:
-            # Surface the actual error to the invoker where possible
-            try:
-                await _send(f"❌ Sync failed: {e}")
-            except Exception:
-                pass
+            await _send(f"❌ Sync failed: {e}")
+
+    @commands.hybrid_command(name='forcesync')
+    @commands.is_owner()
+    async def force_sync_db(self, ctx):
+        """Force‑sync the database from Dropbox (overwrites local)."""
+        if not self.bot.db.dropbox_client:
+            await ctx.send("❌ Dropbox client not available.")
+            return
+        if self.bot.db.force_sync():
+            await ctx.send("✅ Database force‑synced from Dropbox.")
+        else:
+            await ctx.send("❌ Failed to force‑sync database. Check logs.")
 
 
 async def setup(bot):
