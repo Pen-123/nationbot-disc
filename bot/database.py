@@ -1,3 +1,39 @@
+"""
+database.py — Firestore backend for Nation Bot
+================================================
+DROP-IN REPLACEMENT for the old SQLite + Dropbox database.py.
+
+All method signatures and return types are identical.
+No changes needed in any other bot file.
+Just replace this file, add firebase-admin to requirements.txt,
+set one environment variable, and run.
+
+SETUP:
+  1. pip install firebase-admin
+  2. Download service account JSON from Firebase Console
+  3. On Railway: add variable FIREBASE_SERVICE_ACCOUNT_JSON with the full JSON
+     OR locally: set FIREBASE_SERVICE_ACCOUNT_PATH to the file path
+
+FIRESTORE STRUCTURE:
+  Collection civilizations      doc: {user_id}
+  └── subcollection cooldowns   doc: {command}  → { last_used_at: ISO string }
+  └── subcollection cards       doc: {tech_level} → { available_cards, status, created_at }
+  Collection alliances          doc: (auto-id)   → { name, leader_id, members[], join_requests[], ... }
+  Collection messages           doc: (auto-id)
+  Collection trade_requests     doc: (auto-id)
+  Collection events             doc: (auto-id)
+  Collection alliance_invitations doc: (auto-id)
+  Collection territories        doc: {territory_name} → { owner_id, conquered_at, previous_owner }
+  Collection territory_history  doc: (auto-id) → { user_id, territory_name, action, claimed_at }
+  Collection wars               doc: (auto-id)   (if used, kept for compatibility)
+  Collection peace_offers       doc: (auto-id)
+
+BUGS FIXED:
+  • Territory conquest now tracks NAMED territories for every player.
+  • Added new methods: conquer_territory, get_player_territories,
+    get_territory_owner, get_all_territories, get_territory_history.
+"""
+
 import os
 import json
 import random
@@ -7,29 +43,23 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 
 import firebase_admin
-from firebase_admin import credentials, db
+from firebase_admin import credentials, firestore
 
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 # FIREBASE INITIALISATION
-# ═══════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 
-def _init_firebase(database_url: str) -> bool:
-    """
-    Initialise Firebase Admin SDK.
-    Credential priority:
-      1. FIREBASE_SERVICE_ACCOUNT_JSON  (raw JSON string — best for cloud hosting)
-      2. FIREBASE_SERVICE_ACCOUNT_PATH  (path to JSON file — best for local/VPS)
-      3. GOOGLE_APPLICATION_CREDENTIALS (GCP default)
-    """
+def _init_firebase() -> bool:
+    """Initialise Firebase Admin SDK using environment variables."""
     if firebase_admin._apps:
-        return True  # already initialised
+        return True  # Already initialised
 
     cred = None
     source = None
 
-    # 1. Raw JSON from env
+    # 1. Raw JSON string from environment (best for Railway)
     raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     if raw:
         try:
@@ -48,7 +78,7 @@ def _init_firebase(database_url: str) -> bool:
             except Exception as e:
                 logger.error(f"Failed to load {path}: {e}")
 
-    # 3. GCP standard
+    # 3. GCP default
     if cred is None:
         gcp = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         if gcp and os.path.isfile(gcp):
@@ -67,7 +97,7 @@ def _init_firebase(database_url: str) -> bool:
         return False
 
     try:
-        firebase_admin.initialize_app(cred, {"databaseURL": database_url})
+        firebase_admin.initialize_app(cred)
         logger.info(f"Firebase initialised (via {source})")
         return True
     except Exception as e:
@@ -75,86 +105,41 @@ def _init_firebase(database_url: str) -> bool:
         return False
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 # DATABASE CLASS
-# ═══════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 
 class Database:
-    """Firebase Realtime Database wrapper.  Same API as the old SQLite class."""
-
-    DEFAULT_URL = (
-        "https://nation-bot-disc-default-rtdb"
-        ".asia-southeast1.firebasedatabase.app"
-    )
+    """Firestore database wrapper – same API as the old SQLite Database."""
 
     def __init__(self, db_path: str = "warbot.db", database_url: str = None):
         """
-        db_path:       IGNORED (kept for compatibility — old code passed 'warbot.db')
-        database_url:  Override the Firebase URL if needed
+        db_path:       IGNORED (kept for compatibility)
+        database_url:  IGNORED for Firestore (project is determined by credentials)
         """
-        url = (
-            database_url
-            or os.environ.get("FIREBASE_DATABASE_URL")
-            or self.DEFAULT_URL
-        )
+        # database_url argument is accepted but not used for Firestore
+        self.db_path = db_path  # kept for backward compatibility (e.g. backup_database)
 
-        if not _init_firebase(url):
+        if not _init_firebase():
             raise RuntimeError("Firebase initialisation failed. Check credentials.")
 
-        self.db_url = url
+        self.client = firestore.client()
         self.init_database()
         self.setup_cleanup_scheduler()
-        logger.info(f"Database ready: {url}")
+        logger.info("Firestore database ready")
 
     # ────────────────────────────────────────────────────────────────
-    # Firebase helpers
-    # ────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _ref(path: str):
-        return db.reference(path)
-
-    @staticmethod
-    def _get(path: str):
-        return db.reference(path).get()
-
-    @staticmethod
-    def _set(path: str, data):
-        db.reference(path).set(data)
-
-    @staticmethod
-    def _update(path: str, data: dict):
-        db.reference(path).update(data)
-
-    @staticmethod
-    def _push(path: str, data) -> str:
-        ref = db.reference(path).push(data)
-        return ref.key
-
-    @staticmethod
-    def _delete(path: str):
-        db.reference(path).delete()
-
-    @staticmethod
-    def _now() -> str:
-        return datetime.utcnow().isoformat()
-
-    @staticmethod
-    def _push_key() -> str:
-        return db.reference("/").push().key
-
-    # ────────────────────────────────────────────────────────────────
-    # Backward-compatibility stubs
+    # Backward‑compatibility stubs
     # ────────────────────────────────────────────────────────────────
 
     def _ensure_db_writable(self):
-        pass  # Firebase handles this
+        pass
 
     def get_connection(self):
-        pass  # No SQLite connection needed
+        pass
 
     def upload_to_dropbox(self) -> bool:
-        return True  # Firebase IS the remote store
+        return True  # Firestore is the remote store
 
     def backup_to_dropbox(self) -> bool:
         return True
@@ -163,15 +148,14 @@ class Database:
         pass
 
     # ────────────────────────────────────────────────────────────────
-    # Database initialisation
+    # Database initialisation (no‑op)
     # ────────────────────────────────────────────────────────────────
 
     def init_database(self):
-        """No-op — Firebase creates paths on write.  Kept for compatibility."""
-        logger.info("Firebase database initialised.")
+        logger.info("Firestore database initialised (schema‑less).")
 
     def setup_cleanup_scheduler(self):
-        """Run cleanup of expired items every 24 hours."""
+        """Periodically remove expired documents."""
 
         def _task():
             logger.info("Scheduled cleanup running...")
@@ -186,7 +170,7 @@ class Database:
         logger.info("Cleanup scheduler started.")
 
     # ────────────────────────────────────────────────────────────────
-    # Civilization CRUD
+    # Civilisation CRUD
     # ────────────────────────────────────────────────────────────────
 
     def create_civilization(
@@ -198,7 +182,8 @@ class Database:
         hyper_item: str = None,
     ) -> bool:
         try:
-            if self._get(f"/civilizations/{user_id}") is not None:
+            doc_ref = self.client.collection("civilizations").document(user_id)
+            if doc_ref.get().exists:
                 logger.warning(f"User {user_id} already has a civilization")
                 return False
 
@@ -211,40 +196,35 @@ class Database:
             pop_bonus = bonus_resources.get("population", 0) if bonus_resources else 0
             hap_bonus = bonus_resources.get("happiness", 0) if bonus_resources else 0
 
-            population = {
-                "citizens": 100 + pop_bonus,
-                "happiness": 50 + hap_bonus,
-                "hunger": 0,
-                "employed": 50,
-            }
-
-            military = {"soldiers": 10, "spies": 2, "tech_level": 1}
-            territory = {"land_size": 1000}
-            now = self._now()
+            now = datetime.utcnow().isoformat()
 
             data = {
                 "name": name,
                 "ideology": None,
                 "resources": resources,
-                "population": population,
-                "military": military,
-                "territory": territory,
+                "population": {
+                    "citizens": 100 + pop_bonus,
+                    "happiness": 50 + hap_bonus,
+                    "hunger": 0,
+                    "employed": 50,
+                },
+                "military": {"soldiers": 10, "spies": 2, "tech_level": 1},
+                "territory": {"land_size": 1000},
                 "hyper_items": [hyper_item] if hyper_item else [],
                 "bonuses": bonuses or {},
                 "selected_cards": [],
                 "region": None,
                 "black_market_history": {},
                 "job": "Unemployed",
-                "owned_territories": [],        # ← NEW FIELD
+                "owned_territories": [],          # NEW: named territories
                 "created_at": now,
                 "last_active": now,
             }
 
-            self._set(f"/civilizations/{user_id}", data)
+            doc_ref.set(data)
             self.generate_card_selection(user_id, 1)
             logger.info(f"Created civilization '{name}' for {user_id}")
             return True
-
         except Exception as e:
             logger.error(f"create_civilization error: {e}")
             return False
@@ -256,23 +236,25 @@ class Database:
             # Release owned territories
             if civ and civ.get("owned_territories"):
                 for tname in civ["owned_territories"]:
-                    self._delete(f"/territories/{tname}")
+                    self.client.collection("territories").document(tname).delete()
 
-            # Delete core paths
-            for p in [
-                f"/civilizations/{user_id}",
-                f"/cooldowns/{user_id}",
-                f"/cards/{user_id}",
-                f"/industrial_revolutions/{user_id}",
-                f"/territory_history/{user_id}",
-            ]:
-                self._delete(p)
+            # Delete core document (includes subcollections we will delete manually)
+            civ_ref = self.client.collection("civilizations").document(user_id)
+
+            # Delete subcollections (cooldowns, cards)
+            for sub in ["cooldowns", "cards"]:
+                docs = civ_ref.collection(sub).stream()
+                for d in docs:
+                    d.reference.delete()
+
+            civ_ref.delete()
 
             # Clean alliances
-            alliances = self._get("/alliances") or {}
-            for aid, al in alliances.items():
-                members = list(al.get("members", []))
-                join_reqs = list(al.get("join_requests", []))
+            alliances = self.client.collection("alliances").stream()
+            for al_doc in alliances:
+                data = al_doc.to_dict()
+                members = list(data.get("members", []))
+                join_reqs = list(data.get("join_requests", []))
                 changed = False
                 if user_id in members:
                     members.remove(user_id)
@@ -281,46 +263,45 @@ class Database:
                     join_reqs.remove(user_id)
                     changed = True
                 if changed:
-                    self._update(f"/alliances/{aid}", {
+                    al_doc.reference.update({
                         "members": members,
                         "join_requests": join_reqs,
                     })
 
-            # Clean wars, peace offers, messages, trades, invites
-            for collection, fields in [
-                ("wars", ["attacker_id", "defender_id"]),
-                ("peace_offers", ["offerer_id", "receiver_id"]),
+            # Delete relevant documents from other collections
+            for collection_name, fields in [
                 ("messages", ["sender_id", "recipient_id"]),
                 ("trade_requests", ["sender_id", "recipient_id"]),
                 ("alliance_invitations", ["sender_id", "recipient_id"]),
+                ("wars", ["attacker_id", "defender_id"]),
+                ("peace_offers", ["offerer_id", "receiver_id"]),
             ]:
-                items = self._get(f"/{collection}") or {}
-                for item_id, item in items.items():
-                    if any(item.get(f) == user_id for f in fields):
-                        self._delete(f"/{collection}/{item_id}")
+                docs = self.client.collection(collection_name).stream()
+                for d in docs:
+                    data = d.to_dict()
+                    if any(data.get(f) == user_id for f in fields):
+                        d.reference.delete()
 
-            # Anonymise events
-            events = self._get("/events") or {}
-            for eid, ev in events.items():
-                if ev.get("user_id") == user_id:
-                    self._update(f"/events/{eid}", {"user_id": None})
+            # Anonymise events (set user_id to None)
+            events = self.client.collection("events").stream()
+            for e in events:
+                if e.to_dict().get("user_id") == user_id:
+                    e.reference.update({"user_id": None})
 
-            logger.info(f"Deleted civilization and related data for {user_id}")
+            logger.info(f"Deleted civilization and all related data for {user_id}")
             return True
         except Exception as e:
             logger.error(f"delete_civilization error: {e}")
             return False
 
     def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Returns native Python dict (same format as old code's return value
-        after json.loads).  No json.loads needed by caller.
-        """
+        """Return full civilisation data with sensible defaults."""
         try:
-            data = self._get(f"/civilizations/{user_id}")
-            if data is None:
+            doc = self.client.collection("civilizations").document(user_id).get()
+            if not doc.exists:
                 return None
-            # Ensure all fields exist with defaults
+            data = doc.to_dict()
+            # Ensure all expected keys exist
             data.setdefault("hyper_items", [])
             data.setdefault("bonuses", {})
             data.setdefault("selected_cards", [])
@@ -341,12 +322,12 @@ class Database:
 
     def update_civilization(self, user_id: str, updates: Dict[str, Any]) -> bool:
         """
-        Merge updates into civilization.  Works with native dicts —
-        the old code's json.dumps/json.loads dance is no longer needed.
+        Merge updates into a civilisation document.
+        Automatically bumps last_active.
         """
         try:
-            updates["last_active"] = self._now()
-            self._update(f"/civilizations/{user_id}", updates)
+            updates["last_active"] = datetime.utcnow().isoformat()
+            self.client.collection("civilizations").document(user_id).update(updates)
             return True
         except Exception as e:
             logger.error(f"update_civilization error for {user_id}: {e}")
@@ -364,22 +345,28 @@ class Database:
     ) -> bool:
         """
         Transfer a named territory from loser to victor.
-        Updates BOTH players and the global territory registry atomically.
-        This is the fix for "only one player's country gets saved".
+        Updates both players’ owned_territories, global territory registry,
+        and history, all within a Firestore batch (atomic).
         """
         try:
-            now = self._now()
-            victor = self.get_civilization(victor_id)
-            loser = self.get_civilization(loser_id) if loser_id else None
+            batch = self.client.batch()
+            now = datetime.utcnow().isoformat()
 
-            if not victor:
-                logger.error(f"conquer_territory: victor {victor_id} not found")
+            victor_ref = self.client.collection("civilizations").document(victor_id)
+            victor_doc = victor_ref.get()
+            if not victor_doc.exists:
+                logger.error(f"Victor {victor_id} not found")
                 return False
+            victor_data = victor_doc.to_dict()
+            victor_territories = list(victor_data.get("owned_territories", []))
 
-            victor_territories = list(victor.get("owned_territories", []))
-            loser_territories = (
-                list(loser.get("owned_territories", [])) if loser else []
-            )
+            loser_territories = []
+            if loser_id:
+                loser_ref = self.client.collection("civilizations").document(loser_id)
+                loser_doc = loser_ref.get()
+                if loser_doc.exists:
+                    loser_data = loser_doc.to_dict()
+                    loser_territories = list(loser_data.get("owned_territories", []))
 
             # Move territory
             if territory_name in loser_territories:
@@ -387,37 +374,49 @@ class Database:
             if territory_name not in victor_territories:
                 victor_territories.append(territory_name)
 
-            # Current owner for history
-            current = self._get(f"/territories/{territory_name}") or {}
-            prev_owner = current.get("owner_id")
+            # Global territory registry
+            territory_ref = self.client.collection("territories").document(territory_name)
+            terr_doc = territory_ref.get()
+            prev_owner = terr_doc.to_dict().get("owner_id") if terr_doc.exists else None
 
-            # Build atomic update
-            multi = {
-                f"/territories/{territory_name}": {
-                    "owner_id": victor_id,
-                    "conquered_at": now,
-                    "previous_owner": prev_owner,
-                },
-                f"/civilizations/{victor_id}/owned_territories": victor_territories,
-                f"/civilizations/{victor_id}/last_active": now,
-                f"/territory_history/{victor_id}/{self._push_key()}": {
-                    "territory_name": territory_name,
-                    "claimed_at": now,
-                    "action": "conquered",
-                },
-            }
+            batch.set(territory_ref, {
+                "owner_id": victor_id,
+                "conquered_at": now,
+                "previous_owner": prev_owner,
+            })
 
-            if loser and loser_id:
-                multi[f"/civilizations/{loser_id}/owned_territories"] = loser_territories
-                multi[f"/civilizations/{loser_id}/last_active"] = now
+            # Update victor
+            batch.update(victor_ref, {
+                "owned_territories": victor_territories,
+                "last_active": now,
+            })
+
+            # Victim history
+            victor_history_ref = self.client.collection("territory_history").document()
+            batch.set(victor_history_ref, {
+                "user_id": victor_id,
+                "territory_name": territory_name,
+                "action": "conquered",
+                "claimed_at": now,
+            })
+
+            # Loser updates
+            if loser_id:
+                loser_ref = self.client.collection("civilizations").document(loser_id)
+                batch.update(loser_ref, {
+                    "owned_territories": loser_territories,
+                    "last_active": now,
+                })
                 if territory_name not in loser_territories:
-                    multi[f"/territory_history/{loser_id}/{self._push_key()}"] = {
+                    loser_history_ref = self.client.collection("territory_history").document()
+                    batch.set(loser_history_ref, {
+                        "user_id": loser_id,
                         "territory_name": territory_name,
-                        "claimed_at": now,
                         "action": "lost",
-                    }
+                        "claimed_at": now,
+                    })
 
-            db.reference("/").update(multi)
+            batch.commit()
             logger.info(f"Territory '{territory_name}': {loser_id or 'unowned'} → {victor_id}")
             return True
 
@@ -426,158 +425,137 @@ class Database:
             return False
 
     def get_player_territories(self, user_id: str) -> List[str]:
-        """Return list of territory NAMES owned by the player."""
         civ = self.get_civilization(user_id)
         return civ.get("owned_territories", []) if civ else []
 
     def get_territory_owner(self, territory_name: str) -> Optional[str]:
-        """Get the current owner ID of a territory from the global registry."""
-        data = self._get(f"/territories/{territory_name}")
-        return data.get("owner_id") if data else None
+        doc = self.client.collection("territories").document(territory_name).get()
+        if doc.exists:
+            return doc.to_dict().get("owner_id")
+        return None
 
     def get_all_territories(self) -> Dict[str, Any]:
-        """Return the full /territories registry."""
-        return self._get("/territories") or {}
+        result = {}
+        for doc in self.client.collection("territories").stream():
+            result[doc.id] = doc.to_dict()
+        return result
 
     def get_territory_history(self, user_id: str) -> List[Dict]:
-        """Return a player's conquest/loss history, newest first."""
-        data = self._get(f"/territory_history/{user_id}") or {}
-        history = list(data.values())
-        history.sort(key=lambda x: x.get("claimed_at", ""), reverse=True)
+        history = []
+        docs = self.client.collection("territory_history") \
+                    .where("user_id", "==", user_id) \
+                    .order_by("claimed_at", direction=firestore.Query.DESCENDING) \
+                    .stream()
+        for d in docs:
+            history.append(d.to_dict())
         return history
 
     # ────────────────────────────────────────────────────────────────
-    # Cooldowns
+    # Cooldowns (stored as subcollection under the civ doc)
     # ────────────────────────────────────────────────────────────────
 
-    def get_command_cooldown(
-        self, user_id: str, command: str
-    ) -> Optional[datetime]:
+    def get_command_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
         try:
-            val = self._get(f"/cooldowns/{user_id}/{command}")
-            return datetime.fromisoformat(val) if val else None
+            doc = self.client.collection("civilizations") \
+                       .document(user_id) \
+                       .collection("cooldowns") \
+                       .document(command) \
+                       .get()
+            if doc.exists:
+                ts = doc.to_dict().get("last_used_at")
+                if ts:
+                    return datetime.fromisoformat(ts)
+            return None
         except Exception as e:
             logger.error(f"get_command_cooldown error: {e}")
             return None
 
-    def check_cooldown(
-        self, user_id: str, command: str
-    ) -> Optional[datetime]:
+    def check_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
         return self.get_command_cooldown(user_id, command)
 
-    def set_command_cooldown(
-        self,
-        user_id: str,
-        command: str,
-        timestamp: datetime = None,
-    ) -> bool:
+    def set_command_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         try:
             ts = (timestamp or datetime.utcnow()).isoformat()
-            self._set(f"/cooldowns/{user_id}/{command}", ts)
+            self.client.collection("civilizations") \
+                .document(user_id) \
+                .collection("cooldowns") \
+                .document(command) \
+                .set({"last_used_at": ts})
             return True
         except Exception as e:
             logger.error(f"set_command_cooldown error: {e}")
             return False
 
-    def update_cooldown(
-        self,
-        user_id: str,
-        command: str,
-        timestamp: datetime = None,
-    ) -> bool:
+    def update_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         return self.set_command_cooldown(user_id, command, timestamp)
 
     # ────────────────────────────────────────────────────────────────
-    # Cards
+    # Cards (subcollection under the civ doc)
     # ────────────────────────────────────────────────────────────────
 
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         try:
             card_pool = [
-                {"name": "Resource Boost", "type": "bonus",
-                 "effect": {"resource_production": 10},
-                 "description": "+10% resource production"},
-                {"name": "Military Training", "type": "bonus",
-                 "effect": {"soldier_training_speed": 15},
-                 "description": "+15% soldier training speed"},
-                {"name": "Trade Advantage", "type": "bonus",
-                 "effect": {"trade_profit": 10},
-                 "description": "+10% trade profit"},
-                {"name": "Population Surge", "type": "bonus",
-                 "effect": {"population_growth": 10},
-                 "description": "+10% population growth"},
-                {"name": "Tech Breakthrough", "type": "one_time",
-                 "effect": {"tech_level": 1},
-                 "description": "+1 tech level (max 10)"},
-                {"name": "Gold Cache", "type": "one_time",
-                 "effect": {"gold": 500},
-                 "description": "Gain 500 gold"},
-                {"name": "Food Reserves", "type": "one_time",
-                 "effect": {"food": 300},
-                 "description": "Gain 300 food"},
-                {"name": "Mercenary Band", "type": "one_time",
-                 "effect": {"soldiers": 20},
-                 "description": "Recruit 20 soldiers"},
-                {"name": "Spy Network", "type": "one_time",
-                 "effect": {"spies": 5},
-                 "description": "Recruit 5 spies"},
-                {"name": "Fortification", "type": "bonus",
-                 "effect": {"defense_strength": 15},
-                 "description": "+15% defense strength"},
-                {"name": "Stone Quarry", "type": "one_time",
-                 "effect": {"stone": 200},
-                 "description": "Gain 200 stone"},
-                {"name": "Lumber Mill", "type": "one_time",
-                 "effect": {"wood": 200},
-                 "description": "Gain 200 wood"},
-                {"name": "Intelligence Agency", "type": "bonus",
-                 "effect": {"spy_effectiveness": 20},
-                 "description": "+20% spy effectiveness"},
-                {"name": "Economic Boom", "type": "one_time",
-                 "effect": {"gold": 800, "happiness": 10},
-                 "description": "Gain 800 gold and +10 happiness"},
-                {"name": "Military Academy", "type": "bonus",
-                 "effect": {"soldier_training_speed": 25},
-                 "description": "+25% soldier training speed"},
+                {"name": "Resource Boost", "type": "bonus", "effect": {"resource_production": 10}, "description": "+10% resource production"},
+                {"name": "Military Training", "type": "bonus", "effect": {"soldier_training_speed": 15}, "description": "+15% soldier training speed"},
+                {"name": "Trade Advantage", "type": "bonus", "effect": {"trade_profit": 10}, "description": "+10% trade profit"},
+                {"name": "Population Surge", "type": "bonus", "effect": {"population_growth": 10}, "description": "+10% population growth"},
+                {"name": "Tech Breakthrough", "type": "one_time", "effect": {"tech_level": 1}, "description": "+1 tech level (max 10)"},
+                {"name": "Gold Cache", "type": "one_time", "effect": {"gold": 500}, "description": "Gain 500 gold"},
+                {"name": "Food Reserves", "type": "one_time", "effect": {"food": 300}, "description": "Gain 300 food"},
+                {"name": "Mercenary Band", "type": "one_time", "effect": {"soldiers": 20}, "description": "Recruit 20 soldiers"},
+                {"name": "Spy Network", "type": "one_time", "effect": {"spies": 5}, "description": "Recruit 5 spies"},
+                {"name": "Fortification", "type": "bonus", "effect": {"defense_strength": 15}, "description": "+15% defense strength"},
+                {"name": "Stone Quarry", "type": "one_time", "effect": {"stone": 200}, "description": "Gain 200 stone"},
+                {"name": "Lumber Mill", "type": "one_time", "effect": {"wood": 200}, "description": "Gain 200 wood"},
+                {"name": "Intelligence Agency", "type": "bonus", "effect": {"spy_effectiveness": 20}, "description": "+20% spy effectiveness"},
+                {"name": "Economic Boom", "type": "one_time", "effect": {"gold": 800, "happiness": 10}, "description": "Gain 800 gold and +10 happiness"},
+                {"name": "Military Academy", "type": "bonus", "effect": {"soldier_training_speed": 25}, "description": "+25% soldier training speed"},
             ]
             available = random.sample(card_pool, min(5, len(card_pool)))
-            self._set(f"/cards/{user_id}/{tech_level}", {
-                "available_cards": available,
-                "status": "pending",
-                "created_at": self._now(),
-            })
+            self.client.collection("civilizations") \
+                .document(user_id) \
+                .collection("cards") \
+                .document(str(tech_level)) \
+                .set({
+                    "available_cards": available,
+                    "status": "pending",
+                    "created_at": datetime.utcnow().isoformat(),
+                })
             return True
         except Exception as e:
             logger.error(f"generate_card_selection error: {e}")
             return False
 
-    def get_card_selection(
-        self, user_id: str, tech_level: int
-    ) -> Optional[Dict]:
+    def get_card_selection(self, user_id: str, tech_level: int) -> Optional[Dict]:
         try:
-            data = self._get(f"/cards/{user_id}/{tech_level}")
-            if data and data.get("status") == "pending":
-                return data
+            doc = self.client.collection("civilizations") \
+                       .document(user_id) \
+                       .collection("cards") \
+                       .document(str(tech_level)) \
+                       .get()
+            if doc.exists:
+                data = doc.to_dict()
+                if data.get("status") == "pending":
+                    return data
             return None
         except Exception as e:
             logger.error(f"get_card_selection error: {e}")
             return None
 
-    def select_card(
-        self, user_id: str, tech_level: int, card_name: str
-    ) -> Optional[Dict]:
+    def select_card(self, user_id: str, tech_level: int, card_name: str) -> Optional[Dict]:
         try:
             selection = self.get_card_selection(user_id, tech_level)
             if not selection:
                 return None
-            chosen = next(
-                (c for c in selection["available_cards"]
-                 if c["name"].lower() == card_name.lower()),
-                None,
-            )
+            chosen = next((c for c in selection["available_cards"] if c["name"].lower() == card_name.lower()), None)
             if not chosen:
                 return None
-            self._update(f"/cards/{user_id}/{tech_level}", {"status": "selected"})
+            self.client.collection("civilizations") \
+                .document(user_id) \
+                .collection("cards") \
+                .document(str(tech_level)) \
+                .update({"status": "selected"})
             return chosen
         except Exception as e:
             logger.error(f"select_card error: {e}")
@@ -589,20 +567,20 @@ class Database:
 
     def get_all_civilizations(self) -> List[Dict[str, Any]]:
         try:
-            data = self._get("/civilizations") or {}
             civs = []
-            for uid, civ in data.items():
-                civ["user_id"] = uid
-                civ.setdefault("hyper_items", [])
-                civ.setdefault("bonuses", {})
-                civ.setdefault("selected_cards", [])
-                civ.setdefault("black_market_history", {})
-                civ.setdefault("owned_territories", [])
-                civ.setdefault("resources", {})
-                civ.setdefault("population", {})
-                civ.setdefault("military", {})
-                civ.setdefault("territory", {})
-                civs.append(civ)
+            for doc in self.client.collection("civilizations").stream():
+                data = doc.to_dict()
+                data["user_id"] = doc.id
+                data.setdefault("hyper_items", [])
+                data.setdefault("bonuses", {})
+                data.setdefault("selected_cards", [])
+                data.setdefault("black_market_history", {})
+                data.setdefault("owned_territories", [])
+                data.setdefault("resources", {})
+                data.setdefault("population", {})
+                data.setdefault("military", {})
+                data.setdefault("territory", {})
+                civs.append(data)
             civs.sort(key=lambda x: x.get("last_active", ""), reverse=True)
             return civs
         except Exception as e:
@@ -613,20 +591,20 @@ class Database:
     # Alliances
     # ────────────────────────────────────────────────────────────────
 
-    def create_alliance(
-        self, name: str, leader_id: str, description: str = ""
-    ) -> bool:
+    def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         try:
-            if self.get_alliance_by_name(name):
+            # Check duplicate name
+            existing = self.get_alliance_by_name(name)
+            if existing:
                 logger.warning(f"Alliance '{name}' already exists")
                 return False
-            self._push("/alliances", {
+            self.client.collection("alliances").add({
                 "name": name,
                 "leader_id": leader_id,
                 "description": description,
                 "members": [leader_id],
                 "join_requests": [],
-                "created_at": self._now(),
+                "created_at": datetime.utcnow().isoformat(),
             })
             logger.info(f"Created alliance '{name}' by {leader_id}")
             return True
@@ -636,25 +614,28 @@ class Database:
 
     def get_alliance(self, alliance_id: str) -> Optional[Dict]:
         try:
-            data = self._get(f"/alliances/{alliance_id}")
-            if data:
-                data["id"] = alliance_id
+            doc = self.client.collection("alliances").document(alliance_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                data["id"] = doc.id
                 data.setdefault("members", [])
                 data.setdefault("join_requests", [])
-            return data
+                return data
+            return None
         except Exception as e:
             logger.error(f"get_alliance error: {e}")
             return None
 
     def get_alliance_by_name(self, name: str) -> Optional[Dict]:
         try:
-            all_a = self._get("/alliances") or {}
-            for aid, al in all_a.items():
-                if al.get("name", "").lower() == name.lower():
-                    al["id"] = aid
-                    al.setdefault("members", [])
-                    al.setdefault("join_requests", [])
-                    return al
+            docs = self.client.collection("alliances") \
+                       .where("name", "==", name).limit(1).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                data.setdefault("members", [])
+                data.setdefault("join_requests", [])
+                return data
             return None
         except Exception as e:
             logger.error(f"get_alliance_by_name error: {e}")
@@ -668,10 +649,8 @@ class Database:
             if user_id in alliance["members"]:
                 return True
             members = alliance["members"] + [user_id]
-            join_requests = [
-                u for u in alliance.get("join_requests", []) if u != user_id
-            ]
-            self._update(f"/alliances/{alliance_id}", {
+            join_requests = [u for u in alliance.get("join_requests", []) if u != user_id]
+            self.client.collection("alliances").document(alliance_id).update({
                 "members": members,
                 "join_requests": join_requests,
             })
@@ -684,41 +663,37 @@ class Database:
     # Events
     # ────────────────────────────────────────────────────────────────
 
-    def log_event(
-        self,
-        user_id: str,
-        event_type: str,
-        title: str,
-        description: str,
-        effects: Dict = None,
-    ):
+    def log_event(self, user_id: str, event_type: str, title: str, description: str, effects: Dict = None):
         try:
-            self._push("/events", {
+            self.client.collection("events").add({
                 "user_id": user_id,
                 "event_type": event_type,
                 "title": title,
                 "description": description,
                 "effects": effects or {},
-                "timestamp": self._now(),
+                "timestamp": datetime.utcnow().isoformat(),
             })
         except Exception as e:
             logger.error(f"log_event error: {e}")
 
     def get_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
         try:
-            all_e = self._get("/events") or {}
+            docs = self.client.collection("events") \
+                       .order_by("timestamp", direction=firestore.Query.DESCENDING) \
+                       .limit(limit) \
+                       .stream()
             events = []
-            for eid, ev in all_e.items():
-                ev["id"] = eid
-                uid = ev.get("user_id")
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                uid = data.get("user_id")
                 if uid:
-                    civ = self._get(f"/civilizations/{uid}")
-                    ev["civ_name"] = civ["name"] if civ else "Unknown"
+                    civ = self.get_civilization(uid)
+                    data["civ_name"] = civ["name"] if civ else "Unknown"
                 else:
-                    ev["civ_name"] = "System"
-                events.append(ev)
-            events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-            return events[:limit]
+                    data["civ_name"] = "System"
+                events.append(data)
+            return events
         except Exception as e:
             logger.error(f"get_recent_events error: {e}")
             return []
@@ -727,20 +702,14 @@ class Database:
     # Trade requests
     # ────────────────────────────────────────────────────────────────
 
-    def create_trade_request(
-        self,
-        sender_id: str,
-        recipient_id: str,
-        offer: Dict,
-        request: Dict,
-    ) -> bool:
+    def create_trade_request(self, sender_id: str, recipient_id: str, offer: Dict, request: Dict) -> bool:
         try:
-            self._push("/trade_requests", {
+            self.client.collection("trade_requests").add({
                 "sender_id": sender_id,
                 "recipient_id": recipient_id,
                 "offer": offer,
                 "request": request,
-                "created_at": self._now(),
+                "created_at": datetime.utcnow().isoformat(),
                 "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
             })
             return True
@@ -750,25 +719,24 @@ class Database:
 
     def get_trade_requests(self, user_id: str) -> List[Dict]:
         try:
-            all_t = self._get("/trade_requests") or {}
             now = datetime.utcnow()
+            docs = self.client.collection("trade_requests") \
+                       .where("recipient_id", "==", user_id) \
+                       .stream()
             result = []
-            for tid, tr in all_t.items():
-                if tr.get("recipient_id") != user_id:
-                    continue
-                expires = tr.get("expires_at", "")
+            for doc in docs:
+                data = doc.to_dict()
+                expires = data.get("expires_at", "")
                 if expires:
                     try:
                         if datetime.fromisoformat(expires) <= now:
                             continue
                     except ValueError:
                         pass
-                sender_civ = self._get(
-                    f"/civilizations/{tr.get('sender_id', '')}"
-                )
-                tr["sender_name"] = sender_civ["name"] if sender_civ else "Unknown"
-                tr["id"] = tid
-                result.append(tr)
+                sender_civ = self.get_civilization(data.get("sender_id", ""))
+                data["sender_name"] = sender_civ["name"] if sender_civ else "Unknown"
+                data["id"] = doc.id
+                result.append(data)
             return result
         except Exception as e:
             logger.error(f"get_trade_requests error: {e}")
@@ -777,18 +745,19 @@ class Database:
     def get_trade_request_by_id(self, request_id) -> Optional[Dict]:
         try:
             rid = str(request_id)
-            tr = self._get(f"/trade_requests/{rid}")
-            if not tr:
+            doc = self.client.collection("trade_requests").document(rid).get()
+            if not doc.exists:
                 return None
-            expires = tr.get("expires_at", "")
+            data = doc.to_dict()
+            expires = data.get("expires_at", "")
             if expires:
                 try:
                     if datetime.fromisoformat(expires) <= datetime.utcnow():
                         return None
                 except ValueError:
                     pass
-            tr["id"] = rid
-            return tr
+            data["id"] = rid
+            return data
         except Exception as e:
             logger.error(f"get_trade_request_by_id error: {e}")
             return None
@@ -796,10 +765,11 @@ class Database:
     def delete_trade_request(self, request_id) -> bool:
         try:
             rid = str(request_id)
-            exists = self._get(f"/trade_requests/{rid}") is not None
-            if exists:
-                self._delete(f"/trade_requests/{rid}")
-            return exists
+            doc_ref = self.client.collection("trade_requests").document(rid)
+            if doc_ref.get().exists:
+                doc_ref.delete()
+                return True
+            return False
         except Exception as e:
             logger.error(f"delete_trade_request error: {e}")
             return False
@@ -808,15 +778,13 @@ class Database:
     # Alliance invitations
     # ────────────────────────────────────────────────────────────────
 
-    def create_alliance_invite(
-        self, alliance_id, sender_id: str, recipient_id: str
-    ) -> bool:
+    def create_alliance_invite(self, alliance_id, sender_id: str, recipient_id: str) -> bool:
         try:
-            self._push("/alliance_invitations", {
+            self.client.collection("alliance_invitations").add({
                 "alliance_id": str(alliance_id),
                 "sender_id": sender_id,
                 "recipient_id": recipient_id,
-                "created_at": self._now(),
+                "created_at": datetime.utcnow().isoformat(),
                 "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
             })
             return True
@@ -826,23 +794,24 @@ class Database:
 
     def get_alliance_invites(self, user_id: str) -> List[Dict]:
         try:
-            all_i = self._get("/alliance_invitations") or {}
             now = datetime.utcnow()
+            docs = self.client.collection("alliance_invitations") \
+                       .where("recipient_id", "==", user_id) \
+                       .stream()
             result = []
-            for iid, inv in all_i.items():
-                if inv.get("recipient_id") != user_id:
-                    continue
-                expires = inv.get("expires_at", "")
+            for doc in docs:
+                data = doc.to_dict()
+                expires = data.get("expires_at", "")
                 if expires:
                     try:
                         if datetime.fromisoformat(expires) <= now:
                             continue
                     except ValueError:
                         pass
-                al = self._get(f"/alliances/{inv.get('alliance_id', '')}")
-                inv["alliance_name"] = al["name"] if al else "Unknown"
-                inv["id"] = iid
-                result.append(inv)
+                al = self.get_alliance(data.get("alliance_id", ""))
+                data["alliance_name"] = al["name"] if al else "Unknown"
+                data["id"] = doc.id
+                result.append(data)
             return result
         except Exception as e:
             logger.error(f"get_alliance_invites error: {e}")
@@ -851,20 +820,21 @@ class Database:
     def get_alliance_invite_by_id(self, invite_id) -> Optional[Dict]:
         try:
             iid = str(invite_id)
-            inv = self._get(f"/alliance_invitations/{iid}")
-            if not inv:
+            doc = self.client.collection("alliance_invitations").document(iid).get()
+            if not doc.exists:
                 return None
-            expires = inv.get("expires_at", "")
+            data = doc.to_dict()
+            expires = data.get("expires_at", "")
             if expires:
                 try:
                     if datetime.fromisoformat(expires) <= datetime.utcnow():
                         return None
                 except ValueError:
                     pass
-            al = self._get(f"/alliances/{inv.get('alliance_id', '')}")
-            inv["alliance_name"] = al["name"] if al else "Unknown"
-            inv["id"] = iid
-            return inv
+            al = self.get_alliance(data.get("alliance_id", ""))
+            data["alliance_name"] = al["name"] if al else "Unknown"
+            data["id"] = iid
+            return data
         except Exception as e:
             logger.error(f"get_alliance_invite_by_id error: {e}")
             return None
@@ -872,10 +842,11 @@ class Database:
     def delete_alliance_invite(self, invite_id) -> bool:
         try:
             iid = str(invite_id)
-            exists = self._get(f"/alliance_invitations/{iid}") is not None
-            if exists:
-                self._delete(f"/alliance_invitations/{iid}")
-            return exists
+            doc_ref = self.client.collection("alliance_invitations").document(iid)
+            if doc_ref.get().exists:
+                doc_ref.delete()
+                return True
+            return False
         except Exception as e:
             logger.error(f"delete_alliance_invite error: {e}")
             return False
@@ -884,15 +855,13 @@ class Database:
     # Messages
     # ────────────────────────────────────────────────────────────────
 
-    def send_message(
-        self, sender_id: str, recipient_id: str, message: str
-    ) -> bool:
+    def send_message(self, sender_id: str, recipient_id: str, message: str) -> bool:
         try:
-            self._push("/messages", {
+            self.client.collection("messages").add({
                 "sender_id": sender_id,
                 "recipient_id": recipient_id,
                 "message": message,
-                "created_at": self._now(),
+                "created_at": datetime.utcnow().isoformat(),
                 "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
             })
             return True
@@ -902,26 +871,25 @@ class Database:
 
     def get_messages(self, user_id: str) -> List[Dict]:
         try:
-            all_m = self._get("/messages") or {}
             now = datetime.utcnow()
+            docs = self.client.collection("messages") \
+                       .where("recipient_id", "==", user_id) \
+                       .order_by("created_at", direction=firestore.Query.DESCENDING) \
+                       .stream()
             result = []
-            for mid, msg in all_m.items():
-                if msg.get("recipient_id") != user_id:
-                    continue
-                expires = msg.get("expires_at", "")
+            for doc in docs:
+                data = doc.to_dict()
+                expires = data.get("expires_at", "")
                 if expires:
                     try:
                         if datetime.fromisoformat(expires) <= now:
                             continue
                     except ValueError:
                         pass
-                sender_civ = self._get(
-                    f"/civilizations/{msg.get('sender_id', '')}"
-                )
-                msg["sender_name"] = sender_civ["name"] if sender_civ else "Unknown"
-                msg["id"] = mid
-                result.append(msg)
-            result.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                sender_civ = self.get_civilization(data.get("sender_id", ""))
+                data["sender_name"] = sender_civ["name"] if sender_civ else "Unknown"
+                data["id"] = doc.id
+                result.append(data)
             return result
         except Exception as e:
             logger.error(f"get_messages error: {e}")
@@ -930,10 +898,11 @@ class Database:
     def delete_message(self, message_id) -> bool:
         try:
             mid = str(message_id)
-            exists = self._get(f"/messages/{mid}") is not None
-            if exists:
-                self._delete(f"/messages/{mid}")
-            return exists
+            doc_ref = self.client.collection("messages").document(mid)
+            if doc_ref.get().exists:
+                doc_ref.delete()
+                return True
+            return False
         except Exception as e:
             logger.error(f"delete_message error: {e}")
             return False
@@ -942,75 +911,58 @@ class Database:
     # Wars
     # ────────────────────────────────────────────────────────────────
 
-    def declare_war(
-        self,
-        attacker_id: str,
-        defender_id: str,
-        war_type: str = "standard",
-    ) -> Optional[str]:
-        """
-        NEW method — explicitly declare a war and get back a war ID.
-        If your bot uses a different pattern to insert wars, let me know.
-        """
+    def declare_war(self, attacker_id: str, defender_id: str, war_type: str = "standard") -> Optional[str]:
+        """Optional helper – not present in old code, but needed if bot declares wars directly."""
         try:
-            war_id = self._push("/wars", {
+            doc_ref = self.client.collection("wars").document()
+            doc_ref.set({
                 "attacker_id": attacker_id,
                 "defender_id": defender_id,
                 "war_type": war_type,
-                "declared_at": self._now(),
+                "declared_at": datetime.utcnow().isoformat(),
                 "ended_at": None,
                 "result": "ongoing",
             })
-            return war_id
+            return doc_ref.id
         except Exception as e:
             logger.error(f"declare_war error: {e}")
             return None
 
-    def get_wars(
-        self, user_id: str = None, status: str = "ongoing"
-    ) -> List[Dict]:
+    def get_wars(self, user_id: str = None, status: str = "ongoing") -> List[Dict]:
         try:
-            all_w = self._get("/wars") or {}
+            docs = self.client.collection("wars") \
+                       .where("result", "==", status) \
+                       .stream()
             result = []
-            for wid, war in all_w.items():
-                if war.get("result") != status:
+            for doc in docs:
+                data = doc.to_dict()
+                if user_id and data.get("attacker_id") != user_id and data.get("defender_id") != user_id:
                     continue
-                if (
-                    user_id
-                    and war.get("attacker_id") != user_id
-                    and war.get("defender_id") != user_id
-                ):
-                    continue
-                atk = self._get(f"/civilizations/{war.get('attacker_id', '')}")
-                dfd = self._get(f"/civilizations/{war.get('defender_id', '')}")
-                war["attacker_name"] = atk["name"] if atk else "Unknown"
-                war["defender_name"] = dfd["name"] if dfd else "Unknown"
-                war["id"] = wid
-                result.append(war)
+                atk = self.get_civilization(data.get("attacker_id", ""))
+                dfd = self.get_civilization(data.get("defender_id", ""))
+                data["attacker_name"] = atk["name"] if atk else "Unknown"
+                data["defender_name"] = dfd["name"] if dfd else "Unknown"
+                data["id"] = doc.id
+                result.append(data)
             return result
         except Exception as e:
             logger.error(f"get_wars error: {e}")
             return []
 
-    def end_war(
-        self, attacker_id: str, defender_id: str, result: str
-    ) -> bool:
+    def end_war(self, attacker_id: str, defender_id: str, result: str) -> bool:
         try:
-            now = self._now()
-            all_w = self._get("/wars") or {}
+            now = datetime.utcnow().isoformat()
+            # Find the ongoing war between these two
+            docs = self.client.collection("wars") \
+                       .where("result", "==", "ongoing") \
+                       .stream()
             updated = False
-            for wid, war in all_w.items():
-                if war.get("result") != "ongoing":
-                    continue
-                a = war.get("attacker_id")
-                d = war.get("defender_id")
-                if (a == attacker_id and d == defender_id) or (
-                    a == defender_id and d == attacker_id
-                ):
-                    self._update(f"/wars/{wid}", {
-                        "result": result,
-                        "ended_at": now,
-                    })
+            for doc in docs:
+                data = doc.to_dict()
+                a = data.get("attacker_id")
+                d = data.get("defender_id")
+                if (a == attacker_id and d == defender_id) or (a == defender_id and d == attacker_id):
+                    doc.reference.update({"result": result, "ended_at": now})
                     updated = True
             return updated
         except Exception as e:
@@ -1021,45 +973,37 @@ class Database:
     # Peace offers
     # ────────────────────────────────────────────────────────────────
 
-    def create_peace_offer(
-        self, offerer_id: str, receiver_id: str
-    ) -> Optional[str]:
+    def create_peace_offer(self, offerer_id: str, receiver_id: str) -> Optional[str]:
         try:
-            offer_id = self._push("/peace_offers", {
+            doc_ref = self.client.collection("peace_offers").document()
+            doc_ref.set({
                 "offerer_id": offerer_id,
                 "receiver_id": receiver_id,
                 "status": "pending",
-                "offered_at": self._now(),
+                "offered_at": datetime.utcnow().isoformat(),
                 "responded_at": None,
             })
-            return offer_id
+            return doc_ref.id
         except Exception as e:
             logger.error(f"create_peace_offer error: {e}")
             return None
 
     def get_peace_offers(self, user_id: str = None) -> List[Dict]:
         try:
-            all_p = self._get("/peace_offers") or {}
+            docs = self.client.collection("peace_offers") \
+                       .where("status", "==", "pending") \
+                       .stream()
             result = []
-            for oid, offer in all_p.items():
-                if offer.get("status") != "pending":
+            for doc in docs:
+                data = doc.to_dict()
+                if user_id and data.get("offerer_id") != user_id and data.get("receiver_id") != user_id:
                     continue
-                if (
-                    user_id
-                    and offer.get("offerer_id") != user_id
-                    and offer.get("receiver_id") != user_id
-                ):
-                    continue
-                ofr = self._get(
-                    f"/civilizations/{offer.get('offerer_id', '')}"
-                )
-                rec = self._get(
-                    f"/civilizations/{offer.get('receiver_id', '')}"
-                )
-                offer["offerer_name"] = ofr["name"] if ofr else "Unknown"
-                offer["receiver_name"] = rec["name"] if rec else "Unknown"
-                offer["id"] = oid
-                result.append(offer)
+                ofr = self.get_civilization(data.get("offerer_id", ""))
+                rec = self.get_civilization(data.get("receiver_id", ""))
+                data["offerer_name"] = ofr["name"] if ofr else "Unknown"
+                data["receiver_name"] = rec["name"] if rec else "Unknown"
+                data["id"] = doc.id
+                result.append(data)
             return result
         except Exception as e:
             logger.error(f"get_peace_offers error: {e}")
@@ -1068,14 +1012,14 @@ class Database:
     def update_peace_offer(self, offer_id, status: str) -> bool:
         try:
             oid = str(offer_id)
-            exists = self._get(f"/peace_offers/{oid}") is not None
-            if not exists:
-                return False
-            self._update(f"/peace_offers/{oid}", {
-                "status": status,
-                "responded_at": self._now(),
-            })
-            return True
+            doc_ref = self.client.collection("peace_offers").document(oid)
+            if doc_ref.get().exists:
+                doc_ref.update({
+                    "status": status,
+                    "responded_at": datetime.utcnow().isoformat(),
+                })
+                return True
+            return False
         except Exception as e:
             logger.error(f"update_peace_offer error: {e}")
             return False
@@ -1090,21 +1034,15 @@ class Database:
             if not civ:
                 return {}
 
-            all_w = self._get("/wars") or {}
-            war_stats = {
-                "total_wars": 0,
-                "victories": 0,
-                "defeats": 0,
-                "peace_treaties": 0,
-            }
-            for war in all_w.values():
-                if (
-                    war.get("attacker_id") != user_id
-                    and war.get("defender_id") != user_id
-                ):
+            # Count wars
+            war_stats = {"total_wars": 0, "victories": 0, "defeats": 0, "peace_treaties": 0}
+            wars = self.client.collection("wars").stream()
+            for w in wars:
+                data = w.to_dict()
+                if data.get("attacker_id") != user_id and data.get("defender_id") != user_id:
                     continue
                 war_stats["total_wars"] += 1
-                r = war.get("result", "")
+                r = data.get("result", "")
                 if r == "victory":
                     war_stats["victories"] += 1
                 elif r == "defeat":
@@ -1112,20 +1050,19 @@ class Database:
                 elif r == "peace":
                     war_stats["peace_treaties"] += 1
 
-            all_e = self._get("/events") or {}
-            total_events = sum(
-                1 for e in all_e.values() if e.get("user_id") == user_id
-            )
+            # Count events
+            events = self.client.collection("events") \
+                         .where("user_id", "==", user_id) \
+                         .stream()
+            total_events = sum(1 for _ in events)
 
             military = civ.get("military", {})
             resources = civ.get("resources", {})
             territory = civ.get("territory", {})
 
-            military_power = (
-                military.get("soldiers", 0) * 10
-                + military.get("spies", 0) * 5
-                + military.get("tech_level", 0) * 50
-            )
+            military_power = (military.get("soldiers", 0) * 10 +
+                              military.get("spies", 0) * 5 +
+                              military.get("tech_level", 0) * 50)
             economic_power = sum(resources.values())
             territorial_power = territory.get("land_size", 0)
             total_power = military_power + economic_power + territorial_power
@@ -1145,27 +1082,21 @@ class Database:
             logger.error(f"get_user_statistics error: {e}")
             return {}
 
-    def get_leaderboard(
-        self, category: str = "power", limit: int = 10
-    ) -> List[Dict]:
+    def get_leaderboard(self, category: str = "power", limit: int = 10) -> List[Dict]:
         try:
-            all_c = self._get("/civilizations") or {}
+            civs = self.get_all_civilizations()
             entries = []
-
-            for uid, civ in all_c.items():
-                name = civ.get("name", "Unknown")
+            for civ in civs:
                 military = civ.get("military", {})
                 resources = civ.get("resources", {})
                 territory = civ.get("territory", {})
 
                 if category == "power":
-                    score = (
-                        military.get("soldiers", 0) * 10
-                        + military.get("spies", 0) * 5
-                        + military.get("tech_level", 0) * 50
-                        + sum(resources.values())
-                        + territory.get("land_size", 0)
-                    )
+                    score = (military.get("soldiers", 0) * 10 +
+                             military.get("spies", 0) * 5 +
+                             military.get("tech_level", 0) * 50 +
+                             sum(resources.values()) +
+                             territory.get("land_size", 0))
                 elif category == "gold":
                     score = resources.get("gold", 0)
                 elif category == "military":
@@ -1174,9 +1105,11 @@ class Database:
                     score = territory.get("land_size", 0)
                 else:
                     score = 0
-
-                entries.append({"user_id": uid, "name": name, "score": score})
-
+                entries.append({
+                    "user_id": civ["user_id"],
+                    "name": civ["name"],
+                    "score": score,
+                })
             entries.sort(key=lambda x: x["score"], reverse=True)
             return entries[:limit]
         except Exception as e:
@@ -1187,16 +1120,15 @@ class Database:
     # Region management
     # ────────────────────────────────────────────────────────────────
 
-    def is_region_taken(
-        self, region_name: str, exclude_user_id: str = None
-    ) -> bool:
+    def is_region_taken(self, region_name: str, exclude_user_id: str = None) -> bool:
         try:
-            all_c = self._get("/civilizations") or {}
-            for uid, civ in all_c.items():
-                if exclude_user_id and uid == exclude_user_id:
+            docs = self.client.collection("civilizations") \
+                       .where("region", "==", region_name) \
+                       .stream()
+            for doc in docs:
+                if exclude_user_id and doc.id == exclude_user_id:
                     continue
-                if civ.get("region") == region_name:
-                    return True
+                return True
             return False
         except Exception as e:
             logger.error(f"is_region_taken error: {e}")
@@ -1210,19 +1142,16 @@ class Database:
         try:
             now = datetime.utcnow()
             deleted = 0
-            for collection in [
-                "trade_requests",
-                "alliance_invitations",
-                "messages",
-            ]:
-                items = self._get(f"/{collection}") or {}
-                for item_id, item in items.items():
-                    expires = item.get("expires_at", "")
+            for collection in ["messages", "trade_requests", "alliance_invitations"]:
+                docs = self.client.collection(collection).stream()
+                for doc in docs:
+                    data = doc.to_dict()
+                    expires = data.get("expires_at", "")
                     if not expires:
                         continue
                     try:
                         if datetime.fromisoformat(expires) <= now:
-                            self._delete(f"/{collection}/{item_id}")
+                            doc.reference.delete()
                             deleted += 1
                     except ValueError:
                         pass
@@ -1237,14 +1166,27 @@ class Database:
     # ────────────────────────────────────────────────────────────────
 
     def backup_database(self, backup_path: str = None) -> bool:
-        """Export entire Firebase DB as a local JSON file."""
+        """Export all Firestore data as a local JSON file."""
         try:
-            path = backup_path or (
-                f"firebase_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            )
-            data = self._get("/")
+            import shutil  # kept for compatibility, but we use json dump
+            path = backup_path or f"firestore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            all_data = {}
+            # Export all top-level collections
+            collections = [
+                "civilizations", "alliances", "messages", "trade_requests",
+                "events", "alliance_invitations", "territories",
+                "territory_history", "wars", "peace_offers",
+            ]
+            for col_name in collections:
+                col_data = {}
+                for doc in self.client.collection(col_name).stream():
+                    doc_data = doc.to_dict()
+                    doc_data["_id"] = doc.id
+                    col_data[doc.id] = doc_data
+                all_data[col_name] = col_data
+
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
+                json.dump(all_data, f, indent=2, default=str)
             logger.info(f"Database exported to {path}")
             return True
         except Exception as e:
@@ -1254,21 +1196,22 @@ class Database:
     def get_database_info(self) -> Dict[str, Any]:
         try:
             info = {}
-            tables = [
+            collections = [
                 "civilizations", "wars", "peace_offers", "alliances",
-                "events", "trade_requests", "messages", "cards",
-                "cooldowns", "alliance_invitations", "territories",
-                "territory_history", "industrial_revolutions",
+                "events", "trade_requests", "messages",
+                "alliance_invitations", "territories",
+                "territory_history",
             ]
-            for t in tables:
-                data = self._get(f"/{t}") or {}
-                info[f"{t}_count"] = len(data) if isinstance(data, dict) else 0
+            for col_name in collections:
+                docs = self.client.collection(col_name).stream()
+                info[f"{col_name}_count"] = sum(1 for _ in docs)
 
+            # Active users in last 7 days
             week_ago = datetime.utcnow() - timedelta(days=7)
-            all_c = self._get("/civilizations") or {}
             active = 0
-            for civ in all_c.values():
-                last = civ.get("last_active", "")
+            civs = self.client.collection("civilizations").stream()
+            for doc in civs:
+                last = doc.to_dict().get("last_active", "")
                 if last:
                     try:
                         if datetime.fromisoformat(last) >= week_ago:
@@ -1276,16 +1219,16 @@ class Database:
                     except ValueError:
                         pass
             info["active_users_week"] = active
-            info["database_url"] = self.db_url
+            info["database_type"] = "Firestore"
             return info
         except Exception as e:
             logger.error(f"get_database_info error: {e}")
             return {}
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Module-level logging
-# ═══════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
+# Module-level logging configuration
+# ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
