@@ -51,6 +51,7 @@ COUNTRYBALLS = {
         "name": "China",
         "continent": "Asia",
         "flag_colors": ["#ff0000", "#ffff00"],
+        "flag_colors_human": "Red and Yellow",
         "power_rank": 3,
         "image_file": "china.png",
         "evolution": {"base": None, "condition": None},
@@ -68,6 +69,7 @@ COUNTRYBALLS = {
         "name": "German Reich",
         "continent": "Europe",
         "flag_colors": ["#000000", "#ffffff", "#ff0000"],
+        "flag_colors_human": "Black, White, and Red",
         "power_rank": 2,
         "image_file": "reich.jpg",
         "evolution": {"base": None, "condition": None},
@@ -85,6 +87,7 @@ COUNTRYBALLS = {
         "name": "United States",
         "continent": "North America",
         "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
+        "flag_colors_human": "Red, White, and Blue",
         "power_rank": 1,
         "image_file": "america.jpg",
         "evolution": {"base": None, "condition": None},
@@ -102,6 +105,7 @@ COUNTRYBALLS = {
         "name": "Austria-Hungary",
         "continent": "Europe",
         "flag_colors": ["#ff0000", "#ffffff", "#006600"],
+        "flag_colors_human": "Red, White, and Green",
         "power_rank": 4,
         "image_file": "austria-hungary.png",
         "evolution": {"base": None, "condition": None},
@@ -119,6 +123,7 @@ COUNTRYBALLS = {
         "name": "British Empire",
         "continent": "Europe",
         "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
+        "flag_colors_human": "Red, White, and Blue",
         "power_rank": 1,
         "image_file": "british empire.jpg",
         "evolution": {"base": "united_kingdom", "condition": "Own all provinces in Western Europe, Southern Europe, and Eastern North America"},
@@ -137,6 +142,7 @@ COUNTRYBALLS = {
         "name": "France",
         "continent": "Europe",
         "flag_colors": ["#0000ff", "#ffffff", "#ff0000"],
+        "flag_colors_human": "Blue, White, and Red",
         "power_rank": 2,
         "image_file": "france.png",
         "evolution": {"base": None, "condition": None},
@@ -154,6 +160,7 @@ COUNTRYBALLS = {
         "name": "German Empire",
         "continent": "Europe",
         "flag_colors": ["#000000", "#ffffff", "#ff0000"],
+        "flag_colors_human": "Black, White, and Red",
         "power_rank": 2,
         "image_file": "german empire.jpg",
         "evolution": {"base": "reich", "condition": "Own all provinces in Western Europe and Eastern Europe"},
@@ -172,6 +179,7 @@ COUNTRYBALLS = {
         "name": "Kingdom of Italy",
         "continent": "Europe",
         "flag_colors": ["#009246", "#ffffff", "#ce2b37"],
+        "flag_colors_human": "Green, White, and Red",
         "power_rank": 3,
         "image_file": "italy.jpg",
         "evolution": {"base": None, "condition": None},
@@ -189,6 +197,7 @@ COUNTRYBALLS = {
         "name": "Japanese Empire",
         "continent": "Asia",
         "flag_colors": ["#ff0000", "#ffffff"],
+        "flag_colors_human": "Red and White",
         "power_rank": 2,
         "image_file": "japanese empire.jpg",
         "evolution": {"base": "japan", "condition": "Own all provinces in East Asia and Southeast Asia"},
@@ -206,6 +215,7 @@ COUNTRYBALLS = {
         "name": "North Korea",
         "continent": "Asia",
         "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
+        "flag_colors_human": "Red, White, and Blue",
         "power_rank": 5,
         "image_file": "north korea.jpg",
         "evolution": {"base": None, "condition": None},
@@ -223,6 +233,7 @@ COUNTRYBALLS = {
         "name": "Ottoman Empire",
         "continent": "Asia",
         "flag_colors": ["#ff0000", "#ffffff", "#006600"],
+        "flag_colors_human": "Red, White, and Green",
         "power_rank": 3,
         "image_file": "ottoman empire.jpg",
         "evolution": {"base": "turkey", "condition": "Own all provinces in Middle East, North Africa, and Eastern Europe"},
@@ -241,6 +252,7 @@ COUNTRYBALLS = {
         "name": "Soviet Union",
         "continent": "Europe/Asia",
         "flag_colors": ["#ff0000", "#ffff00"],
+        "flag_colors_human": "Red and Yellow",
         "power_rank": 1,
         "image_file": "soviet union.jpg",
         "evolution": {"base": "russia", "condition": "Own all provinces in Eastern Europe and Central Asia"},
@@ -259,6 +271,7 @@ COUNTRYBALLS = {
         "name": "Taiwan",
         "continent": "Asia",
         "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
+        "flag_colors_human": "Red, White, and Blue",
         "power_rank": 4,
         "image_file": "taiwan.jpg",
         "evolution": {"base": None, "condition": None},
@@ -376,7 +389,7 @@ class CountryballManager:
                     'evolution_stage': row['evolution_stage'],
                     'image_file': ball_data['image_file'],
                     'continent': ball_data['continent'],
-                    'flag_colors': ball_data['flag_colors'],
+                    'flag_colors_human': ball_data['flag_colors_human'],
                     'power_rank': ball_data['power_rank'],
                     'modifiers': ball_data['modifiers'],
                     'synergy_group': ball_data['synergy_group']
@@ -505,7 +518,7 @@ class CountryballCog(commands.Cog):
         if not self.territory_cog:
             logger.warning("TerritoryCog not found; countryball auto-unlock will not work.")
 
-    # ---- PROGRESSIVE REVEAL ----
+    # ---- PROGRESSIVE REVEAL (UPDATED: name hidden until final stage) ----
     async def reveal_countryball(self, ctx, ball_id: str, user_id: str):
         ball_def = COUNTRYBALLS.get(ball_id)
         if not ball_def:
@@ -517,24 +530,31 @@ class CountryballCog(commands.Cog):
             await ctx.send(f"❌ Image file `{ball_def['image_file']}` not found. Path: {image_path}")
             return
 
+        # Stage 1: Continent (no name)
         embed1 = discord.Embed(
             title="🌍 **A New Power Rises!**",
             description=f"From the continent of **{ball_def['continent']}**...",
             color=discord.Color.blue()
         )
-        colors_str = " ".join([f"`{c}`" for c in ball_def['flag_colors']])
-        embed2 = discord.Embed(
-            title=f"🎨 **Colors of {ball_def['name']}**",
-            description=f"Its flag bears the colors: {colors_str}",
-            color=discord.Color.gold()
-        )
+
+        # Stage 2: Colors and rank (no name)
+        colors_str = ball_def['flag_colors_human']
         rank = ball_def['power_rank']
         rank_emoji = "👑" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else "🏅"))
+        embed2 = discord.Embed(
+            title=f"{rank_emoji} **Rank #{rank}**",
+            description=f"Bears the colors of **{colors_str}**.",
+            color=discord.Color.gold()
+        )
+
+        # Stage 3: Mystery hint (still no name)
         embed3 = discord.Embed(
-            title=f"{rank_emoji} **Rank #{rank} – {ball_def['name']}**",
-            description=f"This power is one of the most influential of its time.",
+            title="🔮 **A Legendary Power Emerges**",
+            description="Ancient texts speak of a mighty empire...\nIts true name will be revealed shortly.",
             color=discord.Color.purple()
         )
+
+        # Stage 4: Full reveal with name and image
         embed4 = discord.Embed(
             title=f"**{ball_def['name']}** Unlocked!",
             description=f"Added to your collection! {self._format_modifiers(ball_def['modifiers'])}",
@@ -543,6 +563,7 @@ class CountryballCog(commands.Cog):
         file = discord.File(image_path, filename=ball_def['image_file'])
         embed4.set_image(url=f"attachment://{ball_def['image_file']}")
 
+        # Send stages
         await ctx.send(embed=embed1)
         await asyncio.sleep(1.5)
         await ctx.send(embed=embed2)
@@ -579,9 +600,6 @@ class CountryballCog(commands.Cog):
     # ---- NEW COMMAND: .openpacks ----
     @commands.command(name='openpacks')
     async def open_packs(self, ctx):
-        """
-        Check all subregions you have fully conquered and unlock the corresponding countryballs.
-        """
         user_id = str(ctx.author.id)
         if not self.territory_cog:
             await ctx.send("❌ Territory system not available.")
@@ -592,7 +610,6 @@ class CountryballCog(commands.Cog):
             await ctx.send("🌍 You haven't conquered any provinces yet. Start with `.expand`.")
             return
 
-        # Find all subregions fully owned
         from bot.commands.territory import PROVINCES
         completed_regions = []
         for subregion, provinces in PROVINCES.items():
@@ -603,7 +620,6 @@ class CountryballCog(commands.Cog):
             await ctx.send("📦 You haven't fully conquered any subregion yet. Keep expanding!")
             return
 
-        # For each completed region, unlock the corresponding countryball
         unlocked_any = False
         for region in completed_regions:
             ball_id = REGION_TO_COUNTRYBALL.get(region)
@@ -617,7 +633,7 @@ class CountryballCog(commands.Cog):
                 if len(active) < 3:
                     self.ball_manager.activate(user_id, ball_id)
                 await self.reveal_countryball(ctx, ball_id, user_id)
-                await asyncio.sleep(2)  # small delay between reveals
+                await asyncio.sleep(2)
 
         if not unlocked_any:
             await ctx.send("📦 You've already unlocked all countryballs for your conquered regions!")
