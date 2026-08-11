@@ -46,7 +46,6 @@ REGION_TO_COUNTRYBALL = {
     "West Antarctica": None,
 }
 
-# ---- Countryball definitions with resource modifiers ----
 COUNTRYBALLS = {
     "china": {
         "name": "China",
@@ -275,7 +274,6 @@ COUNTRYBALLS = {
     }
 }
 
-# ---- Synergies with strong bonuses ----
 SYNERGIES = {
     "axis": {
         "name": "Axis Powers",
@@ -326,8 +324,6 @@ class CountryballManager:
     def __init__(self, db, bot):
         self.db = db
         self.bot = bot
-        # ---- Robust path: resolve images folder relative to this file ----
-        # Go up two levels: bot/commands/ -> bot/ -> project root
         self.images_path = os.path.join(os.path.dirname(__file__), '..', '..', 'images')
         self._init_tables()
 
@@ -521,20 +517,17 @@ class CountryballCog(commands.Cog):
             await ctx.send(f"❌ Image file `{ball_def['image_file']}` not found. Path: {image_path}")
             return
 
-        # Stage 1: Continent
         embed1 = discord.Embed(
             title="🌍 **A New Power Rises!**",
             description=f"From the continent of **{ball_def['continent']}**...",
             color=discord.Color.blue()
         )
-        # Stage 2: Flag colors
         colors_str = " ".join([f"`{c}`" for c in ball_def['flag_colors']])
         embed2 = discord.Embed(
             title=f"🎨 **Colors of {ball_def['name']}**",
             description=f"Its flag bears the colors: {colors_str}",
             color=discord.Color.gold()
         )
-        # Stage 3: Power Rank
         rank = ball_def['power_rank']
         rank_emoji = "👑" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else "🏅"))
         embed3 = discord.Embed(
@@ -542,7 +535,6 @@ class CountryballCog(commands.Cog):
             description=f"This power is one of the most influential of its time.",
             color=discord.Color.purple()
         )
-        # Stage 4: Full reveal with image
         embed4 = discord.Embed(
             title=f"**{ball_def['name']}** Unlocked!",
             description=f"Added to your collection! {self._format_modifiers(ball_def['modifiers'])}",
@@ -551,7 +543,6 @@ class CountryballCog(commands.Cog):
         file = discord.File(image_path, filename=ball_def['image_file'])
         embed4.set_image(url=f"attachment://{ball_def['image_file']}")
 
-        # Send stages
         await ctx.send(embed=embed1)
         await asyncio.sleep(1.5)
         await ctx.send(embed=embed2)
@@ -585,13 +576,59 @@ class CountryballCog(commands.Cog):
 
         await self.reveal_countryball(ctx, ball_id, user_id)
 
-    # ---- COMMANDS ----
+    # ---- NEW COMMAND: .openpacks ----
+    @commands.command(name='openpacks')
+    async def open_packs(self, ctx):
+        """
+        Check all subregions you have fully conquered and unlock the corresponding countryballs.
+        """
+        user_id = str(ctx.author.id)
+        if not self.territory_cog:
+            await ctx.send("❌ Territory system not available.")
+            return
+
+        owned = self.territory_cog._get_owned_provinces(user_id)
+        if not owned:
+            await ctx.send("🌍 You haven't conquered any provinces yet. Start with `.expand`.")
+            return
+
+        # Find all subregions fully owned
+        from bot.commands.territory import PROVINCES
+        completed_regions = []
+        for subregion, provinces in PROVINCES.items():
+            if provinces and all(p in owned for p in provinces):
+                completed_regions.append(subregion)
+
+        if not completed_regions:
+            await ctx.send("📦 You haven't fully conquered any subregion yet. Keep expanding!")
+            return
+
+        # For each completed region, unlock the corresponding countryball
+        unlocked_any = False
+        for region in completed_regions:
+            ball_id = REGION_TO_COUNTRYBALL.get(region)
+            if not ball_id:
+                continue
+            if self.ball_manager.unlock_countryball(user_id, ball_id):
+                unlocked_any = True
+                if self.territory_cog:
+                    self.ball_manager.check_evolution(user_id, ball_id, self.territory_cog)
+                active = self.ball_manager.get_active_managers(user_id)
+                if len(active) < 3:
+                    self.ball_manager.activate(user_id, ball_id)
+                await self.reveal_countryball(ctx, ball_id, user_id)
+                await asyncio.sleep(2)  # small delay between reveals
+
+        if not unlocked_any:
+            await ctx.send("📦 You've already unlocked all countryballs for your conquered regions!")
+
+    # ---- COMMANDS (unchanged) ----
     @commands.command(name='packs')
     async def packs_list(self, ctx):
         user_id = str(ctx.author.id)
         collection = self.ball_manager.get_collection(user_id)
         if not collection:
-            await ctx.send("📦 You haven't unlocked any countryballs yet. Conquer regions to find them!")
+            await ctx.send("📦 You haven't unlocked any countryballs yet. Conquer regions and use `.openpacks` to unlock them!")
             return
 
         embed = discord.Embed(title="📦 Your Countryball Collection", color=discord.Color.blue())
