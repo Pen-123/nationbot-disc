@@ -13,7 +13,7 @@ from discord import app_commands
 from bot.utils import format_number, get_ascii_art, create_embed
 
 # Import subregion data from territory.py
-from bot.commands.territory import PROVINCES, SUBREGION_TO_CONTINENT, SUBREGION_DATA, ALL_SUBREGIONS
+from bot.commands.territory import PROVINCES, SUBREGION_TO_CONTINENT, SUBREGION_DATA, ALL_SUBREGIONS, FORBIDDEN_START_PROVINCES
 
 logger = logging.getLogger(__name__)
 
@@ -36,20 +36,14 @@ class BasicCommands(commands.Cog):
         self.saved_chats = set()
 
     def _get_all_owned_provinces(self) -> list:
-        """Return a list of all provinces owned by any player."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT owned_provinces FROM territories')
-        rows = cursor.fetchall()
-        all_provinces = set()
-        for row in rows:
-            if row[0]:
-                try:
-                    provinces = json.loads(row[0])
-                    all_provinces.update(provinces)
-                except:
-                    pass
-        return list(all_provinces)
+        """Return a list of all provinces owned by any player using Firestore."""
+        territories = self.db.get_all_territories()  # dict {province_name: {owner_id: ...}}
+        all_provinces = []
+        for territory_name, data in territories.items():
+            owner = data.get("owner_id")
+            if owner:
+                all_provinces.append(territory_name)
+        return all_provinces
 
     def _get_conversation_history(self, user_id):
         history = []
