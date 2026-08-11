@@ -155,6 +155,19 @@ class StoreCommands(commands.Cog):
             }
         }
 
+    def _ensure_history_keys(self, history: dict) -> dict:
+        """Ensure all required keys exist in black market history."""
+        defaults = {
+            'total_purchases': 0,
+            'since_uncommon': 0,
+            'since_rare': 0,
+            'since_legendary': 0
+        }
+        for key, value in defaults.items():
+            if key not in history:
+                history[key] = value
+        return history
+
     @commands.hybrid_command(name='store')
     @app_commands.describe(item="Upgrade to purchase (optional)")
     @app_commands.choices(item=[
@@ -283,13 +296,9 @@ class StoreCommands(commands.Cog):
         # Pay entry fee
         self.civ_manager.spend_resources(user_id, entry_fee)
         
-        # Get user's black market history
-        black_market_history = civ.get('black_market_history', {
-            'total_purchases': 0,
-            'since_uncommon': 0,
-            'since_rare': 0,
-            'since_legendary': 0
-        })
+        # Get user's black market history – ensure all keys exist
+        raw_history = civ.get('black_market_history', {})
+        black_market_history = self._ensure_history_keys(raw_history)
         
         # Update purchase counts
         black_market_history['total_purchases'] += 1
@@ -372,7 +381,7 @@ class StoreCommands(commands.Cog):
         # Add purchase stats
         embed.add_field(
             name="Purchase Stats", 
-            value=f"Total Purchases: {black_market_history['total_purchases']}\nSince Uncommon: {black_market_history['since_uncommon']}/3\nSince Rare: {black_market_history['since_rare']}/6\nSin[...]",
+            value=f"Total Purchases: {black_market_history['total_purchases']}\nSince Uncommon: {black_market_history['since_uncommon']}/3\nSince Rare: {black_market_history['since_rare']}/6\nSince Legendary: {black_market_history['since_legendary']}/10",
             inline=True
         )
         
@@ -436,7 +445,8 @@ class StoreCommands(commands.Cog):
             
         hyper_items = civ.get('hyper_items', [])
         bonuses = civ.get('bonuses', {})
-        black_market_history = civ.get('black_market_history', {})
+        raw_history = civ.get('black_market_history', {})
+        black_market_history = self._ensure_history_keys(raw_history)
         
         embed = create_embed(
             f"🎒 {civ.get('name','Unknown')} Inventory",
@@ -535,13 +545,13 @@ class StoreCommands(commands.Cog):
         
         embed.add_field(
             name="🎁 Pity System",
-            value="**Guaranteed drops after certain purchases:**\n• 🔵 Uncommon: Every 3 purchases\n• 🟣 Rare: Every 6 purchases\n• 🟡 Legendary: Every 10 purchases\n*Counters reset w[...],",
+            value="**Guaranteed drops after certain purchases:**\n• 🔵 Uncommon: Every 3 purchases\n• 🟣 Rare: Every 6 purchases\n• 🟡 Legendary: Every 10 purchases\n*Counters reset when you hit the pity or when you naturally roll that rarity.*",
             inline=False
         )
         
         embed.add_field(
             name="🎁 HyperItem Types",
-            value="• **Weapons**: Nuclear Warhead, HyperLaser, Missiles, Dagger\n• **Tools**: Lucky Charm, Ancient Scroll, Gold Mint, Harvest Engine\n• **Support**: Anti-Nuke Shield, Spy Ne[...]",
+            value="• **Weapons**: Nuclear Warhead, HyperLaser, Missiles, Dagger\n• **Tools**: Lucky Charm, Ancient Scroll, Gold Mint, Harvest Engine\n• **Support**: Anti-Nuke Shield, Spy Network, Propaganda Kit, Mercenary Contract",
             inline=False
         )
         
