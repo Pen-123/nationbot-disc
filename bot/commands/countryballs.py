@@ -6,8 +6,9 @@ import logging
 import random
 import os
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Set
+
 from bot.utils import create_embed, format_number
 
 logger = logging.getLogger(__name__)
@@ -331,110 +332,173 @@ SYNERGIES = {
 }
 
 # -------------------------------------------------------------------
-# COUNTRYBALL MANAGER
+# COUNTRYBALL MANAGER (Firestore-based)
 # -------------------------------------------------------------------
 class CountryballManager:
     def __init__(self, db, bot):
-        self.db = db
+        self.db = db          # Database instance with Firestore client
         self.bot = bot
         self.images_path = os.path.join(os.path.dirname(__file__), '..', '..', 'images')
-        self._init_tables()
+        # No SQLite table creation needed; Firestore is schemaless.
 
-    def _init_tables(self):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS player_countryballs (
-                user_id TEXT,
-                countryball_id TEXT,
-                unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 0,
-                evolution_stage TEXT DEFAULT 'base',
-                PRIMARY KEY (user_id, countryball_id)
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS active_managers (
-                user_id TEXT,
-                countryball_id TEXT,
-                PRIMARY KEY (user_id, countryball_id)
-            )
-        ''')
-        conn.commit()
+    def _get_user_balls_ref(self, user_id: str):
+        """Return reference to the player_countryballs document for this user."""
+        return self.db.client.collection("player_countryballs").document(user_id)
+
+    def _get_active_managers_ref(self, user_id: str):
+        """Return reference to the active_managers document for this user."""
+        return self.db.client.collection("active_managers").document(user_id)
 
     def unlock_countryball(self, user_id: str, ball_id: str) -> bool:
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1 FROM player_countryballs WHERE user_id = ? AND countryball_id = ?', (user_id, ball_id))
-        if cursor.fetchone():
+        """Unlock a countryball for a player. Returns True if newly unlocked."""
+        try:
+            doc_ref = self._get_user_balls_ref(user_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                balls = data.get("balls", {})
+                if ball_id in balls:
+                    return False  # already unlocked
+            else:
+                balls = {}
+
+            # Add the new ball
+            balls[ball_id] = {
+                "unlocked_at": datetime.now(timezone.utc).isoformat(),
+                "is_active": False,
+                "evolution_stage": "base"
+            }
+            doc_ref.set({"balls": balls}, merge=True)
+            logger.info(f"Unlocked countryball {ball_id} for {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error unlocking countryball for {user_id}: {e}")
             return False
-        cursor.execute('INSERT INTO player_countryballs (user_id, countryball_id) VALUES (?, ?)', (user_id, ball_id))
-        conn.commit()
-        return True
 
     def get_collection(self, user_id: str) -> List[Dict]:
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT countryball_id, unlocked_at, is_active, evolution_stage FROM player_countryballs WHERE user_id = ?', (user_id,))
-        rows = cursor.fetchall()
-        collection = []
-        for row in rows:
-            ball_data = COUNTRYBALLS.get(row['countryball_id'])
-            if ball_data:
-                item = {
-                    'id': row['countryball_id'],
-                    'name': ball_data['name'],
-                    'unlocked_at': row['unlocked_at'],
-                    'is_active': bool(row['is_active']),
-                    'evolution_stage': row['evolution_stage'],
-                    'image_file': ball_data['image_file'],
-                    'continent': ball_data['continent'],
-                    'flag_colors_human': ball_data['flag_colors_human'],
-                    'power_rank': ball_data['power_rank'],
-                    'modifiers': ball_data['modifiers'],
-                    'synergy_group': ball_data['synergy_group']
-                }
-                collection.append(item)
-        return collection
+        """Get a list of all countryballs owned by the user, with details."""
+        try:
+            doc = self._get_user_balls_ref(user_id).get()
+            if not doc.exists:
+                return []
+            data = doc.to_dict()
+            balls = data.get("balls", {})
+            collection = []
+            for ball_id, info in balls.items():
+                ball_data = COUNTRYBALLS.get(ball_id)
+                if ball_data:
+                    collection.append({
+                        'id': ball_id,
+                        'name': ball_data['name'],
+                        'unlocked_at': info.get('unlocked_at'),
+                        'is_active': info.get('is_active', False),
+                        'evolution_stage': info.get('evolution_stage', 'base'),
+                        'image_file': ball_data['image_file'],
+                        'continent': ball_data['continent'],
+                        'flag_colors_human': ball_data['flag_colors_human'],
+                        'power_rank': ball_data['power_rank'],
+                        'modifiers': ball_data['modifiers'],
+                        'synergy_group': ball_data['synergy_group']
+                    })
+            return collection
+        except Exception as e:
+            logger.error(f"Error getting collection for {user_id}: {e}")
+            return []
 
     def get_active_managers(self, user_id: str) -> List[str]:
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT countryball_id FROM active_managers WHERE user_id = ?', (user_id,))
-        return [row['countryball_id'] for row in cursor.fetchall()]
+        """Return list of active manager ball IDs."""
+        try:
+            doc = self._get_active_managers_ref(user_id).get()
+            if not doc.exists:
+                return []
+            data = doc.to_dict()
+            return data.get("active", [])
+        except Exception as e:
+            logger.error(f"Error getting active managers for {user_id}: {e}")
+            return []
 
     def activate(self, user_id: str, ball_id: str) -> bool:
-        collection = self.get_collection(user_id)
-        if ball_id not in [c['id'] for c in collection]:
+        """Activate a countryball as a manager (max 3)."""
+        try:
+            # Check ownership and not already active
+            user_doc = self._get_user_balls_ref(user_id).get()
+            if not user_doc.exists:
+                return False
+            balls = user_doc.to_dict().get("balls", {})
+            if ball_id not in balls:
+                return False
+            if balls[ball_id].get("is_active", False):
+                return False
+
+            # Check current active count
+            active_ref = self._get_active_managers_ref(user_id)
+            active_doc = active_ref.get()
+            if active_doc.exists:
+                active = active_doc.to_dict().get("active", [])
+                if len(active) >= 3:
+                    return False
+            else:
+                active = []
+
+            # Add to active list
+            active.append(ball_id)
+            active_ref.set({"active": active}, merge=True)
+
+            # Mark is_active in player_countryballs
+            balls[ball_id]["is_active"] = True
+            self._get_user_balls_ref(user_id).set({"balls": balls}, merge=True)
+
+            # Apply modifiers
+            self._apply_modifiers(user_id)
+            return True
+        except Exception as e:
+            logger.error(f"Error activating countryball {ball_id} for {user_id}: {e}")
             return False
-        active = self.get_active_managers(user_id)
-        if len(active) >= 3:
-            return False
-        if ball_id in active:
-            return False
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('UPDATE player_countryballs SET is_active = 1 WHERE user_id = ? AND countryball_id = ?', (user_id, ball_id))
-        cursor.execute('INSERT INTO active_managers (user_id, countryball_id) VALUES (?, ?)', (user_id, ball_id))
-        conn.commit()
-        self._apply_modifiers(user_id)
-        return True
 
     def deactivate(self, user_id: str, ball_id: str) -> bool:
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('UPDATE player_countryballs SET is_active = 0 WHERE user_id = ? AND countryball_id = ?', (user_id, ball_id))
-        cursor.execute('DELETE FROM active_managers WHERE user_id = ? AND countryball_id = ?', (user_id, ball_id))
-        conn.commit()
-        self._apply_modifiers(user_id)
-        return True
+        """Deactivate a countryball manager."""
+        try:
+            # Check ownership and active
+            user_doc = self._get_user_balls_ref(user_id).get()
+            if not user_doc.exists:
+                return False
+            balls = user_doc.to_dict().get("balls", {})
+            if ball_id not in balls:
+                return False
+            if not balls[ball_id].get("is_active", False):
+                return False
+
+            # Remove from active list
+            active_ref = self._get_active_managers_ref(user_id)
+            active_doc = active_ref.get()
+            if not active_doc.exists:
+                return False
+            active = active_doc.to_dict().get("active", [])
+            if ball_id not in active:
+                return False
+            active.remove(ball_id)
+            active_ref.set({"active": active}, merge=True)
+
+            # Mark is_active in player_countryballs
+            balls[ball_id]["is_active"] = False
+            self._get_user_balls_ref(user_id).set({"balls": balls}, merge=True)
+
+            # Apply modifiers
+            self._apply_modifiers(user_id)
+            return True
+        except Exception as e:
+            logger.error(f"Error deactivating countryball {ball_id} for {user_id}: {e}")
+            return False
 
     def _apply_modifiers(self, user_id: str):
+        """Recalculate bonuses from active countryballs and synergies, update civilization bonuses."""
         civ = self.db.get_civilization(user_id)
         if not civ:
             return
+
         active = self.get_active_managers(user_id)
         bonuses = civ.get('bonuses', {})
+        # Remove all countryball-related bonuses
         to_remove = [k for k in bonuses if k.startswith('countryball_')]
         for k in to_remove:
             del bonuses[k]
@@ -454,6 +518,7 @@ class CountryballManager:
         self.db.update_civilization(user_id, {'bonuses': bonuses})
 
     def _get_synergy_bonuses(self, user_id: str) -> Dict[str, float]:
+        """Calculate synergy bonuses based on active managers."""
         active = self.get_active_managers(user_id)
         active_groups = set()
         for ball_id in active:
@@ -471,14 +536,18 @@ class CountryballManager:
         return bonuses
 
     def check_evolution(self, user_id: str, ball_id: str, territory_cog) -> bool:
+        """Check if a countryball can evolve, and update if possible."""
         ball_def = COUNTRYBALLS.get(ball_id)
         if not ball_def or not ball_def['evolution']['condition']:
             return False
+
         condition = ball_def['evolution']['condition']
         import re
+        # Extract subregion names from condition (e.g., "Own all provinces in Western Europe, ...")
         subregions = re.findall(r"in ([A-Za-z ]+)", condition)
         if not subregions:
             return False
+
         owned = territory_cog._get_owned_provinces(user_id)
         from bot.commands.territory import PROVINCES
         for sub in subregions:
@@ -493,11 +562,23 @@ class CountryballManager:
             provinces_in_sub = PROVINCES[match]
             if not all(p in owned for p in provinces_in_sub):
                 return False
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('UPDATE player_countryballs SET evolution_stage = "evolved" WHERE user_id = ? AND countryball_id = ?', (user_id, ball_id))
-        conn.commit()
-        return True
+
+        # Evolution condition met: update evolution_stage
+        try:
+            balls_ref = self._get_user_balls_ref(user_id)
+            doc = balls_ref.get()
+            if not doc.exists:
+                return False
+            balls = doc.to_dict().get("balls", {})
+            if ball_id not in balls:
+                return False
+            balls[ball_id]["evolution_stage"] = "evolved"
+            balls_ref.set({"balls": balls}, merge=True)
+            logger.info(f"Countryball {ball_id} evolved for {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error evolving countryball {ball_id} for {user_id}: {e}")
+            return False
 
     def get_synergy_bonuses(self, user_id: str) -> Dict[str, float]:
         return self._get_synergy_bonuses(user_id)
@@ -518,7 +599,7 @@ class CountryballCog(commands.Cog):
         if not self.territory_cog:
             logger.warning("TerritoryCog not found; countryball auto-unlock will not work.")
 
-    # ---- PROGRESSIVE REVEAL (UPDATED: name hidden until final stage) ----
+    # ---- PROGRESSIVE REVEAL ----
     async def reveal_countryball(self, ctx, ball_id: str, user_id: str):
         ball_def = COUNTRYBALLS.get(ball_id)
         if not ball_def:
@@ -638,7 +719,7 @@ class CountryballCog(commands.Cog):
         if not unlocked_any:
             await ctx.send("📦 You've already unlocked all countryballs for your conquered regions!")
 
-    # ---- COMMANDS (unchanged) ----
+    # ---- COMMANDS ----
     @commands.command(name='packs')
     async def packs_list(self, ctx):
         user_id = str(ctx.author.id)
