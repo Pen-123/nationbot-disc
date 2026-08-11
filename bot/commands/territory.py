@@ -430,71 +430,30 @@ class TerritoryCog(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.province_areas = PROVINCE_AREAS
-        self._init_tables()
 
-    def _init_tables(self):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS territories (
-                user_id TEXT PRIMARY KEY,
-                owned_provinces TEXT NOT NULL DEFAULT '[]'
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS territory_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                territory_name TEXT NOT NULL,
-                claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-
+    # ---- Firestore-based territory helpers ----
     def _get_owned_provinces(self, user_id: str) -> List[str]:
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT owned_provinces FROM territories WHERE user_id = ?', (user_id,))
-        row = cursor.fetchone()
-        if row:
-            return json.loads(row[0])
-        return []
+        """Return list of province names owned by the player."""
+        return self.db.get_player_territories(user_id)
 
     def _set_owned_provinces(self, user_id: str, provinces: List[str]):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('INSERT OR REPLACE INTO territories (user_id, owned_provinces) VALUES (?, ?)',
-                       (user_id, json.dumps(provinces)))
-        conn.commit()
+        """Overwrite ownership – not used in this Firestore version; we use conquer_territory."""
+        # Not directly used; we handle via conquest operations.
+        # We keep it for compatibility but it's a stub.
+        pass
 
     def _add_province(self, user_id: str, province: str, ctx=None) -> bool:
-        owned = self._get_owned_provinces(user_id)
-        if province in owned:
+        """Add a province to a player's territory (conquer from unowned or from NPC)."""
+        # Check if province already owned by someone else
+        owner = self.db.get_territory_owner(province)
+        if owner and owner != user_id:
+            # It's owned by another player – we should not allow simple add; use conquest via war.
+            logger.warning(f"Tried to add province {province} owned by {owner} to {user_id}")
             return False
+        # If unowned, use conquer_territory with loser_id=None
+        return self.db.conquer_territory(user_id, None, province)
 
-        is_first = (len(owned) == 0)
-        owned.append(province)
-        self._set_owned_provinces(user_id, owned)
-
-        area = self.province_areas.get(province, 1000)
-        civ = self.civ_manager.get_civilization(user_id)
-        if civ:
-            if is_first:
-                new_land = area
-            else:
-                current_land = civ['territory']['land_size']
-                new_land = current_land + area
-            self.civ_manager.update_territory(user_id, {"land_size": new_land})
-
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
-        conn.commit()
-
-        if ctx:
-            asyncio.create_task(self._check_subregion_completion(user_id, ctx))
-        return True
-
+    # ---- Other methods ----
     async def _check_subregion_completion(self, user_id: str, ctx=None):
         owned = self._get_owned_provinces(user_id)
         completed_regions = []
@@ -652,7 +611,6 @@ class TerritoryCog(commands.Cog):
             "stone": 20 + (10 // max(1, province_count)),
         }
         
-        # ---- Apply area multiplier and 25% reduction ----
         cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
 
         # ---- CROSS-SUBREGION PENALTY: 50% more expensive ----
@@ -688,6 +646,7 @@ class TerritoryCog(commands.Cog):
         self.civ_manager.spend_resources(user_id, cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
+        # Claim province
         if self._add_province(user_id, province, ctx):
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
             cost_display = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
@@ -780,7 +739,6 @@ class TerritoryCog(commands.Cog):
         else:
             is_cross_region = False
 
-        # Check if player has enough soldiers
         if civ['military']['soldiers'] < soldier_cost:
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to rapidly expand into **{province}**! You have {civ['military']['soldiers']}.")
             return
