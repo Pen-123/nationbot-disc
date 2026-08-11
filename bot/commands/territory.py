@@ -14,23 +14,227 @@ from bot.utils import get_territory_modifier
 
 logger = logging.getLogger(__name__)
 
-# ---- Hardcoded area overrides for common countries that may have mismatched names ----
+# ---- HARDCODED AREA OVERRIDES FOR ALL COUNTRIES (km²) ----
+# Source: approximate real land areas (excluding water bodies)
 AREA_OVERRIDES = {
-    "United States": 9_833_517,        # USA (approx)
-    "United States of America": 9_833_517,
-    "USA": 9_833_517,
-    "Canada": 9_984_670,
-    "China": 9_596_961,
-    "Brazil": 8_515_767,
-    "Australia": 7_741_220,
-    "India": 3_287_263,
-    "Argentina": 2_780_400,
-    "Kazakhstan": 2_724_900,
-    "Algeria": 2_381_741,
-    "DR Congo": 2_344_858,
-    "Greenland": 2_166_086,
-    "Russia": 17_098_242,
-    "Antarctica": 14_000_000,  # placeholder
+    "Afghanistan": 652230,
+    "Albania": 28748,
+    "Algeria": 2381741,
+    "Andorra": 468,
+    "Angola": 1246700,
+    "Antigua and Barbuda": 442,
+    "Argentina": 2780400,
+    "Armenia": 29743,
+    "Australia": 7741220,
+    "Austria": 83871,
+    "Azerbaijan": 86600,
+    "Bahamas": 13880,
+    "Bahrain": 765,
+    "Bangladesh": 147570,
+    "Barbados": 430,
+    "Belarus": 207600,
+    "Belgium": 30528,
+    "Belize": 22966,
+    "Benin": 112622,
+    "Bhutan": 38394,
+    "Bolivia": 1098581,
+    "Bosnia and Herzegovina": 51197,
+    "Botswana": 581730,
+    "Brazil": 8515767,
+    "Brunei": 5765,
+    "Bulgaria": 110879,
+    "Burkina Faso": 274200,
+    "Burundi": 27834,
+    "Cabo Verde": 4033,
+    "Cambodia": 181035,
+    "Cameroon": 475442,
+    "Canada": 9984670,
+    "Central African Republic": 622984,
+    "Chad": 1284000,
+    "Chile": 756102,
+    "China": 9596961,
+    "Colombia": 1141748,
+    "Comoros": 2235,
+    "DR Congo": 2344858,
+    "Republic of the Congo": 342000,
+    "Costa Rica": 51100,
+    "Croatia": 56594,
+    "Cuba": 109884,
+    "Cyprus": 9251,
+    "Czechia": 78867,
+    "Denmark": 43094,
+    "Djibouti": 23200,
+    "Dominica": 751,
+    "Dominican Republic": 48671,
+    "Ecuador": 283561,
+    "Egypt": 1002450,
+    "El Salvador": 21041,
+    "Equatorial Guinea": 28051,
+    "Eritrea": 117600,
+    "Estonia": 45228,
+    "Eswatini": 17364,
+    "Ethiopia": 1104300,
+    "Fiji": 18274,
+    "Finland": 338424,
+    "France": 551695,
+    "Gabon": 267668,
+    "Gambia": 11295,
+    "Georgia": 69700,
+    "Germany": 357022,
+    "Ghana": 238533,
+    "Greece": 131957,
+    "Grenada": 344,
+    "Guatemala": 108889,
+    "Guinea": 245857,
+    "Guinea-Bissau": 36125,
+    "Guyana": 214969,
+    "Haiti": 27750,
+    "Honduras": 112492,
+    "Hungary": 93028,
+    "Iceland": 103000,
+    "India": 3287263,
+    "Indonesia": 1904569,
+    "Iran": 1648195,
+    "Iraq": 438317,
+    "Ireland": 70273,
+    "Israel": 20770,
+    "Italy": 301340,
+    "Jamaica": 10991,
+    "Japan": 377930,
+    "Jordan": 89342,
+    "Kazakhstan": 2724900,
+    "Kenya": 580367,
+    "Kiribati": 811,
+    "North Korea": 120538,
+    "South Korea": 100210,
+    "Kosovo": 10908,
+    "Kuwait": 17818,
+    "Kyrgyzstan": 199951,
+    "Laos": 236800,
+    "Latvia": 64589,
+    "Lebanon": 10452,
+    "Lesotho": 30355,
+    "Liberia": 111369,
+    "Libya": 1759540,
+    "Liechtenstein": 160,
+    "Lithuania": 65300,
+    "Luxembourg": 2586,
+    "Madagascar": 587041,
+    "Malawi": 118484,
+    "Malaysia": 329847,
+    "Maldives": 298,
+    "Mali": 1240192,
+    "Malta": 316,
+    "Marshall Islands": 181,
+    "Mauritania": 1030700,
+    "Mauritius": 2040,
+    "Mexico": 1964375,
+    "Micronesia": 702,
+    "Moldova": 33851,
+    "Monaco": 2,
+    "Mongolia": 1564116,
+    "Montenegro": 13812,
+    "Morocco": 446550,
+    "Mozambique": 801590,
+    "Myanmar": 676578,
+    "Namibia": 824292,
+    "Nauru": 21,
+    "Nepal": 147181,
+    "Netherlands": 41850,
+    "New Zealand": 268838,
+    "Nicaragua": 130373,
+    "Niger": 1267000,
+    "Nigeria": 923768,
+    "North Macedonia": 25713,
+    "Norway": 323802,
+    "Oman": 309500,
+    "Pakistan": 881913,
+    "Palau": 459,
+    "Palestine": 6020,   # West Bank + Gaza
+    "Panama": 75417,
+    "Papua New Guinea": 462840,
+    "Paraguay": 406752,
+    "Peru": 1285216,
+    "Philippines": 300000,
+    "Poland": 312696,
+    "Portugal": 92090,
+    "Qatar": 11586,
+    "Romania": 238397,
+    "Russia": 17098242,
+    "Rwanda": 26338,
+    "Saint Kitts and Nevis": 261,
+    "Saint Lucia": 616,
+    "Saint Vincent and the Grenadines": 389,
+    "Samoa": 2842,
+    "San Marino": 61,
+    "Sao Tome and Principe": 964,
+    "Saudi Arabia": 2149690,
+    "Senegal": 196722,
+    "Serbia": 77474,
+    "Seychelles": 455,
+    "Sierra Leone": 71740,
+    "Singapore": 728,
+    "Slovakia": 49035,
+    "Slovenia": 20273,
+    "Solomon Islands": 28896,
+    "Somalia": 637657,
+    "South Africa": 1221037,
+    "South Sudan": 644329,
+    "Spain": 505990,
+    "Sri Lanka": 65610,
+    "Sudan": 1861484,
+    "Suriname": 163820,
+    "Sweden": 450295,
+    "Switzerland": 41284,
+    "Syria": 185180,
+    "Taiwan": 36193,
+    "Tajikistan": 143100,
+    "Tanzania": 947300,
+    "Thailand": 513120,
+    "Timor-Leste": 14874,
+    "Togo": 56785,
+    "Tonga": 747,
+    "Trinidad and Tobago": 5130,
+    "Tunisia": 163610,
+    "Turkey": 783562,
+    "Turkmenistan": 488100,
+    "Tuvalu": 26,
+    "Uganda": 241038,
+    "Ukraine": 603500,
+    "United Arab Emirates": 83600,
+    "United Kingdom": 242495,
+    "United States": 9833517,
+    "United States of America": 9833517,
+    "USA": 9833517,
+    "Uruguay": 176215,
+    "Uzbekistan": 447400,
+    "Vanuatu": 12189,
+    "Vatican City": 0.44,  # too small, ignore
+    "Venezuela": 912050,
+    "Vietnam": 331212,
+    "Yemen": 527968,
+    "Zambia": 752612,
+    "Zimbabwe": 390757,
+    # Additional aliases or countries in PROVINCES not listed above:
+    "Czech Republic": 78867,  # alias
+    "Czechia": 78867,
+    "Bosnia and Herz.": 51197,
+    "Dem. Rep. Korea": 120538,
+    "Congo (Kinshasa)": 2344858,
+    "Congo (Brazzaville)": 342000,
+    "Côte d'Ivoire": 322463,
+    "Ivory Coast": 322463,
+    "North Macedonia": 25713,
+    "Eswatini": 17364,
+    "Swaziland": 17364,
+    "Greenland": 2166086,
+    "Western Sahara": 266000,  # disputed, but we have it
+    "W. Sahara": 266000,
+    "S. Sudan": 644329,
+    "S. Sudan": 644329,
+    "Eq. Guinea": 28051,
+    "C.A.R.": 622984,
+    "Central African Rep.": 622984,
 }
 
 # Load province areas from JSON, then apply overrides
@@ -43,12 +247,12 @@ except FileNotFoundError:
     logger.warning("province_areas.json not found; using default area of 1000 km².")
     PROVINCE_AREAS = {}
 
-# Override with hardcoded values if present
+# Override with hardcoded values (these take precedence)
 for name, area in AREA_OVERRIDES.items():
     PROVINCE_AREAS[name] = area
 logger.info(f"Applied {len(AREA_OVERRIDES)} area overrides")
 
-# ---- Province definitions (full list) ----
+# ---- PROVINCES (same as before) ----
 PROVINCES = {
     "Eastern Europe": [
         "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
@@ -150,6 +354,12 @@ PROVINCES = {
     "West Antarctica": [],
 }
 
+# ---- FORBIDDEN START PROVINCES (cannot be chosen as starting country) ----
+FORBIDDEN_START_PROVINCES = {
+    "Western Sahara",   # disputed territory, not a UN member
+    # Add others if you want: "Palestine", "Kosovo", etc. but I'll leave them.
+}
+
 # Build reverse mapping
 PROVINCE_TO_SUBREGION = {}
 for subregion, province_list in PROVINCES.items():
@@ -159,7 +369,7 @@ for subregion, province_list in PROVINCES.items():
 ALL_PROVINCES = list(PROVINCE_TO_SUBREGION.keys())
 ALL_SUBREGIONS = list(PROVINCES.keys())
 
-# Neighbour data (used when no subregion fully owned)
+# Neighbour data (same as before)
 SUBREGION_DATA = {
     "Eastern Europe": {"neighbours": ["Western Europe", "Northern Europe", "Central Asia"]},
     "Western Europe": {"neighbours": ["Southern Europe", "Northern Europe", "Eastern Europe"]},
@@ -279,7 +489,7 @@ class TerritoryCog(commands.Cog):
         owned.append(province)
         self._set_owned_provinces(user_id, owned)
 
-        # Get area using overrides or JSON, fallback to 1000
+        # Get area (now with overrides)
         area = self.province_areas.get(province, 1000)
         civ = self.civ_manager.get_civilization(user_id)
         if civ:
@@ -433,7 +643,7 @@ class TerritoryCog(commands.Cog):
             return
 
         # ---- Area and cost ----
-        area = self.province_areas.get(province, 1000)  # now includes overrides
+        area = self.province_areas.get(province, 1000)
         # Cost multiplier based on area: sqrt(area/1000), capped at 20
         cost_multiplier = min(math.sqrt(area / 1000), 20.0)
 
