@@ -14,7 +14,7 @@ from bot.utils import get_territory_modifier
 
 logger = logging.getLogger(__name__)
 
-# ---- HARDCODED AREA OVERRIDES (km²) ----
+# ---- HARDCODED AREA OVERRIDES ----
 AREA_OVERRIDES = {
     "Afghanistan": 652230,
     "Albania": 28748,
@@ -232,7 +232,6 @@ AREA_OVERRIDES = {
     "Central African Rep.": 622984,
 }
 
-# Load province areas from JSON, then apply overrides
 PROVINCE_AREAS = {}
 try:
     with open('province_areas.json', 'r') as f:
@@ -246,12 +245,10 @@ for name, area in AREA_OVERRIDES.items():
     PROVINCE_AREAS[name] = area
 logger.info(f"Applied {len(AREA_OVERRIDES)} area overrides")
 
-# ---- FORBIDDEN START PROVINCES ----
 FORBIDDEN_START_PROVINCES = {
     "Western Sahara",
 }
 
-# ---- PROVINCES ----
 PROVINCES = {
     "Eastern Europe": [
         "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
@@ -353,7 +350,6 @@ PROVINCES = {
     "West Antarctica": [],
 }
 
-# Build reverse mapping
 PROVINCE_TO_SUBREGION = {}
 for subregion, province_list in PROVINCES.items():
     for province in province_list:
@@ -362,7 +358,6 @@ for subregion, province_list in PROVINCES.items():
 ALL_PROVINCES = list(PROVINCE_TO_SUBREGION.keys())
 ALL_SUBREGIONS = list(PROVINCES.keys())
 
-# Neighbour data
 SUBREGION_DATA = {
     "Eastern Europe": {"neighbours": ["Western Europe", "Northern Europe", "Central Asia"]},
     "Western Europe": {"neighbours": ["Southern Europe", "Northern Europe", "Eastern Europe"]},
@@ -429,7 +424,6 @@ SUBREGION_TO_CONTINENT = {
     "West Antarctica": "Antarctica",
 }
 
-# ----------------------------------------------------------------------
 class TerritoryCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -473,7 +467,7 @@ class TerritoryCog(commands.Cog):
                        (user_id, json.dumps(provinces)))
         conn.commit()
 
-    def _add_province(self, user_id: str, province: str) -> bool:
+    def _add_province(self, user_id: str, province: str, ctx=None) -> bool:
         owned = self._get_owned_provinces(user_id)
         if province in owned:
             return False
@@ -497,10 +491,11 @@ class TerritoryCog(commands.Cog):
         cursor.execute('INSERT INTO territory_history (user_id, territory_name) VALUES (?, ?)', (user_id, province))
         conn.commit()
 
-        asyncio.create_task(self._check_subregion_completion(user_id))
+        if ctx:
+            asyncio.create_task(self._check_subregion_completion(user_id, ctx))
         return True
 
-    async def _check_subregion_completion(self, user_id: str):
+    async def _check_subregion_completion(self, user_id: str, ctx=None):
         owned = self._get_owned_provinces(user_id)
         completed_regions = []
         for subregion, provinces in PROVINCES.items():
@@ -516,7 +511,10 @@ class TerritoryCog(commands.Cog):
             return
 
         for region in completed_regions:
-            await cog.check_region_unlock(user_id, region)
+            if ctx:
+                await cog.check_region_unlock(ctx, region, user_id)
+            else:
+                logger.info(f"Region {region} completed by {user_id} but no ctx to send reveal.")
 
     def _get_owned_subregions(self, user_id: str) -> Set[str]:
         owned = self._get_owned_provinces(user_id)
@@ -646,13 +644,15 @@ class TerritoryCog(commands.Cog):
 
         subregion = PROVINCE_TO_SUBREGION[province]
         province_count = len(PROVINCES[subregion])
+        
+        # ---- NEW BASE COSTS: wood & stone drastically reduced ----
         base_cost = {
             "gold": 300 + (100 // max(1, province_count)),
             "food": 100 + (50 // max(1, province_count)),
-            "wood": 50 + (25 // max(1, province_count)),
-            "stone": 50 + (25 // max(1, province_count)),
+            "wood": 20 + (10 // max(1, province_count)),   # was 50 + 25
+            "stone": 20 + (10 // max(1, province_count)), # was 50 + 25
         }
-        # ---- 25% reduction ----
+        # ---- Apply 25% reduction and area multiplier ----
         cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
 
         if not self.civ_manager.can_afford(user_id, cost):
@@ -668,7 +668,7 @@ class TerritoryCog(commands.Cog):
         self.civ_manager.spend_resources(user_id, cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
-        if self._add_province(user_id, province):
+        if self._add_province(user_id, province, ctx):
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
             embed.add_field(name="Cost", value=", ".join([f"{amount} {res}" for res, amount in cost.items()]) + f"\n⚔️ {soldier_cost} soldiers", inline=True)
             embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
