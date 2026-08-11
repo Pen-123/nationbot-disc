@@ -1,7 +1,11 @@
 import discord
+import io
+import os
+import logging
 from discord.ext import commands
 from discord import app_commands
 
+logger = logging.getLogger(__name__)
 
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
@@ -81,7 +85,7 @@ class AdminCommands(commands.Cog):
             await _send(f"❌ Sync failed: {e}")
 
     @commands.hybrid_command(name='forcesync')
-    # @commands.is_owner()  <-- REMOVED: no permission required anymore
+    # @commands.is_owner()  # removed, anyone can use it now
     async def force_sync_db(self, ctx):
         """Force‑sync the database from Dropbox (overwrites local)."""
         if not self.bot.db.dropbox_client:
@@ -92,6 +96,50 @@ class AdminCommands(commands.Cog):
         else:
             await ctx.send("❌ Failed to force‑sync database. Check logs.")
 
+    @commands.hybrid_command(name='exportdb')
+    @commands.is_owner()
+    async def export_database(self, ctx):
+        """
+        Export the current database file (.db) with instructions.
+        Owner only.
+        """
+        try:
+            db_path = self.bot.db.db_path
+            if not os.path.exists(db_path):
+                await ctx.send("❌ Database file not found.")
+                return
+
+            # Read the file into memory
+            with open(db_path, 'rb') as f:
+                file_data = f.read()
+
+            # Check file size (Discord limit: 8MB for normal, 25MB for nitro)
+            file_size_mb = len(file_data) / (1024 * 1024)
+            if file_size_mb > 8:
+                await ctx.send(f"⚠️ Database file is **{file_size_mb:.1f} MB** – larger than Discord's 8MB limit. Please use a different method to retrieve it (e.g., direct download from Dropbox).")
+                return
+
+            file = discord.File(io.BytesIO(file_data), filename="warbot.db")
+            embed = discord.Embed(
+                title="📦 Database Export",
+                description=(
+                    "Here is the current database file.\n\n"
+                    "**To restore:**\n"
+                    "1. Stop the bot.\n"
+                    "2. Replace the existing `warbot.db` with this file.\n"
+                    "3. Restart the bot.\n\n"
+                    "**To inspect:**\n"
+                    "Open with any SQLite browser (e.g., DB Browser for SQLite)."
+                ),
+                color=discord.Color.green()
+            )
+            embed.add_field(name="File Size", value=f"{file_size_mb:.2f} MB", inline=True)
+            embed.add_field(name="Created", value=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), inline=True)
+            await ctx.send(embed=embed, file=file)
+
+        except Exception as e:
+            logger.error(f"Error exporting database: {e}")
+            await ctx.send(f"❌ Error exporting database: {e}")
 
 async def setup(bot):
     await bot.add_cog(AdminCommands(bot))
