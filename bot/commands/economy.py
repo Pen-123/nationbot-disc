@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timedelta
 import logging
-from bot.utils import format_number, create_embed
+from bot.utils import format_number, create_embed, get_territory_modifier
 from functools import wraps
 from typing import List
 
@@ -59,7 +59,6 @@ class EconomyCommands(commands.Cog):
         """Check for civil war risk and proceed if safe"""
         try:
             if self.civ_manager.check_civil_war_risk(user_id):
-                # Civil war occurred - send message and stop command execution
                 civ = self.civ_manager.get_civilization(user_id)
                 if civ:
                     embed = create_embed(
@@ -80,7 +79,6 @@ class EconomyCommands(commands.Cog):
         """Gather random resources from your territory"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -97,11 +95,12 @@ class EconomyCommands(commands.Cog):
         employment_rate = self.civ_manager.get_employment_rate(user_id)
         employment_modifier = employment_rate / 100 + 0.5  # Base 50% + employment rate
         
+        # Use the nerfed territory modifier
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        
         for resource in possible_resources:
             if random.random() < 0.7:  # 70% chance for each resource
                 base_amount = random.randint(10, 50)
-                # Apply territory modifier
-                territory_modifier = civ['territory']['land_size'] / 1000
                 amount = int(base_amount * territory_modifier * employment_modifier)
                 gathered[resource] = amount
         
@@ -118,7 +117,6 @@ class EconomyCommands(commands.Cog):
         # Update resources
         self.civ_manager.update_resources(user_id, gathered)
         
-        # Create result embed
         embed = create_embed(
             "🔍 Resource Gathering",
             f"Your scouts return with valuable resources!",
@@ -130,6 +128,7 @@ class EconomyCommands(commands.Cog):
                                   for res, amt in gathered.items()])
         embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
         embed.add_field(name="Employment Rate", value=f"{employment_rate:.1f}%", inline=True)
+        embed.add_field(name="Territory Modifier", value=f"{territory_modifier:.2f}x", inline=True)
         
         await ctx.send(embed=embed)
 
@@ -143,7 +142,6 @@ class EconomyCommands(commands.Cog):
             
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -191,7 +189,6 @@ class EconomyCommands(commands.Cog):
         """Farm food for your civilization"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -204,8 +201,10 @@ class EconomyCommands(commands.Cog):
         # Calculate food production
         base_food = random.randint(20, 80)
         citizen_bonus = civ['population']['citizens'] // 10
-        territory_bonus = civ['territory']['land_size'] // 500
         
+        # Use nerfed territory modifier instead of linear scaling
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
         total_food = base_food + citizen_bonus + territory_bonus
         
         # Apply ideology modifier
@@ -242,7 +241,6 @@ class EconomyCommands(commands.Cog):
         """Mine stone and wood from your territory"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -255,6 +253,11 @@ class EconomyCommands(commands.Cog):
         # Mining yields
         stone_yield = random.randint(15, 60)
         wood_yield = random.randint(10, 40)
+        
+        # Apply nerfed territory modifier instead of linear scaling
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        stone_yield = int(stone_yield * territory_modifier)
+        wood_yield = int(wood_yield * territory_modifier)
         
         # Tech level bonus
         tech_bonus = 1 + (civ['military']['tech_level'] * 0.1)
@@ -283,8 +286,8 @@ class EconomyCommands(commands.Cog):
             result_text += f"\n🪙 {format_number(bonus_gold)} Gold (Lucky find!)"
             
         embed.add_field(name="Resources Extracted", value=result_text, inline=False)
+        embed.add_field(name="Territory Modifier", value=f"{territory_modifier:.2f}x", inline=True)
         
-        # Add mining GIF URL
         mine_gif = 'https://media.tenor.com/9W0oJK5k7pYAAAAC/minecraft-mining.gif'
         
         await ctx.send(content=mine_gif, embed=embed)
@@ -294,7 +297,6 @@ class EconomyCommands(commands.Cog):
         """Large harvest with longer cooldown"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -309,7 +311,11 @@ class EconomyCommands(commands.Cog):
         population_bonus = civ['population']['citizens'] // 5
         happiness_bonus = civ['population']['happiness'] // 2
         
-        total_harvest = base_harvest + population_bonus + happiness_bonus
+        # Use nerfed territory modifier
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
+        
+        total_harvest = base_harvest + population_bonus + happiness_bonus + territory_bonus
         
         # Apply ideology bonuses
         if civ.get('ideology') == 'theocracy':
@@ -335,7 +341,6 @@ class EconomyCommands(commands.Cog):
         """Extract rare minerals with advanced drilling"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -354,6 +359,11 @@ class EconomyCommands(commands.Cog):
         rare_minerals = random.randint(50, 150)
         gold_value = rare_minerals * 2  # Convert to gold
         
+        # Apply nerfed territory modifier
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        gold_value = int(gold_value * territory_modifier)
+        stone_value = int(rare_minerals // 2 * territory_modifier)
+        
         # Chance for extra bonus
         bonus_text = ""
         if random.random() < 0.15:  # 15% chance
@@ -361,7 +371,7 @@ class EconomyCommands(commands.Cog):
             gold_value += bonus_gold
             bonus_text = f"💎 Struck a rich vein! (+{format_number(bonus_gold)} gold)"
         
-        self.civ_manager.update_resources(user_id, {"gold": gold_value, "stone": rare_minerals // 2})
+        self.civ_manager.update_resources(user_id, {"gold": gold_value, "stone": stone_value})
         
         embed = create_embed(
             "🏗️ Deep Drilling",
@@ -372,7 +382,6 @@ class EconomyCommands(commands.Cog):
         if bonus_text:
             embed.add_field(name="Lucky Strike!", value=bonus_text, inline=False)
             
-        # Add drilling GIF URL
         drill_gif = 'https://media.tenor.com/3F2q8X5e3xAAAAAC/thunderbirds-mole.gif'
         
         await ctx.send(content=drill_gif, embed=embed)
@@ -383,7 +392,6 @@ class EconomyCommands(commands.Cog):
         """Fish for food or occasionally find treasure"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -394,8 +402,11 @@ class EconomyCommands(commands.Cog):
             return
             
         # Fishing results
+        # Apply nerfed territory modifier
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        
         if random.random() < 0.8:  # 80% chance for food
-            food_caught = random.randint(15, 45)
+            food_caught = int(random.randint(15, 45) * territory_modifier)
             self.civ_manager.update_resources(user_id, {"food": food_caught})
             
             embed = create_embed(
@@ -404,7 +415,7 @@ class EconomyCommands(commands.Cog):
                 guilded.Color.teal()
             )
         else:  # 20% chance for treasure
-            treasure_gold = random.randint(20, 100)
+            treasure_gold = int(random.randint(20, 100) * territory_modifier)
             self.civ_manager.update_resources(user_id, {"gold": treasure_gold})
             
             embed = create_embed(
@@ -421,7 +432,6 @@ class EconomyCommands(commands.Cog):
         """Collect taxes from your citizens with risk of population loss"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -436,9 +446,12 @@ class EconomyCommands(commands.Cog):
         # Base tax calculation
         base_tax = population['citizens'] * 2
         happiness_modifier = population['happiness'] / 100  # Happy citizens pay more
-        territory_modifier = civ['territory']['land_size'] / 1000
         
-        total_tax = int(base_tax * happiness_modifier * territory_modifier)
+        # Use nerfed territory modifier
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
+        
+        total_tax = int(base_tax * happiness_modifier * territory_bonus)
         
         # Ideology effects
         ideology = civ.get('ideology', '')
@@ -491,7 +504,6 @@ class EconomyCommands(commands.Cog):
             
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -560,7 +572,6 @@ class EconomyCommands(commands.Cog):
             
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -623,7 +634,6 @@ class EconomyCommands(commands.Cog):
         """Raid NPC merchant caravans for loot"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -653,11 +663,13 @@ class EconomyCommands(commands.Cog):
             
         if random.random() < success_chance:
             # Successful raid
+            # Apply nerfed territory modifier for loot amount
+            territory_modifier = get_territory_modifier(civ['territory']['land_size'])
             loot = {
-                "gold": random.randint(100, 400),
-                "food": random.randint(50, 150),
-                "wood": random.randint(20, 80),
-                "stone": random.randint(15, 60)
+                "gold": int(random.randint(100, 400) * territory_modifier),
+                "food": int(random.randint(50, 150) * territory_modifier),
+                "wood": int(random.randint(20, 80) * territory_modifier),
+                "stone": int(random.randint(15, 60) * territory_modifier)
             }
             
             # Small chance for special loot
@@ -699,7 +711,6 @@ class EconomyCommands(commands.Cog):
             
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -740,7 +751,6 @@ class EconomyCommands(commands.Cog):
         """Hold a grand festival to greatly boost citizen happiness"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -787,7 +797,6 @@ class EconomyCommands(commands.Cog):
         """Spread cheer to boost citizen happiness"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -841,7 +850,6 @@ class EconomyCommands(commands.Cog):
             
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -888,7 +896,6 @@ class EconomyCommands(commands.Cog):
         """Run promotional campaigns to attract new citizens"""
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
@@ -910,7 +917,10 @@ class EconomyCommands(commands.Cog):
         # Calculate new citizens attracted
         base_new_citizens = random.randint(100, 300)
         happiness_bonus = civ['population']['happiness'] // 10  # Happiness attracts more people
-        territory_bonus = civ['territory']['land_size'] // 1000
+        
+        # Use nerfed territory modifier instead of linear scaling
+        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
+        territory_bonus = int(civ['territory']['land_size'] * territory_modifier / 1000)
         
         total_new_citizens = base_new_citizens + happiness_bonus + territory_bonus
         
@@ -989,7 +999,6 @@ class EconomyCommands(commands.Cog):
             
         user_id = str(ctx.author.id)
         
-        # Check for civil war first
         if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
             
