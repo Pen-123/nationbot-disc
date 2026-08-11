@@ -229,8 +229,26 @@ class Database:
                     logger.error(f"Failed to add column '{col}': {e}")
 
     def _migrate_cooldowns_table(self):
+        """Ensure cooldowns table exists with the expected schema."""
         conn = self.get_connection()
         cursor = conn.cursor()
+        # Check if table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cooldowns'")
+        if not cursor.fetchone():
+            # Create the table with the expected columns
+            cursor.execute('''
+                CREATE TABLE cooldowns (
+                    user_id TEXT,
+                    command TEXT,
+                    last_used_at TIMESTAMP,
+                    PRIMARY KEY (user_id, command)
+                )
+            ''')
+            conn.commit()
+            logger.info("Created missing cooldowns table")
+            return
+
+        # If table exists, check for missing columns
         cursor.execute("PRAGMA table_info(cooldowns)")
         columns = [col[1] for col in cursor.fetchall()]
         expected = {
@@ -270,14 +288,6 @@ class Database:
         self._migrate_civilizations_table()
         self._migrate_cooldowns_table()
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cooldowns (
-                user_id TEXT,
-                command TEXT,
-                last_used_at TIMESTAMP,
-                PRIMARY KEY (user_id, command)
-            )
-        ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cards (
                 user_id TEXT,
@@ -368,7 +378,6 @@ class Database:
                 expires_at TIMESTAMP DEFAULT (datetime('now', '+1 day'))
             )
         ''')
-        # Tables for territories and industrial revolutions (already exist, but ensure they are created if not)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS territories (
                 user_id TEXT PRIMARY KEY,
@@ -453,42 +462,28 @@ class Database:
             return False
 
     def delete_civilization(self, user_id: str) -> bool:
-        """Delete a civilization and all associated data (territories, industrial, etc.)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            # Main civilization
             cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
-            # Cooldowns
             cursor.execute('DELETE FROM cooldowns WHERE user_id = ?', (user_id,))
-            # Cards
             cursor.execute('DELETE FROM cards WHERE user_id = ?', (user_id,))
-            # Events
             cursor.execute('DELETE FROM events WHERE user_id = ?', (user_id,))
-            # Peace offers
             cursor.execute('DELETE FROM peace_offers WHERE offerer_id = ? OR receiver_id = ?', (user_id, user_id))
-            # Messages
             cursor.execute('DELETE FROM messages WHERE sender_id = ? OR recipient_id = ?', (user_id, user_id))
-            # Trade requests
             cursor.execute('DELETE FROM trade_requests WHERE sender_id = ? OR recipient_id = ?', (user_id, user_id))
-            # Alliance invites
             cursor.execute('DELETE FROM alliance_invitations WHERE sender_id = ? OR recipient_id = ?', (user_id, user_id))
-            # Wars
             cursor.execute('DELETE FROM wars WHERE attacker_id = ? OR defender_id = ?', (user_id, user_id))
-            # Alliances – remove from members list
             cursor.execute('SELECT id, members FROM alliances')
             for alliance in cursor.fetchall():
                 members = json.loads(alliance['members'])
                 if user_id in members:
                     members.remove(user_id)
                     cursor.execute('UPDATE alliances SET members = ? WHERE id = ?', (json.dumps(members), alliance['id']))
-            # ---- NEW: Clear territories and territory history ----
             cursor.execute('DELETE FROM territories WHERE user_id = ?', (user_id,))
             cursor.execute('DELETE FROM territory_history WHERE user_id = ?', (user_id,))
-            # ---- NEW: Clear industrial revolution data ----
             cursor.execute('DELETE FROM industrial_revolutions WHERE user_id = ?', (user_id,))
             conn.commit()
-            # Upload to Dropbox after deletion
             self.upload_database()
             logger.info(f"Deleted civilization and all related data for user {user_id}")
             return True
@@ -1115,7 +1110,6 @@ class Database:
             self.local.connection.close()
             del self.local.connection
 
-    # ---------- NEW METHOD: CHECK IF A REGION IS TAKEN ----------
     def is_region_taken(self, region_name: str, exclude_user_id: str = None) -> bool:
         """Check if a region (subregion) has already been chosen by another civilization."""
         try:
