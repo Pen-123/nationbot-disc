@@ -1,6 +1,7 @@
 import functools
 import logging
 import asyncio
+import math
 from datetime import datetime, timedelta
 from typing import Callable, Any, Optional
 import discord
@@ -39,42 +40,6 @@ async def run_in_executor(func: Callable, *args, **kwargs) -> Any:
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-# Helper utilities for hybrid command compatibility
-def is_interaction(ctx_or_interaction) -> bool:
-    """Return True when the invocation object is a discord.Interaction."""
-    return isinstance(ctx_or_interaction, discord.Interaction)
-
-
-def get_invoker_id(ctx_or_interaction) -> str:
-    """Return the user id (string) of the invoking user for Context or Interaction."""
-    if is_interaction(ctx_or_interaction):
-        return str(ctx_or_interaction.user.id)
-    return str(getattr(ctx_or_interaction, "author").id)
-
-
-async def send_response(ctx_or_interaction, content: Any = None, **kwargs):
-    """Send a message that works for both prefix Context and Interaction.
-
-    - For Interaction: uses response.send_message (or followup) and supports ephemeral kwarg.
-    - For Context: falls back to ctx.send.
-    """
-    if is_interaction(ctx_or_interaction):
-        try:
-            # prefer initial response when available
-            if not ctx_or_interaction.response.is_done():
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-            else:
-                await ctx_or_interaction.followup.send(content, **kwargs)
-        except Exception:
-            # best-effort fallback: try to DM the invoker
-            try:
-                await ctx_or_interaction.user.send(content, **kwargs)
-            except Exception:
-                logger.exception("Failed to deliver interaction response")
-    else:
-        await ctx_or_interaction.send(content, **kwargs)
-
-
 def check_cooldown_decorator(minutes: int = 5):
     """Decorator to add cooldown functionality to both prefix commands (Context)
     and slash/app commands (discord.Interaction).
@@ -86,10 +51,10 @@ def check_cooldown_decorator(minutes: int = 5):
         @functools.wraps(func)
         async def wrapper(self, ctx_or_interaction, *args, **kwargs):
             # Determine whether this was called from an Interaction or a Context
-            is_inter = isinstance(ctx_or_interaction, discord.Interaction)
+            is_interaction = isinstance(ctx_or_interaction, discord.Interaction)
 
             # Extract user id in a safe way
-            if is_inter:
+            if is_interaction:
                 user_id = str(ctx_or_interaction.user.id)
             else:
                 user_id = str(getattr(ctx_or_interaction, "author").id)
@@ -115,7 +80,7 @@ def check_cooldown_decorator(minutes: int = 5):
                         discord.Color.orange()
                     )
                     try:
-                        if is_inter:
+                        if is_interaction:
                             # Try to respond ephemeral if possible
                             try:
                                 if not ctx_or_interaction.response.is_done():
@@ -158,7 +123,7 @@ def check_cooldown_decorator(minutes: int = 5):
                     discord.Color.red()
                 )
                 try:
-                    if is_inter:
+                    if is_interaction:
                         try:
                             if not ctx_or_interaction.response.is_done():
                                 await ctx_or_interaction.response.send_message(embed=embed, ephemeral=True)
@@ -537,8 +502,9 @@ class CooldownManager:
             "formatted_time": format_time_duration(time_left),
             "expires_at": expiry
         }
-        import math
 
+
+# ----- NEW: Diminishing returns on territory size -----
 def get_territory_modifier(land_size: int) -> float:
     """
     Diminishing returns on land size for resource generation.
@@ -547,6 +513,5 @@ def get_territory_modifier(land_size: int) -> float:
     if land_size <= 0:
         return 1.0
     # Use log10 to slow down growth: at 1000 km² → 1.0, at 100k → ~1.5, at 1M → ~2.0
-    # We cap at 2.0 to prevent runaway inflation.
     factor = 0.3 * math.log10(land_size / 1000 + 1)
     return min(1.0 + factor, 2.0)
