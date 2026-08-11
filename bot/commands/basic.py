@@ -35,9 +35,13 @@ class BasicCommands(commands.Cog):
         self.last_interaction = {}
         self.saved_chats = set()
 
+    # ---- Firestore-based territory helper ----
     def _get_all_owned_provinces(self) -> list:
-        """Return a list of all provinces owned by any player using Firestore."""
-        territories = self.db.get_all_territories()  # dict {province_name: {owner_id: ...}}
+        """
+        Return a list of all provinces owned by any player using Firestore.
+        Uses db.get_all_territories() which returns a dict of province_name -> {owner_id: ...}
+        """
+        territories = self.db.get_all_territories()  # Firestore method
         all_provinces = []
         for territory_name, data in territories.items():
             owner = data.get("owner_id")
