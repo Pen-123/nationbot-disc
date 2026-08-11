@@ -36,43 +36,13 @@ class Database:
 
         # ---- Decide whether to download from Dropbox ----
         if self.dropbox_client:
-            # Get remote file metadata
-            remote_timestamp = 0
-            try:
-                meta = self.dropbox_client.files_get_metadata(f"/{os.path.basename(self.db_path)}")
-                remote_timestamp = meta.server_modified.timestamp()
-            except ApiError as e:
-                if e.error.is_path() and e.error.get_path().is_not_found():
-                    remote_timestamp = 0
-                else:
-                    logger.error(f"Error getting remote metadata: {e}")
-                    remote_timestamp = 0
-
-            # Get local file mtime (if exists)
-            local_timestamp = 0
-            if os.path.exists(self.db_path):
-                local_timestamp = os.path.getmtime(self.db_path)
-
-            # Download if remote is newer or local doesn't exist
-            if not os.path.exists(self.db_path) or remote_timestamp > local_timestamp:
-                logger.info(f"Remote is newer ({remote_timestamp} > {local_timestamp}); downloading...")
-                # Backup existing local file (optional)
-                if os.path.exists(self.db_path):
-                    backup_path = f"{self.db_path}.backup"
-                    try:
-                        os.rename(self.db_path, backup_path)
-                        logger.info(f"Local database backed up to {backup_path}")
-                    except Exception as e:
-                        logger.warning(f"Could not backup local database: {e}")
-                self.download_database()
-            else:
-                logger.info("Local database is up-to-date or newer; skipping download.")
+            self._sync_from_dropbox(force=False)
         else:
             # No Dropbox; ensure local file exists
             if not os.path.exists(self.db_path):
                 open(self.db_path, 'w').close()
 
-        # Always initialize database schema (this will create missing tables)
+        # Always initialize database schema
         self.init_database()
         self.setup_cleanup_scheduler()
 
@@ -117,6 +87,59 @@ class Database:
             self.dropbox_client = None
             self._upload_enabled = False
 
+    def _get_remote_timestamp(self) -> float:
+        """Return the server_modified timestamp of the remote file, or 0 if not found."""
+        if not self.dropbox_client:
+            return 0
+        try:
+            meta = self.dropbox_client.files_get_metadata(f"/{os.path.basename(self.db_path)}")
+            return meta.server_modified.timestamp()
+        except ApiError as e:
+            if e.error.is_path() and e.error.get_path().is_not_found():
+                return 0
+            logger.error(f"Error getting remote metadata: {e}")
+            return 0
+
+    def _sync_from_dropbox(self, force: bool = False):
+        """
+        Download the latest database from Dropbox if remote is newer (or if force=True).
+        """
+        if not self.dropbox_client:
+            logger.warning("No Dropbox client; cannot sync.")
+            return
+
+        remote_ts = self._get_remote_timestamp()
+        local_ts = 0
+        if os.path.exists(self.db_path):
+            local_ts = os.path.getmtime(self.db_path)
+
+        logger.info(f"Remote timestamp: {remote_ts}, Local timestamp: {local_ts}")
+
+        if force or (remote_ts > 0 and (not os.path.exists(self.db_path) or remote_ts > local_ts + 1.0)):
+            # Remote is newer (or force)
+            if os.path.exists(self.db_path):
+                backup_path = f"{self.db_path}.backup"
+                try:
+                    os.rename(self.db_path, backup_path)
+                    logger.info(f"Local database backed up to {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Could not backup local database: {e}")
+            self.download_database()
+        else:
+            logger.info("Local database is up-to-date or newer; skipping download.")
+
+    def force_sync(self) -> bool:
+        """Force a download from Dropbox, overwriting local."""
+        if not self.dropbox_client:
+            logger.warning("Dropbox client not available.")
+            return False
+        try:
+            self._sync_from_dropbox(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Force sync failed: {e}")
+            return False
+
     def download_database(self):
         """Download the latest database from Dropbox, overwriting local."""
         if not self.dropbox_client:
@@ -158,14 +181,12 @@ class Database:
             logger.warning("Dropbox upload skipped – client not available.")
             return
 
-        # Rate limit: at most once every 30 seconds, but skip if shutdown
         now = time.time()
         if now - self._last_upload < 30 and not self._shutdown:
             logger.debug("Skipping upload – less than 30s since last upload.")
             return
 
         try:
-            # Verify database integrity before upload
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute("PRAGMA integrity_check")
@@ -227,6 +248,7 @@ class Database:
         initial_timer.start()
         logger.info("Scheduled cleanup task initialized")
 
+    # ---- Migrations (unchanged) ----
     def _migrate_civilizations_table(self):
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -428,6 +450,15 @@ class Database:
         self.upload_database(force=True)
         logger.info("Database initialized")
 
+    # ---- All other methods (create_civilization, delete_civilization, etc.) remain the same ----
+    # They all call self.upload_database(force=True) after each commit.
+    # For brevity, I've omitted them here, but they are identical to the previous version.
+    # The full file includes them. I'll include the rest below.
+
+    # ---- The remaining methods are exactly as before ----
+    # (create_civilization, delete_civilization, get_civilization, update_civilization, etc.)
+    # I'll include them in the final code block.
+
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         try:
             default_resources = {"gold": 500, "food": 300, "stone": 100, "wood": 100}
@@ -508,6 +539,9 @@ class Database:
             logger.error(f"Error deleting civilization for {user_id}: {e}")
             return False
 
+    # ---- I'll include the rest of the methods in the final code block ----
+    # ... (get_civilization, update_civilization, etc.) all unchanged.
+
     def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
         try:
             conn = self.get_connection()
@@ -587,6 +621,7 @@ class Database:
     def update_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         return self.set_command_cooldown(user_id, command, timestamp)
 
+    # ---- Card methods, etc. ----
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         try:
             conn = self.get_connection()
@@ -672,6 +707,9 @@ class Database:
             logger.error(f"Error getting all civilizations: {e}")
             return []
 
+    # ---- The rest of the methods (alliance, trade, etc.) are unchanged ----
+    # I'll include them in the full code.
+
     def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         try:
             conn = self.get_connection()
@@ -731,6 +769,9 @@ class Database:
             logger.error(f"Error creating trade request: {e}")
             return False
 
+    # ---- I'll include the remaining methods in the final block ----
+    # ... (get_trade_requests, get_trade_request_by_id, delete_trade_request, etc.)
+
     def get_trade_requests(self, user_id: str) -> List[Dict]:
         try:
             cursor = self.get_connection().cursor()
@@ -778,6 +819,7 @@ class Database:
             logger.error(f"Error deleting trade request: {e}")
             return False
 
+    # ---- Alliance invites, messages, wars, etc. ----
     def create_alliance_invite(self, alliance_id: int, sender_id: str, recipient_id: str) -> bool:
         try:
             conn = self.get_connection()
@@ -1128,7 +1170,6 @@ class Database:
             del self.local.connection
 
     def shutdown(self):
-        """Called on exit to flush any pending uploads."""
         self._shutdown = True
         logger.info("Shutdown: uploading database one last time...")
         self.upload_database(force=True)
