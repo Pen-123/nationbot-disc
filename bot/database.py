@@ -368,6 +368,30 @@ class Database:
                 expires_at TIMESTAMP DEFAULT (datetime('now', '+1 day'))
             )
         ''')
+        # Tables for territories and industrial revolutions (already exist, but ensure they are created if not)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS territories (
+                user_id TEXT PRIMARY KEY,
+                owned_provinces TEXT NOT NULL DEFAULT '[]'
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS territory_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                territory_name TEXT NOT NULL,
+                claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS industrial_revolutions (
+                user_id TEXT PRIMARY KEY,
+                active INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                started_at TIMESTAMP,
+                stats TEXT NOT NULL DEFAULT '{}'
+            )
+        ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_trade_expires ON trade_requests(expires_at)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_invites_expires ON alliance_invitations(expires_at)')
@@ -429,27 +453,44 @@ class Database:
             return False
 
     def delete_civilization(self, user_id: str) -> bool:
+        """Delete a civilization and all associated data (territories, industrial, etc.)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
+            # Main civilization
             cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
+            # Cooldowns
             cursor.execute('DELETE FROM cooldowns WHERE user_id = ?', (user_id,))
+            # Cards
             cursor.execute('DELETE FROM cards WHERE user_id = ?', (user_id,))
+            # Events
             cursor.execute('DELETE FROM events WHERE user_id = ?', (user_id,))
+            # Peace offers
             cursor.execute('DELETE FROM peace_offers WHERE offerer_id = ? OR receiver_id = ?', (user_id, user_id))
+            # Messages
             cursor.execute('DELETE FROM messages WHERE sender_id = ? OR recipient_id = ?', (user_id, user_id))
+            # Trade requests
             cursor.execute('DELETE FROM trade_requests WHERE sender_id = ? OR recipient_id = ?', (user_id, user_id))
+            # Alliance invites
             cursor.execute('DELETE FROM alliance_invitations WHERE sender_id = ? OR recipient_id = ?', (user_id, user_id))
+            # Wars
             cursor.execute('DELETE FROM wars WHERE attacker_id = ? OR defender_id = ?', (user_id, user_id))
+            # Alliances – remove from members list
             cursor.execute('SELECT id, members FROM alliances')
             for alliance in cursor.fetchall():
                 members = json.loads(alliance['members'])
                 if user_id in members:
                     members.remove(user_id)
                     cursor.execute('UPDATE alliances SET members = ? WHERE id = ?', (json.dumps(members), alliance['id']))
+            # ---- NEW: Clear territories and territory history ----
+            cursor.execute('DELETE FROM territories WHERE user_id = ?', (user_id,))
+            cursor.execute('DELETE FROM territory_history WHERE user_id = ?', (user_id,))
+            # ---- NEW: Clear industrial revolution data ----
+            cursor.execute('DELETE FROM industrial_revolutions WHERE user_id = ?', (user_id,))
             conn.commit()
+            # Upload to Dropbox after deletion
             self.upload_database()
-            logger.info(f"Deleted civilization for user {user_id}")
+            logger.info(f"Deleted civilization and all related data for user {user_id}")
             return True
         except Exception as e:
             logger.error(f"Error deleting civilization for {user_id}: {e}")
@@ -1056,7 +1097,7 @@ class Database:
         try:
             cursor = self.get_connection().cursor()
             info = {}
-            tables = ['civilizations', 'wars', 'peace_offers', 'alliances', 'events', 'trade_requests', 'messages', 'cards', 'cooldowns', 'alliance_invitations']
+            tables = ['civilizations', 'wars', 'peace_offers', 'alliances', 'events', 'trade_requests', 'messages', 'cards', 'cooldowns', 'alliance_invitations', 'territories', 'territory_history', 'industrial_revolutions']
             for t in tables:
                 cursor.execute(f'SELECT COUNT(*) FROM {t}')
                 info[f'{t}_count'] = cursor.fetchone()[0]
