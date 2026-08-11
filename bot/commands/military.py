@@ -278,12 +278,7 @@ class MilitaryCommands(commands.Cog):
         
         return False
 
-    # ---------- THE SECOND HALF (commands) WILL GO HERE ----------
-    # This includes: train, declare, attack, process_attack_victory,
-    # process_attack_defeat, stealthbattle, siege, find, peace,
-    # accept_peace, cards, addborder, removeborder, rectract,
-    # retrieve, borderinfo, _calculate_military_strength
-        # ---------- COMMANDS ----------
+    # ---------- COMMANDS ----------
 
     @commands.command(name='train')
     @app_commands.describe(unit_type="Type of unit to train", amount="How many units to train")
@@ -423,10 +418,11 @@ class MilitaryCommands(commands.Cog):
                     await ctx.send("❌ You're already at war with this civilization!")
                     return
 
+                # ---- FIX: Explicitly set result to 'ongoing' ----
                 cursor.execute('''
-                    INSERT INTO wars (attacker_id, defender_id, war_type, declared_at)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, target_id, 'declared', datetime.utcnow()))
+                    INSERT INTO wars (attacker_id, defender_id, war_type, declared_at, result)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, target_id, 'declared', datetime.utcnow(), 'ongoing'))
                 conn.commit()
 
             self.db.log_event(user_id, "war_declaration", "War Declared",
@@ -495,17 +491,29 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send("❌ Target user doesn't have a civilization!")
                 return
 
+            # ---- Debug: Check if war exists ----
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id FROM wars 
+                    SELECT id, result FROM wars 
                     WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
                     AND result = 'ongoing'
                 ''', (user_id, target_id, target_id, user_id))
 
                 war = cursor.fetchone()
+                logger.info(f"War check: user_id={user_id}, target_id={target_id}, war found: {war}")
+
                 if not war:
-                    await ctx.send("❌ You must declare war first! Use `.declare @user`")
+                    # Check if there is any war at all (maybe ended or not ongoing)
+                    cursor.execute('''
+                        SELECT id, result FROM wars 
+                        WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                    ''', (user_id, target_id, target_id, user_id))
+                    any_war = cursor.fetchone()
+                    if any_war:
+                        await ctx.send(f"❌ You have a war with this civilization, but it is not 'ongoing' (status: {any_war['result']}). Use `.declare` again if needed.")
+                    else:
+                        await ctx.send("❌ You must declare war first! Use `.declare @user`")
                     return
 
             # ---- BORDER CHECK FOR DEFENSIVE MODIFIER ----
@@ -686,6 +694,11 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error processing attack defeat: {e}", exc_info=True)
+
+    # ---- The rest of the commands (stealthbattle, siege, find, peace, etc.) are unchanged ----
+    # I'll omit them here for brevity, but they are the same as in the original file.
+    # The full file should include all methods.
+
 
     @commands.command(name='stealthbattle')
     @app_commands.describe(target="Civilization leader to target")
