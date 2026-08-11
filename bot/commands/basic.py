@@ -466,7 +466,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- WARHELP (UPDATED CATEGORIES) ----------
+    # ---------- WARHELP ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
         """
@@ -506,7 +506,7 @@ Remember to keep responses engaging but focused on the game.
                     "trade": "Propose a resource trade with another civilization"
                 }
             },
-            "economy_extra": {   # This was "economy_extra" – now its name changes
+            "economy_extra": {
                 "name": "🎲 ExtraEconomy",
                 "description": "Jobs, gambling, and extra economy commands",
                 "commands": {
@@ -526,7 +526,7 @@ Remember to keep responses engaging but focused on the game.
                     "slots": "Play the slot machine"
                 }
             },
-            "economy_core": {   # This was "economy_core" – now its name changes
+            "economy_core": {
                 "name": "💰 Economy",
                 "description": "Core resource gathering and management",
                 "commands": {
@@ -683,7 +683,7 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- REGIONS COMMAND ----------
+    # ---------- UPDATED REGIONS COMMAND (with FORBIDDEN_START_PROVINCES) ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
@@ -692,6 +692,9 @@ Remember to keep responses engaging but focused on the game.
         Usage: .regions <subregion_name>
         Examples: .regions western europe, .regions east asia, .regions brazil
         """
+        # Import here to avoid circular imports
+        from bot.commands.territory import FORBIDDEN_START_PROVINCES
+
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
@@ -714,13 +717,14 @@ Remember to keep responses engaging but focused on the game.
                 for sub in sorted(sublist):
                     provinces = PROVINCES.get(sub, [])
                     all_owned = self._get_all_owned_provinces()
-                    available = [p for p in provinces if p not in all_owned]
+                    # Filter out forbidden start provinces and already owned
+                    available = [p for p in provinces if p not in all_owned and p not in FORBIDDEN_START_PROVINCES]
                     if available:
                         available_subregions.append(sub)
                 if available_subregions:
                     embed.add_field(name=continent, value=", ".join(available_subregions), inline=False)
                 else:
-                    embed.add_field(name=continent, value="*All subregions in this continent are fully claimed.*", inline=False)
+                    embed.add_field(name=continent, value="*All subregions in this continent are fully claimed or not startable.*", inline=False)
             embed.set_footer(text=f"Your current region: {civ.get('region', 'None')}")
             await ctx.send(embed=embed)
             return
@@ -751,15 +755,16 @@ Remember to keep responses engaging but focused on the game.
             return
 
         all_owned = self._get_all_owned_provinces()
-        available_provinces = [p for p in provinces_in_subregion if p not in all_owned]
+        # Filter available provinces: exclude forbidden and already owned
+        available_provinces = [p for p in provinces_in_subregion if p not in all_owned and p not in FORBIDDEN_START_PROVINCES]
 
         if not available_provinces:
-            await ctx.send(f"❌ All provinces in **{matched_subregion}** have already been claimed. Choose another subregion.")
+            await ctx.send(f"❌ All startable provinces in **{matched_subregion}** have already been claimed. Choose another subregion.")
             return
 
         chosen_province = random.choice(available_provinces)
 
-        # Continent bonuses
+        # ---- Continent bonuses (unchanged) ----
         continent = SUBREGION_TO_CONTINENT.get(matched_subregion, "Unknown")
         continent_bonuses = {
             "Europe": {"gold": 300, "tech_level": 1},
