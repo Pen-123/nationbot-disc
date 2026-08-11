@@ -318,13 +318,13 @@ PROVINCES = {
         "Namibia", "South Africa", "Eswatini", "Lesotho"
     ],
     "Western North America": [
-        "Canada", "United States"
+        "Canada", "United States", "Greenland"
     ],
     "Central North America": [
         "Mexico"
     ],
     "Eastern North America": [
-        "United States"
+        "United States", "Greenland"
     ],
     "Mexico": ["Mexico"],
     "Central America": [
