@@ -5,7 +5,6 @@ from discord import app_commands
 import json
 import logging
 from datetime import datetime, timedelta
-import sqlite3
 from typing import Literal, Optional, List
 
 logger = logging.getLogger(__name__)
@@ -64,31 +63,37 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
             
-        # Check if already at war
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT COUNT(*) FROM wars 
-            WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?)) 
-            AND result = 'ongoing'
-        ''', (user_id, target_id, target_id, user_id))
-        
-        if cursor.fetchone()[0] > 0:
-            await ctx.send("❌ You cannot ally with a civilization you are at war with!")
-            return
+        # Check if already at war using Firestore
+        wars = self.db.get_wars(status="ongoing")
+        for war in wars:
+            a = war.get("attacker_id")
+            d = war.get("defender_id")
+            if (a == user_id and d == target_id) or (a == target_id and d == user_id):
+                await ctx.send("❌ You cannot ally with a civilization you are at war with!")
+                return
             
-        # Check if alliance already exists
-        cursor.execute('''
-            SELECT * FROM alliances 
-            WHERE (leader_id = ? OR leader_id = ?) 
-            AND (members LIKE '%' || ? || '%' OR members LIKE '%' || ? || '%')
-        ''', (user_id, target_id, user_id, target_id))
-        
-        existing = cursor.fetchone()
-        if existing:
-            await ctx.send("❌ One of you is already in an alliance!")
-            return
+        # Check if alliance already exists between them
+        # We'll query alliances collection where members array contains both user IDs.
+        # Since Firestore doesn't support multiple array-contains in a single query easily,
+        # we'll get all alliances and check membership in-memory.
+        # For scalability, we could add a composite index but for now it's fine.
+        alliances_ref = self.db.client.collection("alliances")
+        docs = alliances_ref.stream()
+        for doc in docs:
+            data = doc.to_dict()
+            members = data.get("members", [])
+            if user_id in members and target_id in members:
+                await ctx.send("❌ One of you is already in an alliance together!")
+                return
+            
+        # Also check if either user is in any alliance (to prevent multiple alliances)
+        docs = alliances_ref.stream()
+        for doc in docs:
+            data = doc.to_dict()
+            members = data.get("members", [])
+            if user_id in members or target_id in members:
+                await ctx.send("❌ One of you is already in an alliance! Break your current alliance first.")
+                return
             
         # Generate unique alliance ID
         alliance_id = str(random.randint(100000, 999999))
@@ -146,17 +151,22 @@ class DiplomacyCommands(commands.Cog):
             del self.pending_alliances[alliance_id]
             return
             
-        # Create the alliance
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
+        # Create the alliance in Firestore
         try:
-            cursor.execute('''
-                INSERT INTO alliances (name, leader_id, members)
-                VALUES (?, ?, ?)
-            ''', (proposal["alliance_name"], proposal["proposer_id"], json.dumps([proposal["proposer_id"], proposal["target_id"]])))
+            # Use create_alliance (requires leader_id and name)
+            success = self.db.create_alliance(proposal["alliance_name"], proposal["proposer_id"], description="")
+            if not success:
+                await ctx.send("❌ Failed to create alliance. Please try again.")
+                return
             
-            conn.commit()
+            # Add the target as a member
+            alliance = self.db.get_alliance_by_name(proposal["alliance_name"])
+            if not alliance:
+                await ctx.send("❌ Alliance creation succeeded but not found. Please contact admin.")
+                return
+            
+            alliance_id_doc = alliance["id"]
+            self.db.add_alliance_member(alliance_id_doc, user_id)
             
             embed = guilded.Embed(
                 title="🤝 Alliance Formed!",
@@ -219,39 +229,37 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Find user's alliance
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        # Find user's alliance using Firestore
+        alliances_ref = self.db.client.collection("alliances")
+        docs = alliances_ref.where("members", "array_contains", user_id).stream()
         
-        cursor.execute('''
-            SELECT * FROM alliances 
-            WHERE members LIKE '%' || ? || '%'
-        ''', (user_id,))
+        alliance_doc = None
+        for doc in docs:
+            alliance_doc = doc
+            break
         
-        alliance = cursor.fetchone()
-        if not alliance:
+        if not alliance_doc:
             await ctx.send("❌ You are not currently in an alliance!")
             return
             
-        alliance_dict = dict(alliance)
-        members = json.loads(alliance_dict['members'])
+        alliance_data = alliance_doc.to_dict()
+        alliance_id = alliance_doc.id
+        members = alliance_data.get("members", [])
         
         if len(members) <= 2:
-            # Dissolve the alliance if only 2 members
-            cursor.execute('DELETE FROM alliances WHERE id = ?', (alliance_dict['id'],))
+            # Dissolve the alliance (delete the document)
+            alliance_doc.reference.delete()
         else:
-            # Remove user from alliance
+            # Remove user from members
             members.remove(user_id)
-            cursor.execute('UPDATE alliances SET members = ? WHERE id = ?', (json.dumps(members), alliance_dict['id']))
+            alliance_doc.reference.update({"members": members})
             
-        conn.commit()
-        
         # Happiness penalty for breaking alliance
         self.civ_manager.update_population(user_id, {"happiness": -10})
         
         embed = guilded.Embed(
             title="💔 Alliance Broken",
-            description=f"Your civilization has left the **{alliance_dict['name']}** alliance.",
+            description=f"Your civilization has left the **{alliance_data['name']}** alliance.",
             color=guilded.Color.red()
         )
         embed.add_field(name="Consequence", value="Breaking diplomatic ties has upset your people. (-10 happiness)", inline=False)
@@ -261,9 +269,9 @@ class DiplomacyCommands(commands.Cog):
         # Notify other alliance members in channel
         for member_id in members:
             if member_id != user_id:
-                await ctx.send(f"<@{member_id}> 💔 **Alliance Update**: {civ['name']} has left the **{alliance_dict['name']}** alliance.")
+                await ctx.send(f"<@{member_id}> 💔 **Alliance Update**: {civ['name']} has left the **{alliance_data['name']}** alliance.")
                 
-        self.db.log_event(user_id, "alliance_break", "Alliance Broken", f"Left the {alliance_dict['name']} alliance")
+        self.db.log_event(user_id, "alliance_break", "Alliance Broken", f"Left the {alliance_data['name']} alliance")
 
     @commands.command(name='send')
     @app_commands.describe(
@@ -316,17 +324,17 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send(f"❌ You don't have {amount} {resource_type}!")
             return
             
-        # Check if allied (optional - could allow sending to anyone)
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT COUNT(*) FROM alliances 
-            WHERE members LIKE '%' || ? || '%' AND members LIKE '%' || ? || '%'
-        ''', (user_id, target_id))
-        
-        is_allied = cursor.fetchone()[0] > 0
-        
+        # Check if allied using Firestore
+        alliances_ref = self.db.client.collection("alliances")
+        docs = alliances_ref.stream()
+        is_allied = False
+        for doc in docs:
+            data = doc.to_dict()
+            members = data.get("members", [])
+            if user_id in members and target_id in members:
+                is_allied = True
+                break
+            
         # Calculate transfer efficiency
         transfer_efficiency = 0.9  # 90% efficiency (10% lost in transport)
         if is_allied:
@@ -563,7 +571,7 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
             
-        # Store the message in the database
+        # Store the message in Firestore using database.py method
         try:
             success = self.db.send_message(user_id, target_id, message)
             if not success:
@@ -597,7 +605,7 @@ class DiplomacyCommands(commands.Cog):
             color=guilded.Color.blue()
         )
         
-        # Check pending alliances
+        # Check pending alliances (from in-memory)
         alliance_proposals = []
         for alliance_id, proposal in self.pending_alliances.items():
             if proposal["target_id"] == user_id and datetime.now() < proposal["expires"]:
@@ -611,7 +619,7 @@ class DiplomacyCommands(commands.Cog):
                         f"Expires: <t:{int(proposal['expires'].timestamp())}:R>"
                     )
         
-        # Check pending trades
+        # Check pending trades (from in-memory)
         trade_proposals = []
         for trade_id, trade in self.pending_trades.items():
             if trade["target_id"] == user_id and datetime.now() < trade["expires"]:
@@ -627,7 +635,7 @@ class DiplomacyCommands(commands.Cog):
                         f"Expires: <t:{int(trade['expires'].timestamp())}:R>"
                     )
         
-        # Check diplomatic messages using the database method
+        # Check diplomatic messages using Firestore method
         diplomatic_messages = []
         try:
             messages = self.db.get_messages(user_id)
@@ -635,7 +643,6 @@ class DiplomacyCommands(commands.Cog):
             for msg in messages:
                 sender_civ = self.civ_manager.get_civilization(msg['sender_id'])
                 if sender_civ:
-                    # Handle timestamp format
                     timestamp = msg['created_at']
                     if isinstance(timestamp, str):
                         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
@@ -683,47 +690,43 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Find user's alliance
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        # Find user's alliance using Firestore
+        alliances_ref = self.db.client.collection("alliances")
+        docs = alliances_ref.where("members", "array_contains", user_id).stream()
         
-        cursor.execute('''
-            SELECT * FROM alliances 
-            WHERE members LIKE '%' || ? || '%'
-        ''', (user_id,))
+        user_alliance_doc = None
+        for doc in docs:
+            user_alliance_doc = doc
+            break
         
-        user_alliance = cursor.fetchone()
-        if not user_alliance:
+        if not user_alliance_doc:
             await ctx.send("❌ You must be in an alliance to form a coalition!")
             return
             
-        # Find target alliance
-        cursor.execute('SELECT * FROM alliances WHERE name = ?', (target_alliance,))
-        target_alliance_data = cursor.fetchone()
+        user_alliance_data = user_alliance_doc.to_dict()
+        user_alliance_id = user_alliance_doc.id
         
+        # Find target alliance by name
+        target_alliance_data = self.db.get_alliance_by_name(target_alliance)
         if not target_alliance_data:
             await ctx.send(f"❌ Alliance '{target_alliance}' not found!")
             return
             
-        if user_alliance['name'] == target_alliance:
+        if user_alliance_data['name'] == target_alliance:
             await ctx.send("❌ You cannot form a coalition against your own alliance!")
             return
             
-        user_alliance_dict = dict(user_alliance)
-        target_alliance_dict = dict(target_alliance_data)
+        user_members = user_alliance_data.get("members", [])
+        target_members = target_alliance_data.get("members", [])
         
         # Calculate coalition success chance
-        user_members = json.loads(user_alliance_dict['members'])
-        target_members = json.loads(target_alliance_dict['members'])
-        
-        # Coalition is more likely to succeed if user's alliance is larger or stronger
         success_chance = min(0.8, len(user_members) / max(1, len(target_members)))
         
         if random.random() < success_chance:
             # Coalition formed successfully
             embed = guilded.Embed(
                 title="⚔️ Coalition Formed!",
-                description=f"**{user_alliance_dict['name']}** has formed a coalition against **{target_alliance}**!",
+                description=f"**{user_alliance_data['name']}** has formed a coalition against **{target_alliance}**!",
                 color=guilded.Color.red()
             )
             
@@ -740,7 +743,7 @@ class DiplomacyCommands(commands.Cog):
                     if member_id in user_members:
                         await ctx.send(f"<@{member_id}> ⚔️ **Coalition Formed!** Your alliance has formed a coalition against {target_alliance}!")
                     else:
-                        await ctx.send(f"<@{member_id}> ⚔️ **Coalition Against You!** {user_alliance_dict['name']} has formed a coalition against your alliance!")
+                        await ctx.send(f"<@{member_id}> ⚔️ **Coalition Against You!** {user_alliance_data['name']} has formed a coalition against your alliance!")
                         
             await ctx.send(embed=embed)
             
