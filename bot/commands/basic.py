@@ -291,7 +291,7 @@ BasicCommands:
   warhelp       Display help information
   regions       View or select your civilization's region
 
-EconomyCommands: (short)
+EconomyCommands:
   extrawork, extrastore, extrainventory, extragamble, extracards, slots, blackjack, give, setbalance
 
 MilitaryCommands & Diplomacy:
@@ -309,6 +309,12 @@ MilitaryCommands & Diplomacy:
   rectract      Assign percentage of soldiers to border
   retrieve      Retrieve percentage of soldiers from border
   borderinfo    Check border status
+  buildship     Build navy ships
+  buildplane    Build airforce planes
+  tech          Upgrade military tech
+  trainboost    Increase soldier training level
+  navy          View your navy fleet
+  airforce      View your airforce fleet
 
 Border Management:
   - Borders provide defensive bonuses in battles
@@ -466,7 +472,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- WARHELP ----------
+    # ---------- WARHELP (UPDATED CATEGORIES & COMMANDS) ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
         """
@@ -506,7 +512,7 @@ Remember to keep responses engaging but focused on the game.
                     "trade": "Propose a resource trade with another civilization"
                 }
             },
-            "economy_extra": {
+            "extraeconomy": {
                 "name": "🎲 ExtraEconomy",
                 "description": "Jobs, gambling, and extra economy commands",
                 "commands": {
@@ -526,7 +532,7 @@ Remember to keep responses engaging but focused on the game.
                     "slots": "Play the slot machine"
                 }
             },
-            "economy_core": {
+            "economy": {
                 "name": "💰 Economy",
                 "description": "Core resource gathering and management",
                 "commands": {
@@ -574,22 +580,28 @@ Remember to keep responses engaging but focused on the game.
             },
             "military": {
                 "name": "⚔️ Military Commands",
-                "description": "War, borders, and cards",
+                "description": "War, borders, navy, airforce, and cards",
                 "commands": {
                     "accept_peace": "Accept a peace offer from another civilization",
                     "addborder": "Build a defensive border (5min cooldown)",
+                    "airforce": "View your airforce fleet",
                     "attack": "Launch a direct attack (3min cooldown)",
                     "borderinfo": "Check your border status (1min cooldown)",
+                    "buildplane": "Build airforce planes (10min cooldown)",
+                    "buildship": "Build navy ships (5min cooldown)",
                     "cards": "View or use your unlocked cards",
                     "declare": "Declare war on another civilization",
                     "find": "Search for wandering soldiers (1min cooldown)",
+                    "navy": "View your navy fleet",
                     "peace": "Offer peace to an enemy civilization",
                     "rectract": "Assign soldiers to the border (1min cooldown)",
                     "removeborder": "Remove your border and retrieve soldiers (2min)",
                     "retrieve": "Retrieve soldiers from the border (1min cooldown)",
                     "siege": "Lay siege to an enemy (10min cooldown)",
                     "stealthbattle": "Conduct a spy‑based stealth attack (4min)",
-                    "train": "Train military units (2min cooldown)"
+                    "tech": "Upgrade military tech (500 gold per level)",
+                    "train": "Train military units (2min cooldown)",
+                    "trainboost": "Increase soldier training level (max 3)"
                 }
             },
             "store": {
@@ -683,7 +695,7 @@ Remember to keep responses engaging but focused on the game.
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- UPDATED REGIONS COMMAND (with FORBIDDEN_START_PROVINCES) ----------
+    # ---------- REGIONS COMMAND ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
@@ -692,9 +704,6 @@ Remember to keep responses engaging but focused on the game.
         Usage: .regions <subregion_name>
         Examples: .regions western europe, .regions east asia, .regions brazil
         """
-        # Import here to avoid circular imports
-        from bot.commands.territory import FORBIDDEN_START_PROVINCES
-
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
@@ -717,7 +726,6 @@ Remember to keep responses engaging but focused on the game.
                 for sub in sorted(sublist):
                     provinces = PROVINCES.get(sub, [])
                     all_owned = self._get_all_owned_provinces()
-                    # Filter out forbidden start provinces and already owned
                     available = [p for p in provinces if p not in all_owned and p not in FORBIDDEN_START_PROVINCES]
                     if available:
                         available_subregions.append(sub)
@@ -755,7 +763,6 @@ Remember to keep responses engaging but focused on the game.
             return
 
         all_owned = self._get_all_owned_provinces()
-        # Filter available provinces: exclude forbidden and already owned
         available_provinces = [p for p in provinces_in_subregion if p not in all_owned and p not in FORBIDDEN_START_PROVINCES]
 
         if not available_provinces:
@@ -764,7 +771,7 @@ Remember to keep responses engaging but focused on the game.
 
         chosen_province = random.choice(available_provinces)
 
-        # ---- Continent bonuses (unchanged) ----
+        # Continent bonuses
         continent = SUBREGION_TO_CONTINENT.get(matched_subregion, "Unknown")
         continent_bonuses = {
             "Europe": {"gold": 300, "tech_level": 1},
