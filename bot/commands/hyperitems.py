@@ -197,23 +197,21 @@ class HyperItemCommands(commands.Cog):
             await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "mutual destruction sacrifice")
             # If reflected, the original attacker gets destroyed alone
             try:
-                conn = self.db.get_connection()
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
-                conn.commit()
-                
-                await ctx.send("💀 **SACRIFICE REFLECTED!** You were destroyed by your own reflected sacrifice!")
-                
-                # Notify attacker
-                try:
-                    attacker_user = await self.bot.fetch_user(int(user_id))
-                    await attacker_user.send("💀 **SACRIFICE REFLECTED!** Your mutual destruction attempt was reflected back at you by a Mirror! Your civilization has been destroyed.")
-                except:
-                    pass
+                # Delete the attacker's civilization using Firestore
+                if self.db.delete_civilization(user_id):
+                    await ctx.send("💀 **SACRIFICE REFLECTED!** You were destroyed by your own reflected sacrifice!")
                     
+                    # Notify attacker
+                    try:
+                        attacker_user = await self.bot.fetch_user(int(user_id))
+                        await attacker_user.send("💀 **SACRIFICE REFLECTED!** Your mutual destruction attempt was reflected back at you by a Mirror! Your civilization has been destroyed.")
+                    except:
+                        pass
+                else:
+                    await ctx.send("❌ Failed to delete your civilization after reflection.")
             except Exception as e:
                 logger.error(f"Error in reflected sacrifice: {e}")
-                
+                await ctx.send("❌ Error processing reflected sacrifice.")
             return
             
         # Confirm this is really what they want to do
@@ -249,14 +247,15 @@ class HyperItemCommands(commands.Cog):
         # Consume Sacrifice HyperItem
         self.civ_manager.use_hyper_item(user_id, "Sacrifice")
         
-        # DESTROY BOTH CIVILIZATIONS
+        # DESTROY BOTH CIVILIZATIONS using Firestore
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
             # Delete both civilizations
-            cursor.execute('DELETE FROM civilizations WHERE user_id IN (?, ?)', (user_id, target_id))
-            conn.commit()
+            success1 = self.db.delete_civilization(user_id)
+            success2 = self.db.delete_civilization(target_id)
+            
+            if not success1 or not success2:
+                await ctx.send("❌ Failed to delete one or both civilizations. Please try again.")
+                return
             
             # Global announcement
             await self._announce_global_attack(ctx, civ['name'], target_civ['name'], "Mutual Destruction Sacrifice")
@@ -491,22 +490,19 @@ class HyperItemCommands(commands.Cog):
             await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "HyperLaser obliteration")
             # After reflection, the original attacker gets obliterated
             try:
-                conn = self.db.get_connection()
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
-                conn.commit()
-                
-                await ctx.send("💥 **OBLITERATION REFLECTED!** You were destroyed by your own reflected HyperLaser!")
-                
-                try:
-                    attacker_user = await self.bot.fetch_user(int(user_id))
-                    await attacker_user.send("💥 **OBLITERATION REFLECTED!** Your HyperLaser was reflected back at you by a Mirror! Your civilization has been destroyed.")
-                except:
-                    pass
+                if self.db.delete_civilization(user_id):
+                    await ctx.send("💥 **OBLITERATION REFLECTED!** You were destroyed by your own reflected HyperLaser!")
                     
+                    try:
+                        attacker_user = await self.bot.fetch_user(int(user_id))
+                        await attacker_user.send("💥 **OBLITERATION REFLECTED!** Your HyperLaser was reflected back at you by a Mirror! Your civilization has been destroyed.")
+                    except:
+                        pass
+                else:
+                    await ctx.send("❌ Failed to delete your civilization after reflection.")
             except Exception as e:
                 logger.error(f"Error in reflected obliteration: {e}")
-                
+                await ctx.send("❌ Error processing reflected obliteration.")
             return
         elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "HyperLaser obliteration")
@@ -515,12 +511,11 @@ class HyperItemCommands(commands.Cog):
         # Consume the HyperLaser
         self.civ_manager.use_hyper_item(user_id, "HyperLaser")
         
-        # TOTAL DESTRUCTION - delete the civilization
+        # TOTAL DESTRUCTION - delete the target civilization using Firestore
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (target_id,))
-            conn.commit()
+            if not self.db.delete_civilization(target_id):
+                await ctx.send("❌ Failed to obliterate civilization. Please try again.")
+                return
             
             # Global announcement
             await self._announce_global_attack(ctx, civ['name'], target_civ['name'], "HyperLaser Obliteration")
@@ -803,6 +798,7 @@ class HyperItemCommands(commands.Cog):
         base_gold = random.randint(2000, 5000)
         population_bonus = civ['population']['citizens'] * 2
         total_gold = base_gold + population_bonus
+        total_gold = min(total_gold, 10000000)  # Cap
         
         self.civ_manager.update_resources(user_id, {"gold": total_gold})
         
@@ -841,6 +837,7 @@ class HyperItemCommands(commands.Cog):
         base_food = random.randint(3000, 7000)
         territory_bonus = civ['territory']['land_size'] * 2
         total_food = base_food + territory_bonus
+        total_food = min(total_food, 10000000)  # Cap
         
         self.civ_manager.update_resources(user_id, {"food": total_food})
         
