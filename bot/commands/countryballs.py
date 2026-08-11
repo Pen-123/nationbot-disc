@@ -1,828 +1,1038 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import json
-import logging
 import random
-import os
 import asyncio
-from datetime import datetime, timezone
-from typing import Optional, Dict, List, Set
-
-from bot.utils import create_embed, format_number
+import discord as guilded
+from discord import app_commands
+from discord.ext import commands
+from datetime import datetime, timedelta
+import logging
+from bot.utils import format_number, create_embed, get_territory_modifier
+from functools import wraps
+from typing import List
 
 logger = logging.getLogger(__name__)
 
-# ---- DATA ----
-# Each subregion maps to exactly one countryball ID.
-# All base countryballs (12) are assigned to at least one region.
-# Evolution-only balls (e.g., german_empire) are not directly unlocked – they evolve from their base.
-REGION_TO_COUNTRYBALL = {
-    # Europe
-    "Eastern Europe": "soviet_union",
-    "Western Europe": "reich",          # German Reich – evolves into German Empire
-    "Southern Europe": "italy",
-    "Northern Europe": "british_empire",
+# Cooldown decorator implementation
+def check_cooldown_decorator(minutes=0):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, ctx, *args, **kwargs):
+            user_id = str(ctx.author.id)
+            command_name = func.__name__
+            
+            # Get last used time from database
+            last_used = self.db.get_command_cooldown(user_id, command_name)
+            
+            if last_used:
+                cooldown_end = last_used + timedelta(minutes=minutes)
+                if datetime.utcnow() < cooldown_end:
+                    remaining = cooldown_end - datetime.utcnow()
+                    mins = int(remaining.total_seconds() // 60)
+                    secs = int(remaining.total_seconds() % 60)
+                    await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
+                    return
+            
+            # Update cooldown in database
+            self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
+            return await func(self, ctx, *args, **kwargs)
+        return wrapper
+    return decorator
 
-    # Asia
-    "Central Asia": "austria-hungary",  # historically off, but gives it a region
-    "East Asia": "north_korea",         # North Korea
-    "Middle East": "ottoman_empire",
-    "South Asia": "taiwan",             # Taiwan
-    "Southeast Asia": "japanese_empire",
-
-    # Africa
-    "North Africa": "ottoman_empire",   # duplicate (also Middle East)
-    "West Africa": "france",
-    "Central Africa": "france",         # duplicate
-    "East Africa": "british_empire",    # duplicate
-    "Southern Africa": "british_empire",# duplicate
-
-    # North America
-    "Western North America": "america",
-    "Central North America": "america",
-    "Eastern North America": "america",
-    "Mexico": "america",
-
-    # South America
-    "Brazil": "america",
-    "Central America": "america",
-    "Eastern South America": "america",
-    "Northern South America": "america",
-    "Southern Cone": "america",
-    "Western South America": "america",
-
-    # Oceania
-    "Australia": "british_empire",
-    "New Zealand": "british_empire",
-    "Pacific Islands": "british_empire",
-
-    # Antarctica – no countryballs
-    "Antarctic Peninsula": None,
-    "East Antarctica": None,
-    "West Antarctica": None,
-}
-
-COUNTRYBALLS = {
-    "china": {
-        "name": "China",
-        "continent": "Asia",
-        "flag_colors": ["#ff0000", "#ffff00"],
-        "flag_colors_human": "Red and Yellow",
-        "power_rank": 3,
-        "image_file": "china.png",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "axis",
-        "modifiers": {
-            "military": 1.10,
-            "production": 1.05,
-            "gold": 1.10,
-            "stone": 1.15,
-            "wood": 1.15,
-            "food": 1.05
-        }
-    },
-    "reich": {
-        "name": "German Reich",
-        "continent": "Europe",
-        "flag_colors": ["#000000", "#ffffff", "#ff0000"],
-        "flag_colors_human": "Black, White, and Red",
-        "power_rank": 2,
-        "image_file": "reich.jpg",
-        "evolution": {"base": "german_empire", "condition": "Own all provinces in Western Europe and Eastern Europe"},
-        "synergy_group": "axis",
-        "modifiers": {
-            "soldier_training": 1.25,
-            "tech": 1.10,
-            "gold": 1.15,
-            "stone": 1.10,
-            "wood": 1.10,
-            "food": 1.05
-        }
-    },
-    "america": {
-        "name": "United States",
-        "continent": "North America",
-        "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
-        "flag_colors_human": "Red, White, and Blue",
-        "power_rank": 1,
-        "image_file": "america.jpg",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "allies",
-        "modifiers": {
-            "industry": 1.20,
-            "trade": 1.15,
-            "gold": 1.20,
-            "stone": 1.15,
-            "wood": 1.15,
-            "food": 1.20
-        }
-    },
-    "austria-hungary": {
-        "name": "Austria-Hungary",
-        "continent": "Europe",
-        "flag_colors": ["#ff0000", "#ffffff", "#006600"],
-        "flag_colors_human": "Red, White, and Green",
-        "power_rank": 4,
-        "image_file": "austria-hungary.png",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "central_powers",
-        "modifiers": {
-            "population_growth": 1.15,
-            "happiness": 1.10,
-            "gold": 1.10,
-            "stone": 1.05,
-            "wood": 1.05,
-            "food": 1.10
-        }
-    },
-    "british_empire": {
-        "name": "British Empire",
-        "continent": "Europe",
-        "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
-        "flag_colors_human": "Red, White, and Blue",
-        "power_rank": 1,
-        "image_file": "british empire.jpg",
-        "evolution": {"base": "united_kingdom", "condition": "Own all provinces in Western Europe, Southern Europe, and Eastern North America"},
-        "synergy_group": "allies",
-        "modifiers": {
-            "trade": 1.30,
-            "diplomacy": 1.20,
-            "naval": 1.25,
-            "gold": 1.25,
-            "stone": 1.15,
-            "wood": 1.15,
-            "food": 1.15
-        }
-    },
-    "france": {
-        "name": "France",
-        "continent": "Europe",
-        "flag_colors": ["#0000ff", "#ffffff", "#ff0000"],
-        "flag_colors_human": "Blue, White, and Red",
-        "power_rank": 2,
-        "image_file": "france.png",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "allies",
-        "modifiers": {
-            "diplomacy": 1.15,
-            "culture": 1.10,
-            "gold": 1.15,
-            "stone": 1.10,
-            "wood": 1.10,
-            "food": 1.15
-        }
-    },
-    "german_empire": {
-        "name": "German Empire",
-        "continent": "Europe",
-        "flag_colors": ["#000000", "#ffffff", "#ff0000"],
-        "flag_colors_human": "Black, White, and Red",
-        "power_rank": 2,
-        "image_file": "german empire.jpg",
-        "evolution": {"base": "reich", "condition": "Own all provinces in Western Europe and Eastern Europe"},
-        "synergy_group": "central_powers",
-        "modifiers": {
-            "soldier_training": 1.30,
-            "tech": 1.15,
-            "industry": 1.10,
-            "gold": 1.20,
-            "stone": 1.20,
-            "wood": 1.20,
-            "food": 1.10
-        }
-    },
-    "italy": {
-        "name": "Kingdom of Italy",
-        "continent": "Europe",
-        "flag_colors": ["#009246", "#ffffff", "#ce2b37"],
-        "flag_colors_human": "Green, White, and Red",
-        "power_rank": 3,
-        "image_file": "italy.jpg",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "axis",
-        "modifiers": {
-            "naval": 1.20,
-            "trade": 1.10,
-            "gold": 1.10,
-            "stone": 1.05,
-            "wood": 1.05,
-            "food": 1.10
-        }
-    },
-    "japanese_empire": {
-        "name": "Japanese Empire",
-        "continent": "Asia",
-        "flag_colors": ["#ff0000", "#ffffff"],
-        "flag_colors_human": "Red and White",
-        "power_rank": 2,
-        "image_file": "japanese empire.jpg",
-        "evolution": {"base": "japan", "condition": "Own all provinces in East Asia and Southeast Asia"},
-        "synergy_group": "axis",
-        "modifiers": {
-            "military": 1.20,
-            "naval": 1.30,
-            "gold": 1.15,
-            "stone": 1.15,
-            "wood": 1.15,
-            "food": 1.10
-        }
-    },
-    "north_korea": {
-        "name": "North Korea",
-        "continent": "Asia",
-        "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
-        "flag_colors_human": "Red, White, and Blue",
-        "power_rank": 5,
-        "image_file": "north korea.jpg",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "axis",
-        "modifiers": {
-            "military": 1.05,
-            "unrest": -0.10,
-            "gold": 1.05,
-            "stone": 1.05,
-            "wood": 1.05,
-            "food": 1.05
-        }
-    },
-    "ottoman_empire": {
-        "name": "Ottoman Empire",
-        "continent": "Asia",
-        "flag_colors": ["#ff0000", "#ffffff", "#006600"],
-        "flag_colors_human": "Red, White, and Green",
-        "power_rank": 3,
-        "image_file": "ottoman empire.jpg",
-        "evolution": {"base": "turkey", "condition": "Own all provinces in Middle East, North Africa, and Eastern Europe"},
-        "synergy_group": "central_powers",
-        "modifiers": {
-            "trade": 1.20,
-            "culture": 1.15,
-            "happiness": 1.10,
-            "gold": 1.20,
-            "stone": 1.15,
-            "wood": 1.15,
-            "food": 1.15
-        }
-    },
-    "soviet_union": {
-        "name": "Soviet Union",
-        "continent": "Europe/Asia",
-        "flag_colors": ["#ff0000", "#ffff00"],
-        "flag_colors_human": "Red and Yellow",
-        "power_rank": 1,
-        "image_file": "soviet union.jpg",
-        "evolution": {"base": "russia", "condition": "Own all provinces in Eastern Europe and Central Asia"},
-        "synergy_group": "allies",
-        "modifiers": {
-            "production": 1.30,
-            "military": 1.25,
-            "tech": 1.15,
-            "gold": 1.20,
-            "stone": 1.25,
-            "wood": 1.25,
-            "food": 1.20
-        }
-    },
-    "taiwan": {
-        "name": "Taiwan",
-        "continent": "Asia",
-        "flag_colors": ["#ff0000", "#ffffff", "#0000ff"],
-        "flag_colors_human": "Red, White, and Blue",
-        "power_rank": 4,
-        "image_file": "taiwan.jpg",
-        "evolution": {"base": None, "condition": None},
-        "synergy_group": "allies",
-        "modifiers": {
-            "tech": 1.15,
-            "trade": 1.10,
-            "gold": 1.10,
-            "stone": 1.05,
-            "wood": 1.05,
-            "food": 1.10
-        }
-    }
-}
-
-SYNERGIES = {
-    "axis": {
-        "name": "Axis Powers",
-        "members": ["reich", "italy", "japanese_empire", "north_korea"],
-        "bonuses": {
-            "military": 0.25,
-            "soldier_training": 0.20,
-            "gold": 0.15,
-            "stone": 0.15,
-            "wood": 0.15,
-            "food": 0.15
-        }
-    },
-    "allies": {
-        "name": "Allied Powers",
-        "members": ["america", "british_empire", "france", "soviet_union", "taiwan"],
-        "bonuses": {
-            "trade": 0.25,
-            "diplomacy": 0.20,
-            "industry": 0.15,
-            "gold": 0.25,
-            "stone": 0.20,
-            "wood": 0.20,
-            "food": 0.20,
-            "military": 0.15
-        }
-    },
-    "central_powers": {
-        "name": "Central Powers",
-        "members": ["austria-hungary", "german_empire", "ottoman_empire"],
-        "bonuses": {
-            "soldier_training": 0.30,
-            "tech": 0.20,
-            "industry": 0.15,
-            "gold": 0.20,
-            "stone": 0.20,
-            "wood": 0.20,
-            "food": 0.15,
-            "military": 0.20
-        }
-    }
-}
-
-# -------------------------------------------------------------------
-# COUNTRYBALL MANAGER (Firestore-based)
-# -------------------------------------------------------------------
-class CountryballManager:
-    def __init__(self, db, bot):
-        self.db = db
-        self.bot = bot
-        self.images_path = os.path.join(os.path.dirname(__file__), '..', '..', 'images')
-
-    def _get_user_balls_ref(self, user_id: str):
-        return self.db.client.collection("player_countryballs").document(user_id)
-
-    def _get_active_managers_ref(self, user_id: str):
-        return self.db.client.collection("active_managers").document(user_id)
-
-    def unlock_countryball(self, user_id: str, ball_id: str) -> bool:
-        try:
-            doc_ref = self._get_user_balls_ref(user_id)
-            doc = doc_ref.get()
-            if doc.exists:
-                data = doc.to_dict()
-                balls = data.get("balls", {})
-                if ball_id in balls:
-                    return False
-            else:
-                balls = {}
-
-            balls[ball_id] = {
-                "unlocked_at": datetime.now(timezone.utc).isoformat(),
-                "is_active": False,
-                "evolution_stage": "base"
-            }
-            doc_ref.set({"balls": balls}, merge=True)
-            logger.info(f"Unlocked countryball {ball_id} for {user_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Error unlocking countryball for {user_id}: {e}")
-            return False
-
-    def get_collection(self, user_id: str) -> List[Dict]:
-        try:
-            doc = self._get_user_balls_ref(user_id).get()
-            if not doc.exists:
-                return []
-            data = doc.to_dict()
-            balls = data.get("balls", {})
-            collection = []
-            for ball_id, info in balls.items():
-                ball_data = COUNTRYBALLS.get(ball_id)
-                if ball_data:
-                    collection.append({
-                        'id': ball_id,
-                        'name': ball_data['name'],
-                        'unlocked_at': info.get('unlocked_at'),
-                        'is_active': info.get('is_active', False),
-                        'evolution_stage': info.get('evolution_stage', 'base'),
-                        'image_file': ball_data['image_file'],
-                        'continent': ball_data['continent'],
-                        'flag_colors_human': ball_data['flag_colors_human'],
-                        'power_rank': ball_data['power_rank'],
-                        'modifiers': ball_data['modifiers'],
-                        'synergy_group': ball_data['synergy_group']
-                    })
-            return collection
-        except Exception as e:
-            logger.error(f"Error getting collection for {user_id}: {e}")
-            return []
-
-    def get_active_managers(self, user_id: str) -> List[str]:
-        try:
-            doc = self._get_active_managers_ref(user_id).get()
-            if not doc.exists:
-                return []
-            data = doc.to_dict()
-            return data.get("active", [])
-        except Exception as e:
-            logger.error(f"Error getting active managers for {user_id}: {e}")
-            return []
-
-    def activate(self, user_id: str, ball_id: str) -> bool:
-        try:
-            user_doc = self._get_user_balls_ref(user_id).get()
-            if not user_doc.exists:
-                return False
-            balls = user_doc.to_dict().get("balls", {})
-            if ball_id not in balls:
-                return False
-            if balls[ball_id].get("is_active", False):
-                return False
-
-            active_ref = self._get_active_managers_ref(user_id)
-            active_doc = active_ref.get()
-            if active_doc.exists:
-                active = active_doc.to_dict().get("active", [])
-                if len(active) >= 3:
-                    return False
-            else:
-                active = []
-
-            active.append(ball_id)
-            active_ref.set({"active": active}, merge=True)
-
-            balls[ball_id]["is_active"] = True
-            self._get_user_balls_ref(user_id).set({"balls": balls}, merge=True)
-
-            self._apply_modifiers(user_id)
-            return True
-        except Exception as e:
-            logger.error(f"Error activating countryball {ball_id} for {user_id}: {e}")
-            return False
-
-    def deactivate(self, user_id: str, ball_id: str) -> bool:
-        try:
-            user_doc = self._get_user_balls_ref(user_id).get()
-            if not user_doc.exists:
-                return False
-            balls = user_doc.to_dict().get("balls", {})
-            if ball_id not in balls:
-                return False
-            if not balls[ball_id].get("is_active", False):
-                return False
-
-            active_ref = self._get_active_managers_ref(user_id)
-            active_doc = active_ref.get()
-            if not active_doc.exists:
-                return False
-            active = active_doc.to_dict().get("active", [])
-            if ball_id not in active:
-                return False
-            active.remove(ball_id)
-            active_ref.set({"active": active}, merge=True)
-
-            balls[ball_id]["is_active"] = False
-            self._get_user_balls_ref(user_id).set({"balls": balls}, merge=True)
-
-            self._apply_modifiers(user_id)
-            return True
-        except Exception as e:
-            logger.error(f"Error deactivating countryball {ball_id} for {user_id}: {e}")
-            return False
-
-    def _apply_modifiers(self, user_id: str):
-        civ = self.db.get_civilization(user_id)
-        if not civ:
-            return
-
-        active = self.get_active_managers(user_id)
-        bonuses = civ.get('bonuses', {})
-        to_remove = [k for k in bonuses if k.startswith('countryball_')]
-        for k in to_remove:
-            del bonuses[k]
-
-        for ball_id in active:
-            ball_data = COUNTRYBALLS.get(ball_id)
-            if ball_data:
-                for key, val in ball_data['modifiers'].items():
-                    bonus_key = f"countryball_{ball_id}_{key}"
-                    bonuses[bonus_key] = (val - 1) * 100
-
-        synergy_bonuses = self._get_synergy_bonuses(user_id)
-        for key, val in synergy_bonuses.items():
-            bonus_key = f"countryball_synergy_{key}"
-            bonuses[bonus_key] = val * 100
-
-        self.db.update_civilization(user_id, {'bonuses': bonuses})
-
-    def _get_synergy_bonuses(self, user_id: str) -> Dict[str, float]:
-        active = self.get_active_managers(user_id)
-        active_groups = set()
-        for ball_id in active:
-            ball_def = COUNTRYBALLS.get(ball_id)
-            if ball_def:
-                active_groups.add(ball_def['synergy_group'])
-        bonuses = {}
-        for group, synergy in SYNERGIES.items():
-            if group in active_groups:
-                members = synergy['members']
-                active_members = [b for b in active if b in members]
-                if len(active_members) >= 2:
-                    for key, val in synergy['bonuses'].items():
-                        bonuses[key] = bonuses.get(key, 0) + val
-        return bonuses
-
-    def check_evolution(self, user_id: str, ball_id: str, territory_cog) -> bool:
-        """Check if a countryball can evolve, and update if possible."""
-        ball_def = COUNTRYBALLS.get(ball_id)
-        if not ball_def or not ball_def['evolution']['condition']:
-            return False
-
-        condition = ball_def['evolution']['condition']
-        import re
-        subregions = re.findall(r"in ([A-Za-z ]+)", condition)
-        if not subregions:
-            return False
-
-        owned = territory_cog._get_owned_provinces(user_id)
-        from bot.commands.territory import PROVINCES
-        for sub in subregions:
-            sub = sub.strip()
-            match = None
-            for key in PROVINCES.keys():
-                if key.lower() == sub.lower():
-                    match = key
-                    break
-            if not match:
-                return False
-            provinces_in_sub = PROVINCES[match]
-            if not all(p in owned for p in provinces_in_sub):
-                return False
-
-        # Evolution condition met: update evolution_stage
-        try:
-            balls_ref = self._get_user_balls_ref(user_id)
-            doc = balls_ref.get()
-            if not doc.exists:
-                return False
-            balls = doc.to_dict().get("balls", {})
-            if ball_id not in balls:
-                return False
-            balls[ball_id]["evolution_stage"] = "evolved"
-            balls_ref.set({"balls": balls}, merge=True)
-            logger.info(f"Countryball {ball_id} evolved for {user_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Error evolving countryball {ball_id} for {user_id}: {e}")
-            return False
-
-    def get_synergy_bonuses(self, user_id: str) -> Dict[str, float]:
-        return self._get_synergy_bonuses(user_id)
-
-
-# -------------------------------------------------------------------
-# DISCORD COG
-# -------------------------------------------------------------------
-class CountryballCog(commands.Cog):
+class EconomyCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
-        self.ball_manager = CountryballManager(self.db, bot)
 
-    async def cog_load(self):
-        self.territory_cog = self.bot.get_cog("TerritoryCog")
-        if not self.territory_cog:
-            logger.warning("TerritoryCog not found; countryball auto-unlock will not work.")
+    async def _sell_item_autocomplete(self, interaction: guilded.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        user_id = str(interaction.user.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            return []
+        items = civ.get("hyper_items", [])
+        choices = []
+        for item in items:
+            if current.lower() in item.lower():
+                choices.append(app_commands.Choice(name=item[:100], value=item))
+        return choices[:25]
 
-    # ---- PROGRESSIVE REVEAL ----
-    async def reveal_countryball(self, ctx, ball_id: str, user_id: str):
-        ball_def = COUNTRYBALLS.get(ball_id)
-        if not ball_def:
-            await ctx.send("❌ Unknown countryball.")
-            return
+    async def check_civil_war_and_proceed(self, ctx, user_id: str) -> bool:
+        """Check for civil war risk and proceed if safe"""
+        try:
+            if self.civ_manager.check_civil_war_risk(user_id):
+                civ = self.civ_manager.get_civilization(user_id)
+                if civ:
+                    embed = create_embed(
+                        "💥 CIVIL WAR!",
+                        "Your civilization has been torn apart by internal conflict! Check your events with `.events` to see the damage.",
+                        guilded.Color.red()
+                    )
+                    await ctx.send(embed=embed)
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking civil war for {user_id}: {e}")
+            return True
 
-        image_path = os.path.join(self.ball_manager.images_path, ball_def['image_file'])
-        if not os.path.exists(image_path):
-            await ctx.send(f"❌ Image file `{ball_def['image_file']}` not found. Path: {image_path}")
-            return
-
-        # Stage 1: Continent (no name)
-        embed1 = discord.Embed(
-            title="🌍 **A New Power Rises!**",
-            description=f"From the continent of **{ball_def['continent']}**...",
-            color=discord.Color.blue()
-        )
-
-        # Stage 2: Colors and rank (no name)
-        colors_str = ball_def['flag_colors_human']
-        rank = ball_def['power_rank']
-        rank_emoji = "👑" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else "🏅"))
-        embed2 = discord.Embed(
-            title=f"{rank_emoji} **Rank #{rank}**",
-            description=f"Bears the colors of **{colors_str}**.",
-            color=discord.Color.gold()
-        )
-
-        # Stage 3: Mystery hint (still no name)
-        embed3 = discord.Embed(
-            title="🔮 **A Legendary Power Emerges**",
-            description="Ancient texts speak of a mighty empire...\nIts true name will be revealed shortly.",
-            color=discord.Color.purple()
-        )
-
-        # Stage 4: Full reveal with name and image
-        embed4 = discord.Embed(
-            title=f"**{ball_def['name']}** Unlocked!",
-            description=f"Added to your collection! {self._format_modifiers(ball_def['modifiers'])}",
-            color=discord.Color.green()
-        )
-        file = discord.File(image_path, filename=ball_def['image_file'])
-        embed4.set_image(url=f"attachment://{ball_def['image_file']}")
-
-        await ctx.send(embed=embed1)
-        await asyncio.sleep(1.5)
-        await ctx.send(embed=embed2)
-        await asyncio.sleep(1.5)
-        await ctx.send(embed=embed3)
-        await asyncio.sleep(2)
-        await ctx.send(embed=embed4, file=file)
-
-    def _format_modifiers(self, modifiers):
-        lines = []
-        for key, val in modifiers.items():
-            sign = "+" if val > 0 else ""
-            lines.append(f"**{key.replace('_',' ').title()}:** {sign}{int((val-1)*100)}%")
-        return "\n".join(lines)
-
-    # ---- AUTO-UNLOCK TRIGGER (for region completion) ----
-    async def check_region_unlock(self, ctx, region: str, user_id: str):
-        ball_id = REGION_TO_COUNTRYBALL.get(region)
-        if not ball_id:
-            return
-
-        if not self.ball_manager.unlock_countryball(user_id, ball_id):
-            return
-
-        if self.territory_cog:
-            self.ball_manager.check_evolution(user_id, ball_id, self.territory_cog)
-
-        active = self.ball_manager.get_active_managers(user_id)
-        if len(active) < 3:
-            self.ball_manager.activate(user_id, ball_id)
-
-        await self.reveal_countryball(ctx, ball_id, user_id)
-
-    # ---- COMMANDS ----
-    @commands.command(name='openpacks')
-    async def open_packs(self, ctx):
-        """Open packs for all completed subregions."""
+    @commands.command(name='gather')
+    @check_cooldown_decorator(minutes=1)
+    async def gather_resources(self, ctx):
+        """Gather random resources from your territory"""
         user_id = str(ctx.author.id)
-        if not self.territory_cog:
-            await ctx.send("❌ Territory system not available.")
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
-
-        owned = self.territory_cog._get_owned_provinces(user_id)
-        if not owned:
-            await ctx.send("🌍 You haven't conquered any provinces yet. Start with `.expand`.")
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-
-        from bot.commands.territory import PROVINCES
-        completed_regions = []
-        for subregion, provinces in PROVINCES.items():
-            if provinces and all(p in owned for p in provinces):
-                completed_regions.append(subregion)
-
-        if not completed_regions:
-            await ctx.send("📦 You haven't fully conquered any subregion yet. Keep expanding!")
+            
+        possible_resources = ['gold', 'wood', 'stone', 'food']
+        gathered = {}
+        
+        # ---- EMPLOYMENT and TERRITORY ----
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100  # 0.0 to 1.0
+        employment_factor = 1 + employment_rate * 0.8  # 1.0 to 1.8
+        
+        # FULL territory factor (no damping) – now up to 6x
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        for resource in possible_resources:
+            if random.random() < 0.7:  # 70% chance for each resource
+                base_amount = random.randint(10, 50)
+                amount = int(base_amount * employment_factor * territory_factor)
+                amount = min(amount, 1000000)  # cap to prevent overflow
+                gathered[resource] = amount
+        
+        if not gathered:
+            await ctx.send("🔍 Your scouts searched but found nothing of value this time.")
             return
+            
+        # Apply luck modifier (capped)
+        luck_modifier = self.civ_manager.calculate_total_modifier(user_id, "luck")
+        if luck_modifier > 1.0:
+            for resource in gathered:
+                gathered[resource] = int(gathered[resource] * luck_modifier)
+                gathered[resource] = min(gathered[resource], 1000000)  # re-cap
+        
+        self.civ_manager.update_resources(user_id, gathered)
+        
+        embed = create_embed(
+            "🔍 Resource Gathering",
+            f"Your scouts return with valuable resources!",
+            guilded.Color.green()
+        )
+        
+        resource_icons = {"gold": "🪙", "wood": "🪵", "stone": "🪨", "food": "🌾"}
+        resource_text = "\n".join([f"{resource_icons[res]} {format_number(amt)} {res.capitalize()}" 
+                                  for res, amt in gathered.items()])
+        embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
+        embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
+        embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
+        
+        await ctx.send(embed=embed)
 
-        unlocked_any = False
-        for region in completed_regions:
-            ball_id = REGION_TO_COUNTRYBALL.get(region)
-            if not ball_id:
-                continue
-            if self.ball_manager.unlock_countryball(user_id, ball_id):
-                unlocked_any = True
-                if self.territory_cog:
-                    self.ball_manager.check_evolution(user_id, ball_id, self.territory_cog)
-                active = self.ball_manager.get_active_managers(user_id)
-                if len(active) < 3:
-                    self.ball_manager.activate(user_id, ball_id)
-                await self.reveal_countryball(ctx, ball_id, user_id)
-                await asyncio.sleep(2)
-
-        if not unlocked_any:
-            await ctx.send("📦 You've already unlocked all countryballs for your conquered regions!")
-
-    @commands.command(name='evolve')
-    async def check_evolve(self, ctx):
-        """
-        Manually check evolution for all your countryballs.
-        Useful if you completed evolution conditions after unlocking the ball.
-        """
+    @commands.command(name='work')
+    @check_cooldown_decorator(minutes=1)
+    async def work(self, ctx, amount: int = None):
+        """Employ citizens to work and gain immediate gold"""
+        if amount is None or amount < 1:
+            await ctx.send("💼 **Work Command**\nUsage: `.work <amount>`\nEmploy <amount> citizens to increase employment and gain gold based on new employment rate.")
+            return
+            
         user_id = str(ctx.author.id)
-        collection = self.ball_manager.get_collection(user_id)
-        if not collection:
-            await ctx.send("📦 You don't have any countryballs to evolve.")
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
-
-        if not self.territory_cog:
-            await ctx.send("❌ Territory system not available.")
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
+            
+        population = civ['population']
+        current_employed = population.get('employed', 0)
+        unemployed = population['citizens'] - current_employed
+        
+        if amount > unemployed:
+            await ctx.send(f"❌ Only {unemployed} unemployed citizens available!")
+            return
+            
+        self.civ_manager.update_employment(user_id, amount)
+        
+        # Gold gain based on employment (capped)
+        gold_gain = amount * random.randint(1, 3)
+        ideology = civ.get('ideology', '')
+        if ideology == 'communism':
+            gold_gain = int(gold_gain * 1.15)
+        gold_gain = min(gold_gain, 1000000)  # Cap
+        
+        self.civ_manager.update_resources(user_id, {"gold": gold_gain})
+        
+        new_rate = self.civ_manager.get_employment_rate(user_id)
+        
+        embed = create_embed(
+            "💼 Citizens Employed",
+            f"Successfully employed {format_number(amount)} citizens and gained {format_number(gold_gain)} gold!",
+            guilded.Color.green()
+        )
+        embed.add_field(name="New Employment Rate", value=f"{new_rate:.1f}%", inline=True)
+        
+        await ctx.send(embed=embed)
 
-        evolved_any = False
-        for ball in collection:
-            ball_id = ball['id']
-            if ball['evolution_stage'] == 'evolved':
-                continue
-            if self.ball_manager.check_evolution(user_id, ball_id, self.territory_cog):
-                evolved_any = True
-                ball_def = COUNTRYBALLS.get(ball_id)
-                if ball_def:
-                    await ctx.send(f"⭐ **{ball_def['name']}** has evolved! Check your collection with `.packs`.")
-                await asyncio.sleep(1)
-
-        if not evolved_any:
-            await ctx.send("🔍 No countryballs evolved. Make sure you've met the evolution conditions!")
-
-    @commands.command(name='packs')
-    async def packs_list(self, ctx):
+    @commands.command(name='farm')
+    @check_cooldown_decorator(minutes=1)
+    async def farm_food(self, ctx):
+        """Farm food for your civilization"""
         user_id = str(ctx.author.id)
-        collection = self.ball_manager.get_collection(user_id)
-        if not collection:
-            await ctx.send("📦 You haven't unlocked any countryballs yet. Conquer regions and use `.openpacks` to unlock them!")
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # ---- TERRITORY and EMPLOYMENT ----
+        base_food = random.randint(20, 80)
+        citizen_bonus = civ['population']['citizens'] // 10
+        
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        total_food = int((base_food + citizen_bonus) * employment_factor * territory_factor)
+        
+        if civ.get('ideology') == 'communism':
+            total_food = int(total_food * 1.1)
+            
+        # Random events
+        event_text = ""
+        if random.random() < 0.1:
+            event_multiplier = random.choice([0.5, 1.5, 2.0])
+            total_food = int(total_food * event_multiplier)
+            if event_multiplier < 1:
+                event_text = "🦗 Locust swarm damaged some crops!"
+            else:
+                event_text = "🌈 Perfect weather blessed your harvest!"
+        
+        total_food = min(total_food, 1000000)
+        
+        self.civ_manager.update_resources(user_id, {"food": total_food})
+        
+        embed = create_embed(
+            "🌾 Farming",
+            f"Your farmers worked the fields and produced {format_number(total_food)} food!",
+            guilded.Color.green()
+        )
+        
+        if event_text:
+            embed.add_field(name="Special Event", value=event_text, inline=False)
+        
+        await ctx.send(embed=embed)
 
-        embed = discord.Embed(title="📦 Your Countryball Collection", color=discord.Color.blue())
-        active = self.ball_manager.get_active_managers(user_id)
-        for ball in collection:
-            status = "✅ Active" if ball['id'] in active else "🔒 Inactive"
-            evo = f" ({ball['evolution_stage']})" if ball['evolution_stage'] != 'base' else ""
-            embed.add_field(
-                name=f"{ball['name']}{evo}",
-                value=f"Rank #{ball['power_rank']} | {ball['continent']}\n{status}",
-                inline=True
+    @commands.command(name='mine')
+    @check_cooldown_decorator(minutes=1)
+    async def mine_resources(self, ctx):
+        """Mine stone and wood from your territory"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # ---- EMPLOYMENT and TERRITORY ----
+        stone_yield = random.randint(15, 60)
+        wood_yield = random.randint(10, 40)
+        
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        stone_yield = int(stone_yield * employment_factor * territory_factor)
+        wood_yield = int(wood_yield * employment_factor * territory_factor)
+        
+        # Tech level bonus (capped)
+        tech_bonus = 1 + (civ['military']['tech_level'] * 0.1)
+        stone_yield = int(stone_yield * tech_bonus)
+        wood_yield = int(wood_yield * tech_bonus)
+        
+        # Small chance for bonus gold
+        bonus_gold = 0
+        if random.random() < 0.2:
+            bonus_gold = random.randint(5, 25)
+        
+        # Cap everything
+        stone_yield = min(stone_yield, 500000)
+        wood_yield = min(wood_yield, 500000)
+        bonus_gold = min(bonus_gold, 10000)
+        
+        updates = {"stone": stone_yield, "wood": wood_yield}
+        if bonus_gold > 0:
+            updates["gold"] = bonus_gold
+            
+        self.civ_manager.update_resources(user_id, updates)
+        
+        embed = create_embed(
+            "⛏️ Mining Operation",
+            "Your miners have extracted resources from the earth!",
+            guilded.Color.blue()
+        )
+        
+        result_text = f"🪨 {format_number(stone_yield)} Stone\n🪵 {format_number(wood_yield)} Wood"
+        if bonus_gold > 0:
+            result_text += f"\n🪙 {format_number(bonus_gold)} Gold (Lucky find!)"
+            
+        embed.add_field(name="Resources Extracted", value=result_text, inline=False)
+        embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
+        embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
+        
+        mine_gif = 'https://media.tenor.com/9W0oJK5k7pYAAAAC/minecraft-mining.gif'
+        await ctx.send(content=mine_gif, embed=embed)
+
+    @commands.command(name='harvest')
+    async def harvest_food(self, ctx):
+        """Large harvest with longer cooldown"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        base_harvest = random.randint(100, 200)
+        population_bonus = civ['population']['citizens'] // 5
+        happiness_bonus = civ['population']['happiness'] // 2
+        
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        total_harvest = int((base_harvest + population_bonus + happiness_bonus) * employment_factor * territory_factor)
+        
+        if civ.get('ideology') == 'theocracy':
+            total_harvest = int(total_harvest * 1.1)
+        
+        total_harvest = min(total_harvest, 2000000)  # Cap
+        
+        self.civ_manager.update_resources(user_id, {"food": total_harvest})
+        self.civ_manager.update_population(user_id, {"happiness": 3})
+        
+        embed = create_embed(
+            "🌽 Great Harvest",
+            f"A bountiful harvest brings {format_number(total_harvest)} food to your civilization!",
+            guilded.Color.gold()
+        )
+        embed.add_field(name="Morale Boost", value="Citizens are happy! (+3 happiness)", inline=False)
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='drill')
+    @check_cooldown_decorator(minutes=1)
+    async def drill_minerals(self, ctx):
+        """Extract rare minerals with advanced drilling"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        if civ['military']['tech_level'] < 2:
+            await ctx.send("❌ You need Tech Level 2 or higher to use advanced drilling equipment!")
+            return
+            
+        rare_minerals = random.randint(50, 150)
+        gold_value = rare_minerals * 2
+        
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        gold_value = int(gold_value * employment_factor * territory_factor)
+        stone_value = int((rare_minerals // 2) * employment_factor * territory_factor)
+        
+        bonus_text = ""
+        if random.random() < 0.15:
+            bonus_gold = random.randint(100, 300)
+            gold_value += bonus_gold
+            bonus_text = f"💎 Struck a rich vein! (+{format_number(bonus_gold)} gold)"
+        
+        # Cap
+        gold_value = min(gold_value, 1000000)
+        stone_value = min(stone_value, 500000)
+        
+        self.civ_manager.update_resources(user_id, {"gold": gold_value, "stone": stone_value})
+        
+        embed = create_embed(
+            "🏗️ Deep Drilling",
+            f"Advanced drilling equipment extracted valuable minerals worth {format_number(gold_value)} gold!",
+            guilded.Color.purple()
+        )
+        
+        if bonus_text:
+            embed.add_field(name="Lucky Strike!", value=bonus_text, inline=False)
+        
+        drill_gif = 'https://media.tenor.com/3F2q8X5e3xAAAAAC/thunderbirds-mole.gif'
+        await ctx.send(content=drill_gif, embed=embed)
+
+    @commands.command(name='fish')
+    @check_cooldown_decorator(minutes=1)
+    async def fish_resources(self, ctx):
+        """Fish for food or occasionally find treasure"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.6
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        if random.random() < 0.8:
+            food_caught = int(random.randint(15, 45) * employment_factor * territory_factor)
+            food_caught = min(food_caught, 500000)
+            self.civ_manager.update_resources(user_id, {"food": food_caught})
+            embed = create_embed(
+                "🎣 Fishing",
+                f"Your fishermen caught {format_number(food_caught)} food from the waters!",
+                guilded.Color.teal()
             )
-        embed.set_footer(text=f"Total: {len(collection)} | Active managers: {len(active)}/3")
+        else:
+            treasure_gold = int(random.randint(20, 100) * employment_factor * territory_factor)
+            treasure_gold = min(treasure_gold, 500000)
+            self.civ_manager.update_resources(user_id, {"gold": treasure_gold})
+            embed = create_embed(
+                "🎣 Fishing - Lucky Find!",
+                f"Your nets pulled up a treasure chest worth {format_number(treasure_gold)} gold!",
+                guilded.Color.gold()
+            )
+            
         await ctx.send(embed=embed)
 
-    @commands.command(name='activate')
-    @app_commands.describe(ball_name="Name of the countryball to activate")
-    async def activate_manager(self, ctx, *, ball_name: str):
+    @commands.command(name='tax')
+    @check_cooldown_decorator(minutes=5)
+    async def collect_taxes(self, ctx):
+        """Collect taxes from your citizens with risk of population loss"""
         user_id = str(ctx.author.id)
-        matches = []
-        for ball_id, data in COUNTRYBALLS.items():
-            if ball_name.lower() in data['name'].lower():
-                matches.append((ball_id, data['name']))
-        if len(matches) > 1:
-            await ctx.send(f"⚠️ Multiple matches: {', '.join([m[1] for m in matches])}. Please be more specific.")
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
             return
-        if not matches:
-            await ctx.send("❌ No countryball found with that name.")
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-        ball_id = matches[0][0]
-        if self.ball_manager.activate(user_id, ball_id):
-            await ctx.send(f"✅ **{matches[0][1]}** is now an active manager!")
-            syn_bonuses = self.ball_manager.get_synergy_bonuses(user_id)
-            if syn_bonuses:
-                bonus_str = ", ".join([f"{k}: +{int(v*100)}%" for k,v in syn_bonuses.items()])
-                await ctx.send(f"⚡ **Synergy activated!** {bonus_str}")
-        else:
-            await ctx.send("❌ Could not activate. Either not owned, already active, or limit of 3 reached.")
-
-    @commands.command(name='deactivate')
-    @app_commands.describe(ball_name="Name of the countryball to deactivate")
-    async def deactivate_manager(self, ctx, *, ball_name: str):
-        user_id = str(ctx.author.id)
-        active = self.ball_manager.get_active_managers(user_id)
-        if not active:
-            await ctx.send("❌ You have no active managers.")
-            return
-        match = None
-        for ball_id in active:
-            data = COUNTRYBALLS.get(ball_id)
-            if data and ball_name.lower() in data['name'].lower():
-                match = ball_id
-                break
-        if not match:
-            await ctx.send("❌ No active countryball matches that name.")
-            return
-        if self.ball_manager.deactivate(user_id, match):
-            await ctx.send(f"✅ Deactivated **{COUNTRYBALLS[match]['name']}**.")
-        else:
-            await ctx.send("❌ Deactivation failed.")
-
-    @commands.command(name='synergies')
-    async def show_synergies(self, ctx):
-        user_id = str(ctx.author.id)
-        bonuses = self.ball_manager.get_synergy_bonuses(user_id)
-        if not bonuses:
-            await ctx.send("❌ No active synergies. Activate at least 2 countryballs from the same faction.")
-            return
-        embed = discord.Embed(title="⚡ Active Synergies", color=discord.Color.gold())
-        for key, val in bonuses.items():
-            embed.add_field(name=key.replace('_',' ').title(), value=f"+{int(val*100)}%", inline=True)
+            
+        population = civ['population']
+        
+        base_tax = population['citizens'] * 2
+        happiness_modifier = population['happiness'] / 100
+        
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.5
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        total_tax = int(base_tax * happiness_modifier * employment_factor * territory_factor)
+        
+        # Ideology effects
+        ideology = civ.get('ideology', '')
+        if ideology == 'democracy':
+            total_tax = int(total_tax * 1.1)
+        elif ideology == 'fascism':
+            total_tax = int(total_tax * 1.2)
+            self.civ_manager.update_population(user_id, {"happiness": -5})
+        elif ideology == 'communism':
+            total_tax = int(total_tax * 0.8)
+        
+        total_tax = min(total_tax, 1000000)  # Cap
+        
+        self.civ_manager.update_resources(user_id, {"gold": total_tax})
+        self.civ_manager.update_population(user_id, {"happiness": -2})
+        
+        population_loss = 0
+        if population['happiness'] < 40 and random.random() < 0.3:
+            population_loss = random.randint(5, 20)
+            self.civ_manager.update_population(user_id, {"citizens": -population_loss})
+        
+        embed = create_embed(
+            "💰 Tax Collection",
+            f"Collected {format_number(total_tax)} gold in taxes from your citizens.",
+            guilded.Color.gold()
+        )
+        
+        if ideology == 'fascism':
+            embed.add_field(name="Regime Effect", value="Forced taxation decreased happiness by 5!", inline=False)
+        
+        if population_loss > 0:
+            embed.add_field(name="⚠️ Population Loss", 
+                           value=f"{population_loss} citizens emigrated in protest against high taxes!", 
+                           inline=False)
+            
         await ctx.send(embed=embed)
 
+    @commands.command(name='lottery')
+    @check_cooldown_decorator(minutes=1)
+    async def play_lottery(self, ctx, bet: int = None):
+        """Gamble gold for a chance at the jackpot"""
+        if bet is None:
+            await ctx.send("💸 **Lottery** - Risk it all for glory!\nUsage: `.lottery <gold_amount>`\nMinimum bet: 50 gold")
+            return
+            
+        if bet < 50:
+            await ctx.send("❌ Minimum lottery bet is 50 gold!")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        if not self.civ_manager.can_afford(user_id, {"gold": bet}):
+            await ctx.send(f"❌ You don't have {format_number(bet)} gold to bet!")
+            return
+            
+        self.civ_manager.spend_resources(user_id, {"gold": bet})
+        
+        roll = random.random()
+        
+        if roll < 0.01:
+            winnings = bet * 50
+            result = f"🎰 **MEGA JACKPOT!** You won {format_number(winnings)} gold!"
+            color = guilded.Color.gold()
+        elif roll < 0.05:
+            winnings = bet * 10
+            result = f"🎰 **Big Win!** You won {format_number(winnings)} gold!"
+            color = guilded.Color.green()
+        elif roll < 0.20:
+            winnings = bet * 2
+            result = f"🎰 **Winner!** You won {format_number(winnings)} gold!"
+            color = guilded.Color.green()
+        elif roll < 0.40:
+            winnings = bet
+            result = f"🎰 **Break Even** - You got your {format_number(bet)} gold back."
+            color = guilded.Color.blue()
+        else:
+            winnings = 0
+            result = f"🎰 **No Luck** - Better luck next time!"
+            color = guilded.Color.red()
+            
+        if winnings > 0:
+            winnings = min(winnings, 10000000)  # Cap winnings
+            self.civ_manager.update_resources(user_id, {"gold": winnings})
+            
+        embed = create_embed(
+            "🎰 Lottery Results",
+            result,
+            color
+        )
+        embed.add_field(name="Bet Amount", value=f"{format_number(bet)} gold", inline=True)
+        if winnings > 0:
+            embed.add_field(name="Winnings", value=f"{format_number(winnings)} gold", inline=True)
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='invest')
+    @check_cooldown_decorator(minutes=5)
+    async def invest_gold(self, ctx, amount: int = None):
+        """Invest gold for delayed profit"""
+        if amount is None:
+            await ctx.send("💼 **Investment Banking**\nUsage: `.invest <gold_amount>`\nReturns profit after 2 hours with 80% success rate.")
+            return
+            
+        if amount < 100:
+            await ctx.send("❌ Minimum investment is 100 gold!")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        if not self.civ_manager.can_afford(user_id, {"gold": amount}):
+            await ctx.send(f"❌ You don't have {format_number(amount)} gold to invest!")
+            return
+            
+        self.civ_manager.spend_resources(user_id, {"gold": amount})
+        
+        embed = create_embed(
+            "💼 Investment Made",
+            f"Invested {format_number(amount)} gold in the market.\nCheck back in 2 hours to see your returns!",
+            guilded.Color.blue()
+        )
+        
+        await ctx.send(embed=embed)
+        
+        async def investment_return():
+            await asyncio.sleep(7200)
+            if random.random() < 0.8:
+                profit_multiplier = random.uniform(1.2, 1.8)
+                returns = int(amount * profit_multiplier)
+                returns = min(returns, 10000000)  # Cap
+                self.civ_manager.update_resources(user_id, {"gold": returns})
+                try:
+                    user = await self.bot.fetch_user(int(user_id))
+                    await user.send(f"💰 **Investment Return**: Your investment of {format_number(amount)} gold has returned {format_number(returns)} gold! (Profit: {format_number(returns - amount)})")
+                except:
+                    pass
+            else:
+                loss_multiplier = random.uniform(0.3, 0.7)
+                returns = int(amount * loss_multiplier)
+                self.civ_manager.update_resources(user_id, {"gold": returns})
+                try:
+                    user = await self.bot.fetch_user(int(user_id))
+                    await user.send(f"📉 **Investment Loss**: Market crash! Your investment of {format_number(amount)} gold only returned {format_number(returns)} gold. (Loss: {format_number(amount - returns)})")
+                except:
+                    pass
+        
+        asyncio.create_task(investment_return())
+
+    @commands.command(name='raidcaravan')
+    @check_cooldown_decorator(minutes=5)
+    async def raid_caravan(self, ctx):
+        """Raid NPC merchant caravans for loot"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        military = civ['military']
+        
+        if military['soldiers'] < 5:
+            await ctx.send("❌ You need at least 5 soldiers to raid caravans!")
+            return
+            
+        base_success = 0.6
+        soldier_bonus = min(0.3, military['soldiers'] / 100)
+        spy_bonus = min(0.1, military['spies'] / 50)
+        
+        success_chance = base_success + soldier_bonus + spy_bonus
+        
+        if civ.get('ideology') == 'anarchy':
+            success_chance += 0.1
+            
+        if random.random() < success_chance:
+            employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+            employment_factor = 1 + employment_rate * 0.5
+            
+            territory_factor = get_territory_modifier(civ['territory']['land_size'])
+            
+            loot = {
+                "gold": int(random.randint(100, 400) * employment_factor * territory_factor),
+                "food": int(random.randint(50, 150) * employment_factor * territory_factor),
+                "wood": int(random.randint(20, 80) * employment_factor * territory_factor),
+                "stone": int(random.randint(15, 60) * employment_factor * territory_factor)
+            }
+            
+            if random.random() < 0.1:
+                bonus_gold = random.randint(200, 500)
+                loot["gold"] += bonus_gold
+            
+            # Cap each
+            for key in loot:
+                loot[key] = min(loot[key], 500000)
+                
+            self.civ_manager.update_resources(user_id, loot)
+            
+            embed = create_embed(
+                "🏴‍☠️ Caravan Raid - Success!",
+                "Your raiders ambushed a wealthy merchant caravan!",
+                guilded.Color.green()
+            )
+            
+            loot_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪵' if res == 'wood' else '🪨'} {format_number(amt)} {res.capitalize()}" 
+                                  for res, amt in loot.items() if amt > 0])
+            embed.add_field(name="Loot Acquired", value=loot_text, inline=False)
+            
+        else:
+            soldier_loss = random.randint(1, 3)
+            self.civ_manager.update_military(user_id, {"soldiers": -soldier_loss})
+            
+            embed = create_embed(
+                "🏴‍☠️ Caravan Raid - Failed!",
+                f"The caravan's guards were too strong! You lost {soldier_loss} soldiers in the failed attack.",
+                guilded.Color.red()
+            )
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='drive')
+    async def drive_citizens(self, ctx, amount: int = None):
+        """Unemploy citizens, freeing them from work"""
+        if amount is None or amount < 1:
+            await ctx.send("🚗 **Drive Command**\nUsage: `.drive <amount>`\nUnemploy <amount> citizens to reduce employment rate.")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        population = civ['population']
+        current_employed = population.get('employed', 0)
+        
+        if amount > current_employed:
+            await ctx.send(f"❌ Only {current_employed} employed citizens available to unemploy!")
+            return
+            
+        self.civ_manager.update_employment(user_id, -amount)
+        self.civ_manager.update_population(user_id, {"happiness": -2})
+        
+        new_rate = self.civ_manager.get_employment_rate(user_id)
+        
+        embed = create_embed(
+            "🚗 Citizens Unemployed",
+            f"Successfully unemployed {format_number(amount)} citizens.",
+            guilded.Color.red()
+        )
+        embed.add_field(name="New Employment Rate", value=f"{new_rate:.1f}%", inline=True)
+        embed.add_field(name="Morale Impact", value="Unemployment has caused unrest. (-2 happiness)", inline=False)
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='festival')
+    @check_cooldown_decorator(minutes=1)
+    async def hold_festival(self, ctx):
+        """Hold a grand festival to greatly boost citizen happiness"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        festival_cost = {"gold": 200, "food": 100}
+        if not self.civ_manager.can_afford(user_id, festival_cost):
+            await ctx.send("❌ You need 200 gold and 100 food to hold a festival!")
+            return
+            
+        self.civ_manager.spend_resources(user_id, festival_cost)
+        
+        happiness_boost = 10
+        self.civ_manager.update_population(user_id, {"happiness": happiness_boost})
+        
+        ideology = civ.get('ideology', '')
+        if ideology == 'theocracy':
+            happiness_boost = int(happiness_boost * 1.2)
+            
+        embed = create_embed(
+            "🎉 Grand Festival",
+            f"Your civilization celebrates with a grand festival, boosting morale!",
+            guilded.Color.gold()
+        )
+        embed.add_field(name="Morale Boost", value=f"Citizens are overjoyed! (+{happiness_boost} happiness)", inline=False)
+        embed.add_field(name="Cost", value="🪙 200 Gold\n🌾 100 Food", inline=True)
+        
+        if ideology == 'theocracy':
+            embed.add_field(name="Ideology Bonus", value="Theocratic celebrations enhanced happiness!", inline=False)
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='cheer')
+    @check_cooldown_decorator(minutes=1)
+    async def cheer_citizens(self, ctx):
+        """Spread cheer to boost citizen happiness"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        cheer_cost = {"gold": 50}
+        if not self.civ_manager.can_afford(user_id, cheer_cost):
+            await ctx.send("❌ You need 50 gold to spread cheer!")
+            return
+            
+        self.civ_manager.spend_resources(user_id, cheer_cost)
+        
+        happiness_boost = 5
+        self.civ_manager.update_population(user_id, {"happiness": happiness_boost})
+        
+        ideology = civ.get('ideology', '')
+        if ideology == 'democracy':
+            happiness_boost = int(happiness_boost * 1.1)
+            
+        embed = create_embed(
+            "😊 Spreading Cheer",
+            f"Your leaders spread cheer, uplifting your citizens!",
+            guilded.Color.green()
+        )
+        embed.add_field(name="Morale Boost", value=f"Citizens are happier! (+{happiness_boost} happiness)", inline=False)
+        embed.add_field(name="Cost", value="🪙 50 Gold", inline=True)
+        
+        if ideology == 'democracy':
+            embed.add_field(name="Ideology Bonus", value="Democratic unity enhanced happiness!", inline=False)
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='sell')
+    @app_commands.describe(item_name="Hyper item name to sell")
+    @app_commands.autocomplete(item_name=_sell_item_autocomplete)
+    async def sell_hyper_item(self, ctx, item_name: str = None):
+        """Sell hyper items to wandering merchants for gold"""
+        if not item_name:
+            await ctx.send("💰 **Sell Hyper Items**\nUsage: `.sell <item-name>`\nSell specific hyper items to wandering merchants for gold.")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        hyper_items = civ['hyper_items']
+        
+        if item_name not in hyper_items:
+            await ctx.send(f"❌ You don't have the '{item_name}' hyper item!")
+            return
+            
+        item_values = {
+            "Lucky-Charm": random.randint(100, 200),
+            "Ancient-Relic": random.randint(200, 400),
+            "Crystal-Heart": random.randint(150, 300),
+            "Dragon-Scale": random.randint(250, 500),
+            "Phoenix-Feather": random.randint(300, 600)
+        }
+        
+        gold_value = item_values.get(item_name, random.randint(50, 150))
+        gold_value = min(gold_value, 5000)  # Cap
+        
+        self.civ_manager.use_hyper_item(user_id, item_name)
+        self.civ_manager.update_resources(user_id, {"gold": gold_value})
+        
+        embed = create_embed(
+            "💰 Item Sold!",
+            f"You sold the '{item_name}' to a wandering merchant for {format_number(gold_value)} gold!",
+            guilded.Color.gold()
+        )
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='advertise')
+    @check_cooldown_decorator(minutes=10)
+    async def advertise_civilization(self, ctx):
+        """Run promotional campaigns to attract new citizens"""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        ad_cost = 50
+        if not self.civ_manager.can_afford(user_id, {"gold": ad_cost}):
+            await ctx.send(f"❌ You need {ad_cost} gold to run advertising campaigns!")
+            return
+            
+        self.civ_manager.spend_resources(user_id, {"gold": ad_cost})
+        
+        # ---- NEW CITIZENS ----
+        base_new_citizens = random.randint(100, 300)
+        happiness_bonus = civ['population']['happiness'] // 10
+        
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.5
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        total_new_citizens = int((base_new_citizens + happiness_bonus) * employment_factor * territory_factor)
+        
+        ideology = civ.get('ideology', '')
+        if ideology == 'democracy':
+            total_new_citizens = int(total_new_citizens * 1.2)
+        elif ideology == 'fascism':
+            total_new_citizens = int(total_new_citizens * 0.8)
+        
+        total_new_citizens = min(total_new_citizens, 5000)  # Cap
+        
+        self.civ_manager.update_population(user_id, {"citizens": total_new_citizens})
+        
+        embed = create_embed(
+            "📢 Advertising Campaign",
+            f"You advertised for free passports and {format_number(total_new_citizens)} people became citizens of your country!",
+            guilded.Color.green()
+        )
+        embed.add_field(name="Cost", value=f"🪙 {ad_cost} Gold", inline=True)
+        
+        if ideology == 'democracy':
+            embed.add_field(name="Ideology Bonus", value="Democratic values attracted more immigrants!", inline=False)
+        elif ideology == 'fascism':
+            embed.add_field(name="Ideology Penalty", value="Authoritarian regime discouraged some potential immigrants.", inline=False)
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='census')
+    async def show_census(self, ctx):
+        """Display current gold and population status"""
+        user_id = str(ctx.author.id)
+        
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        resources = civ['resources']
+        population = civ['population']
+        employment_rate = self.civ_manager.get_employment_rate(user_id)
+        
+        embed = create_embed(
+            "📊 National Census Report",
+            f"Current status of {civ['name']}",
+            guilded.Color.blue()
+        )
+        
+        resource_text = (
+            f"🪙 **Gold**: {format_number(resources['gold'])}\n"
+            f"🌾 **Food**: {format_number(resources['food'])}\n"
+            f"🪵 **Wood**: {format_number(resources['wood'])}\n"
+            f"🪨 **Stone**: {format_number(resources['stone'])}"
+        )
+        embed.add_field(name="💰 Resources", value=resource_text, inline=True)
+        
+        population_text = (
+            f"👥 **Total Citizens**: {format_number(population['citizens'])}\n"
+            f"💼 **Employed**: {format_number(population.get('employed', 0))}\n"
+            f"📈 **Employment Rate**: {employment_rate:.1f}%\n"
+            f"😊 **Happiness**: {population['happiness']}%\n"
+            f"🍽️ **Hunger**: {population['hunger']}%"
+        )
+        embed.add_field(name="👥 Population", value=population_text, inline=True)
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='recruit')
+    async def recruit_soldiers(self, ctx, number: int = None):
+        """Convert citizens into soldiers with risk of population loss"""
+        if number is None or number < 1:
+            await ctx.send("🎖️ **Recruitment Drive**\nUsage: `.recruit <number>`\nAttempt to convert citizens into soldiers. Higher numbers risk population loss if recruitment fails.")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        population = civ['population']
+        current_citizens = population['citizens']
+        
+        if number > current_citizens:
+            await ctx.send(f"❌ You only have {format_number(current_citizens)} citizens available for recruitment!")
+            return
+            
+        base_success = 0.7
+        happiness_modifier = population['happiness'] / 100
+        population_ratio = number / current_citizens
+        
+        ratio_penalty = 0
+        if population_ratio > 0.1:
+            ratio_penalty = (population_ratio - 0.1) * 2
+        
+        success_chance = base_success * happiness_modifier - ratio_penalty
+        success_chance = max(0.1, min(0.9, success_chance))
+        
+        if random.random() < success_chance:
+            self.civ_manager.update_population(user_id, {"citizens": -number})
+            self.civ_manager.update_military(user_id, {"soldiers": number})
+            
+            embed = create_embed(
+                "🎖️ Recruitment Success!",
+                f"{format_number(number)} loyal citizens have enlisted as soldiers! Your military grows stronger.",
+                guilded.Color.green()
+            )
+            embed.add_field(name="New Military Strength", 
+                           value=f"🛡️ {format_number(civ['military']['soldiers'] + number)} Soldiers", 
+                           inline=True)
+        else:
+            citizens_lost = min(number * 2, current_citizens // 2)
+            self.civ_manager.update_population(user_id, {"citizens": -citizens_lost, "happiness": -5})
+            
+            embed = create_embed(
+                "🎖️ Recruitment Failed!",
+                f"Your recruitment drive failed. {format_number(citizens_lost)} people, fearing conscription, have fled the country.",
+                guilded.Color.red()
+            )
+            embed.add_field(name="Morale Impact", value="Citizens are fearful of forced conscription. (-5 happiness)", inline=False)
+        
+        await ctx.send(embed=embed)
 
 async def setup(bot):
-    await bot.add_cog(CountryballCog(bot))
+    await bot.add_cog(EconomyCommands(bot))
