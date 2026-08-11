@@ -34,21 +34,24 @@ class MapCog(commands.Cog):
         self.cache = {}
 
     def get_ownership_data(self):
-        """Fetch all users' owned provinces and map them to countries."""
+        """
+        Fetch all users' owned provinces from Firestore and map them to countries.
+        Returns dict: user_id -> {"provinces": list, "name": civ_name}
+        """
         if self.gdf is None:
             return {}
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, owned_provinces FROM territories")
-        rows = cursor.fetchall()
-        data = {}
-        for row in rows:
-            user_id = row[0]
-            provinces = json.loads(row[1]) if row[1] else []
-            civ = self.civ_manager.get_civilization(user_id)
-            name = civ['name'] if civ else user_id[:6]
-            data[user_id] = {"provinces": provinces, "name": name}
-        return data
+        # Use Firestore method to get all territories
+        territories = self.db.get_all_territories()  # dict {province_name: {owner_id: ...}}
+        ownership = {}
+        for province_name, data in territories.items():
+            owner_id = data.get("owner_id")
+            if owner_id:
+                if owner_id not in ownership:
+                    civ = self.civ_manager.get_civilization(owner_id)
+                    name = civ['name'] if civ else owner_id[:6]
+                    ownership[owner_id] = {"provinces": [], "name": name}
+                ownership[owner_id]["provinces"].append(province_name)
+        return ownership
 
     def generate_map(self, ownership_data):
         if self.gdf is None:
@@ -92,8 +95,6 @@ class MapCog(commands.Cog):
             gpd.GeoDataFrame([row], crs=self.gdf.crs).plot(
                 ax=ax, facecolor=color, edgecolor='white', linewidth=0.5
             )
-
-        # --- CHANGED: Removed the label annotation loop completely ---
 
         # Legend
         patches = []
