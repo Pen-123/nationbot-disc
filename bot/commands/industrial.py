@@ -50,69 +50,54 @@ class IndustrialCog(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
-        self._active_revolutions = {}
+        self._active_revolutions = {}   # user_id -> data dict
         self._passive_task = None
-        self._init_table()
 
-    def _init_table(self):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS industrial_revolutions (
-                user_id TEXT PRIMARY KEY,
-                active INTEGER NOT NULL DEFAULT 0,
-                completed INTEGER NOT NULL DEFAULT 0,
-                started_at TIMESTAMP,
-                stats TEXT NOT NULL DEFAULT '{}'
-            )
-        ''')
-        cursor.execute("PRAGMA table_info(industrial_revolutions)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if 'completed' not in columns:
-            cursor.execute("ALTER TABLE industrial_revolutions ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
-        conn.commit()
+    # ---- Firestore-based helpers ----
 
     def _get_revolution(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a revolution from cache or Firestore."""
         if user_id in self._active_revolutions:
             return self._active_revolutions[user_id]
 
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT active, completed, started_at, stats FROM industrial_revolutions WHERE user_id = ?', (user_id,))
-        row = cursor.fetchone()
-        if not row:
+        data = self.db.get_industrial_revolution(user_id)
+        if not data:
             return None
 
-        active = bool(row[0])
-        completed = bool(row[1])
-        started_at = row[2]
-        stats = json.loads(row[3]) if row[3] else DEFAULT_STATS.copy()
+        # Ensure all expected keys exist
+        data.setdefault("active", False)
+        data.setdefault("completed", False)
+        data.setdefault("started_at", None)
+        data.setdefault("stats", DEFAULT_STATS.copy())
 
-        data = {
-            "active": active,
-            "completed": completed,
-            "started_at": datetime.fromisoformat(started_at) if started_at else None,
-            "stats": stats
-        }
-        if active or completed:
+        # Convert started_at string to datetime if present
+        if data.get("started_at") and isinstance(data["started_at"], str):
+            try:
+                data["started_at"] = datetime.fromisoformat(data["started_at"])
+            except ValueError:
+                data["started_at"] = None
+
+        # Ensure stats is a dict
+        if not isinstance(data["stats"], dict):
+            data["stats"] = DEFAULT_STATS.copy()
+
+        # Cache if active or completed
+        if data["active"] or data["completed"]:
             self._active_revolutions[user_id] = data
         return data
 
     def _save_revolution(self, user_id: str, data: Dict[str, Any]):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO industrial_revolutions (user_id, active, completed, started_at, stats)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (
-            user_id,
-            1 if data["active"] else 0,
-            1 if data.get("completed", False) else 0,
-            data["started_at"].isoformat() if data.get("started_at") else None,
-            json.dumps(data["stats"])
-        ))
-        conn.commit()
+        """Persist revolution data to Firestore and update cache."""
+        # Prepare a copy for storage (convert datetime to iso string)
+        store_data = {
+            "active": data["active"],
+            "completed": data.get("completed", False),
+            "started_at": data["started_at"].isoformat() if data.get("started_at") else None,
+            "stats": data["stats"]   # already a dict
+        }
+        self.db.set_industrial_revolution(user_id, store_data)
 
+        # Update cache
         if data["active"] or data.get("completed", False):
             self._active_revolutions[user_id] = data
         else:
@@ -194,7 +179,7 @@ class IndustrialCog(commands.Cog):
                 pass
             logger.info("Industrial passive income loop stopped")
 
-    # ---------- EXISTING COMMANDS (unchanged) ----------
+    # ---------- COMMAND LISTENER FOR DISASTERS ----------
     @commands.Cog.listener()
     async def on_command(self, ctx: commands.Context):
         user_id = str(ctx.author.id)
@@ -313,7 +298,7 @@ class IndustrialCog(commands.Cog):
         self.db.log_event(user_id, "industrial_revolution", "Industrial Revolution Ended",
                           f"Power: {power}/1000 - {'Success' if power>=1000 else 'Failure'}")
 
-    # ---------- COMMANDS (unchanged) ----------
+    # ---------- COMMANDS ----------
     @commands.command(name='industrial_start')
     async def industrial_start(self, ctx):
         user_id = str(ctx.author.id)
@@ -917,25 +902,40 @@ class IndustrialCog(commands.Cog):
         embed.set_footer(text="Manage wisely – disasters are brutal!")
         await ctx.send(embed=embed)
 
+    # ---------- ON READY: LOAD ACTIVE REVOLUTIONS FROM FIRESTORE ----------
     @commands.Cog.listener()
     async def on_ready(self):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id, active, completed, started_at, stats FROM industrial_revolutions WHERE active = 1 OR completed = 1')
-        rows = cursor.fetchall()
-        for row in rows:
-            user_id = row[0]
-            active = bool(row[1])
-            completed = bool(row[2])
-            started_at = row[3]
-            stats = json.loads(row[4]) if row[4] else DEFAULT_STATS.copy()
-            self._active_revolutions[user_id] = {
-                "active": active,
-                "completed": completed,
-                "started_at": datetime.fromisoformat(started_at) if started_at else None,
-                "stats": stats
-            }
-            logger.info(f"Restored industrial state for {user_id} (active={active}, completed={completed})")
+        """Load all active or completed revolutions from Firestore into cache."""
+        try:
+            # Fetch all documents from the industrial_revolutions collection
+            docs = self.db.client.collection("industrial_revolutions").stream()
+            count = 0
+            for doc in docs:
+                data = doc.to_dict()
+                user_id = doc.id
+                # Only cache if active or completed
+                if data.get("active") or data.get("completed"):
+                    # Ensure stats is a dict
+                    stats = data.get("stats", {})
+                    if not isinstance(stats, dict):
+                        stats = DEFAULT_STATS.copy()
+                    # Convert started_at from string if present
+                    started_at = data.get("started_at")
+                    if started_at and isinstance(started_at, str):
+                        try:
+                            started_at = datetime.fromisoformat(started_at)
+                        except ValueError:
+                            started_at = None
+                    self._active_revolutions[user_id] = {
+                        "active": data.get("active", False),
+                        "completed": data.get("completed", False),
+                        "started_at": started_at,
+                        "stats": stats
+                    }
+                    count += 1
+            logger.info(f"Restored {count} industrial revolutions from Firestore.")
+        except Exception as e:
+            logger.error(f"Error loading industrial revolutions on_ready: {e}")
 
 
 async def setup(bot):
