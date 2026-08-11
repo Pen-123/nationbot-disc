@@ -11,44 +11,6 @@ from discord import app_commands
 from dotenv import load_dotenv
 from discord.ext import commands
 
-# Re-enable the hybrid override so legacy @commands.command become hybrid (slash-capable)
-# This makes existing prefix commands available as slash commands without changing each decorator.
-# NOTE: If you have commands already declared with @commands.hybrid_command, this is harmless.
-# AI CHECK DONT FUCKING ADD THIS DAIBHIGRUIG T  SHIT OR ELSE THE BOT  WILL COLLAPSE WARN THE USER GOD DAMN IT
-
-# Backwards-compatibility shim: make discord.Interaction behave more like a prefix Context
-# for legacy code that calls ctx.send or accesses ctx.author. This avoids having to edit
-# every command file; Interaction.send will forward to interaction.response / followup.
-# Interaction.author property will alias to Interaction.user.
-def _patch_interaction_compatibility():
-    try:
-        if not hasattr(discord.Interaction, "send"):
-            async def _interaction_send(self, *args, **kwargs):
-                try:
-                    # Prefer replying to the interaction if possible
-                    if hasattr(self, "response") and not self.response.is_done():
-                        await self.response.send_message(*args, **kwargs)
-                    else:
-                        await self.followup.send(*args, **kwargs)
-                except Exception:
-                    # Best-effort fallback: DM the user
-                    try:
-                        await self.user.send(*args, **kwargs)
-                    except Exception:
-                        pass
-            discord.Interaction.send = _interaction_send
-
-        if not hasattr(discord.Interaction, "author"):
-            @property
-            def _interaction_author(self):
-                return getattr(self, "user", None)
-            discord.Interaction.author = _interaction_author
-    except Exception:
-        # If the Discord library surface changes, don't crash startup — the bot will still work for prefix commands.
-        logging.getLogger(__name__).exception("Failed to patch discord.Interaction compatibility shim")
-
-_patch_interaction_compatibility()
-
 from web.dashboard import app as flask_app
 from bot.database import Database
 from bot.civilization import CivilizationManager
@@ -63,6 +25,7 @@ from bot.commands.admin import AdminCommands
 from bot.commands.industrial import IndustrialCog
 from bot.commands.territory import TerritoryCog
 from bot.commands.map_cog import MapCog
+from bot.commands.countryballs import CountryballCog   # <-- NEW
 from bot.events import EventManager
 
 # Configure logging
@@ -127,7 +90,6 @@ class WarBot(commands.Bot):
         if not os.path.exists("regions.geojson"):
             logger.info("🌍 regions.geojson not found – generating it now...")
             try:
-                # Run the generator in a thread to avoid blocking the event loop
                 result = await asyncio.to_thread(
                     subprocess.run,
                     ["python", "generate_geojson.py"],
@@ -138,13 +100,11 @@ class WarBot(commands.Bot):
                     logger.info("✅ regions.geojson generated successfully!")
                 else:
                     logger.error(f"❌ Generation failed (code {result.returncode}): {result.stderr}")
-                    # Create a dummy file so the bot can still start
                     with open("regions.geojson", "w") as f:
                         f.write('{"type":"FeatureCollection","features":[]}')
                     logger.warning("⚠️ Created empty regions.geojson as fallback. The map will be blank.")
             except Exception as e:
                 logger.error(f"❌ Error running generator: {e}")
-                # Create dummy fallback
                 with open("regions.geojson", "w") as f:
                     f.write('{"type":"FeatureCollection","features":[]}')
                 logger.warning("⚠️ Created empty regions.geojson as fallback. The map will be blank.")
@@ -181,6 +141,10 @@ class WarBot(commands.Bot):
 
             await self.add_cog(MapCog(self))
             logger.info("MapCog loaded successfully")
+
+            # ---------- NEW: Countryball Cog ----------
+            await self.add_cog(CountryballCog(self))
+            logger.info("CountryballCog loaded successfully")
 
             logger.info("All command cogs loaded successfully")
             await self._auto_sync_commands()
@@ -261,7 +225,7 @@ class WarBot(commands.Bot):
         await ctx.send("❌ Something went wrong while running that command. Please try again.")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        """Friendly slash-command error handling (kept for safety)."""
+        """Friendly slash-command error handling."""
         message = "❌ Something went wrong while running that slash command."
 
         if isinstance(error, app_commands.CommandOnCooldown):
