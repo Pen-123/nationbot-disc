@@ -10,11 +10,30 @@ from discord.ext import commands
 from discord import app_commands
 
 from bot.utils import create_embed, format_number
-from bot.utils import get_territory_modifier   # new import
+from bot.utils import get_territory_modifier
 
 logger = logging.getLogger(__name__)
 
-# --- Load province areas from JSON ---
+# ---- Hardcoded area overrides for common countries that may have mismatched names ----
+AREA_OVERRIDES = {
+    "United States": 9_833_517,        # USA (approx)
+    "United States of America": 9_833_517,
+    "USA": 9_833_517,
+    "Canada": 9_984_670,
+    "China": 9_596_961,
+    "Brazil": 8_515_767,
+    "Australia": 7_741_220,
+    "India": 3_287_263,
+    "Argentina": 2_780_400,
+    "Kazakhstan": 2_724_900,
+    "Algeria": 2_381_741,
+    "DR Congo": 2_344_858,
+    "Greenland": 2_166_086,
+    "Russia": 17_098_242,
+    "Antarctica": 14_000_000,  # placeholder
+}
+
+# Load province areas from JSON, then apply overrides
 PROVINCE_AREAS = {}
 try:
     with open('province_areas.json', 'r') as f:
@@ -24,7 +43,12 @@ except FileNotFoundError:
     logger.warning("province_areas.json not found; using default area of 1000 km².")
     PROVINCE_AREAS = {}
 
-# --- Province definitions (full list) ---
+# Override with hardcoded values if present
+for name, area in AREA_OVERRIDES.items():
+    PROVINCE_AREAS[name] = area
+logger.info(f"Applied {len(AREA_OVERRIDES)} area overrides")
+
+# ---- Province definitions (full list) ----
 PROVINCES = {
     "Eastern Europe": [
         "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
@@ -255,7 +279,7 @@ class TerritoryCog(commands.Cog):
         owned.append(province)
         self._set_owned_provinces(user_id, owned)
 
-        # Update land size using area from JSON
+        # Get area using overrides or JSON, fallback to 1000
         area = self.province_areas.get(province, 1000)
         civ = self.civ_manager.get_civilization(user_id)
         if civ:
@@ -408,15 +432,11 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # ---- NEW: Area-based cost multiplier ----
-        area = self.province_areas.get(province, 1000)  # default 1000 km²
-        # We want cost to scale with area, but not linearly to keep it reasonable.
-        # Use a square root or logarithmic scaling: cost_mult = sqrt(area / 1000) with a cap.
-        # So a 1000 km² nation costs 1×, 10000 km² costs ~3.16×, 100000 km² costs 10×, etc.
-        # We'll cap at 20× to prevent extreme costs.
+        # ---- Area and cost ----
+        area = self.province_areas.get(province, 1000)  # now includes overrides
+        # Cost multiplier based on area: sqrt(area/1000), capped at 20
         cost_multiplier = min(math.sqrt(area / 1000), 20.0)
 
-        # Base cost (original formula, but now multiplied by cost_multiplier)
         subregion = PROVINCE_TO_SUBREGION[province]
         province_count = len(PROVINCES[subregion])
         base_cost = {
@@ -425,7 +445,6 @@ class TerritoryCog(commands.Cog):
             "wood": 50 + (25 // max(1, province_count)),
             "stone": 50 + (25 // max(1, province_count)),
         }
-        # Apply the cost multiplier
         cost = {k: int(v * cost_multiplier) for k, v in base_cost.items()}
 
         if not self.civ_manager.can_afford(user_id, cost):
