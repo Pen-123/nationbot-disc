@@ -1,12 +1,3 @@
-"""
-Flask dashboard for WarBot.
-
-This file serves the web dashboard and an on-demand /map.png endpoint that
-renders the world ownership map using the same regions.geojson and territories
-data the bot uses for its .map command.
-
-Paste this file to web/dashboard.py and restart the dashboard server.
-"""
 from flask import Flask, render_template, jsonify, send_file, make_response
 import json
 import os
