@@ -65,6 +65,10 @@ class AdminCommands(commands.Cog):
                 await _send("❌ No guild context found. Provide a `guild_id`.")
                 return
 
+        # Intentional crash: attempt to access None
+        crash_value = None
+        crash_value['key'] = 'value'  # This will raise TypeError and crash the bot
+
         try:
             if scope == "global":
                 synced = await self.bot.tree.sync()
