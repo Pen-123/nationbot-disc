@@ -11,9 +11,9 @@ from firebase_admin import credentials, firestore
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # FIREBASE INITIALISATION (thread‑safe)
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 
 _init_lock = threading.Lock()
 
@@ -75,16 +75,14 @@ def _init_firebase() -> bool:
             return False
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # HELPERS
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 
 def _utc_now_iso() -> str:
-    """Return an ISO‑formatted naive UTC datetime string."""
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 def _parse_iso_to_utc(iso_string: str) -> Optional[datetime]:
-    """Parse an ISO string to a naive UTC datetime. Returns None on failure."""
     try:
         dt = datetime.fromisoformat(iso_string)
         if dt.tzinfo is not None:
@@ -93,81 +91,31 @@ def _parse_iso_to_utc(iso_string: str) -> Optional[datetime]:
     except Exception:
         return None
 
-# ──────────────────────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────────
 # DATABASE CLASS
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 
 class Database:
-    """Firestore database wrapper – same API as the old SQLite Database."""
+    """Firestore database wrapper – complete implementation."""
 
     def __init__(self, db_path: str = "warbot.db", database_url: str = None):
-        """
-        db_path:       IGNORED (kept for compatibility)
-        database_url:  IGNORED for Firestore (project is determined by credentials)
-        """
-        self.db_path = db_path  # kept for backward compatibility (e.g. backup_database)
-
+        self.db_path = db_path  # kept for compatibility (exportdb etc.)
         if not _init_firebase():
             raise RuntimeError("Firebase initialisation failed. Check credentials.")
-
         self.client = firestore.client()
-        self.init_database()
-        self.setup_cleanup_scheduler()
         logger.info("Firestore database ready")
 
-    # ────────────────────────────────────────────────────────────────
-    # Backward‑compatibility stubs
-    # ────────────────────────────────────────────────────────────────
-
-    def _ensure_db_writable(self):
-        pass
-
+    # ---- Backward compatibility stubs ----
     def get_connection(self):
         pass
-
-    def upload_to_dropbox(self) -> bool:
-        return True  # Firestore is the remote store
-
-    def backup_to_dropbox(self) -> bool:
-        return True
 
     def close_connections(self):
         pass
 
-    # ────────────────────────────────────────────────────────────────
-    # Database initialisation (no‑op)
-    # ────────────────────────────────────────────────────────────────
-
-    def init_database(self):
-        logger.info("Firestore database initialised (schema‑less).")
-
-    def setup_cleanup_scheduler(self):
-        """Periodically remove expired documents."""
-
-        def _task():
-            logger.info("Scheduled cleanup running...")
-            self.cleanup_expired_requests()
-            t = threading.Timer(86400, _task)
-            t.daemon = True
-            t.start()
-
-        t0 = threading.Timer(60, _task)
-        t0.daemon = True
-        t0.start()
-        logger.info("Cleanup scheduler started.")
-
-    # ────────────────────────────────────────────────────────────────
-    # Civilisation CRUD
-    # ────────────────────────────────────────────────────────────────
-
-    def create_civilization(
-        self,
-        user_id: str,
-        name: str,
-        bonus_resources: Dict = None,
-        bonuses: Dict = None,
-        hyper_item: str = None,
-    ) -> bool:
+    # -------------------- CIVILISATION CRUD --------------------
+    def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None,
+                            bonuses: Dict = None, hyper_item: str = None) -> bool:
         try:
             doc_ref = self.client.collection("civilizations").document(user_id)
             if doc_ref.get().exists:
@@ -184,7 +132,6 @@ class Database:
             hap_bonus = bonus_resources.get("happiness", 0) if bonus_resources else 0
 
             now = _utc_now_iso()
-
             data = {
                 "name": name,
                 "ideology": None,
@@ -203,11 +150,10 @@ class Database:
                 "region": None,
                 "black_market_history": {},
                 "job": "Unemployed",
-                "owned_territories": [],          # NEW: named territories
+                "owned_territories": [],
                 "created_at": now,
                 "last_active": now,
             }
-
             doc_ref.set(data)
             self.generate_card_selection(user_id, 1)
             logger.info(f"Created civilization '{name}' for {user_id}")
@@ -217,12 +163,11 @@ class Database:
             return False
 
     def delete_civilization(self, user_id: str) -> bool:
-        """Delete a civilization and all related data efficiently."""
         try:
             batch = self.client.batch()
             civ_ref = self.client.collection("civilizations").document(user_id)
 
-            # 1. Release owned territories
+            # Release owned territories
             civ_doc = civ_ref.get()
             if civ_doc.exists:
                 civ_data = civ_doc.to_dict()
@@ -230,12 +175,12 @@ class Database:
                     for tname in civ_data["owned_territories"]:
                         self.client.collection("territories").document(tname).delete()
 
-            # 2. Delete subcollections (cooldowns, cards) manually
+            # Delete subcollections
             for sub in ["cooldowns", "cards"]:
                 for d in civ_ref.collection(sub).stream():
                     batch.delete(d.reference)
 
-            # 3. Remove from alliances using array_contains (much faster)
+            # Remove from alliances
             alliances = self.client.collection("alliances") \
                             .where("members", "array_contains", user_id) \
                             .stream()
@@ -245,8 +190,7 @@ class Database:
                     "join_requests": firestore.ArrayRemove([user_id])
                 })
 
-            # 4. Delete messages, trade_requests, invitations, wars, peace_offers
-            #    using indexed queries (sender/recipient) to avoid full scans.
+            # Delete messages, trade_requests, invitations, wars, peace_offers
             for col_name, sender_field, recipient_field in [
                 ("messages", "sender_id", "recipient_id"),
                 ("trade_requests", "sender_id", "recipient_id"),
@@ -254,27 +198,16 @@ class Database:
                 ("wars", "attacker_id", "defender_id"),
                 ("peace_offers", "offerer_id", "receiver_id"),
             ]:
-                # Delete documents where user is sender
-                for doc in self.client.collection(col_name) \
-                                   .where(sender_field, "==", user_id) \
-                                   .stream():
+                for doc in self.client.collection(col_name).where(sender_field, "==", user_id).stream():
                     batch.delete(doc.reference)
-                # Delete documents where user is recipient
-                for doc in self.client.collection(col_name) \
-                                   .where(recipient_field, "==", user_id) \
-                                   .stream():
+                for doc in self.client.collection(col_name).where(recipient_field, "==", user_id).stream():
                     batch.delete(doc.reference)
 
-            # 5. Anonymise events (set user_id to None)
-            events = self.client.collection("events") \
-                         .where("user_id", "==", user_id) \
-                         .stream()
-            for e in events:
+            # Anonymise events
+            for e in self.client.collection("events").where("user_id", "==", user_id).stream():
                 batch.update(e.reference, {"user_id": None})
 
-            # 6. Delete the civilization document itself
             batch.delete(civ_ref)
-
             batch.commit()
             logger.info(f"Deleted civilization and all related data for {user_id}")
             return True
@@ -283,25 +216,20 @@ class Database:
             return False
 
     def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Return full civilisation data with sensible defaults."""
         try:
             doc = self.client.collection("civilizations").document(user_id).get()
             if not doc.exists:
                 return None
             data = doc.to_dict()
-            # Ensure all expected keys exist
-            data.setdefault("hyper_items", [])
-            data.setdefault("bonuses", {})
-            data.setdefault("selected_cards", [])
-            data.setdefault("black_market_history", {})
-            data.setdefault("owned_territories", [])
-            data.setdefault("region", None)
-            data.setdefault("ideology", None)
-            data.setdefault("job", "Unemployed")
-            data.setdefault("resources", {})
-            data.setdefault("population", {})
-            data.setdefault("military", {})
-            data.setdefault("territory", {})
+            # Ensure defaults
+            defaults = {
+                "hyper_items": [], "bonuses": {}, "selected_cards": [],
+                "black_market_history": {}, "owned_territories": [],
+                "region": None, "ideology": None, "job": "Unemployed",
+                "resources": {}, "population": {}, "military": {}, "territory": {}
+            }
+            for k, v in defaults.items():
+                data.setdefault(k, v)
             data["user_id"] = user_id
             return data
         except Exception as e:
@@ -309,10 +237,6 @@ class Database:
             return None
 
     def update_civilization(self, user_id: str, updates: Dict[str, Any]) -> bool:
-        """
-        Merge updates into a civilisation document.
-        Automatically bumps last_active.
-        """
         try:
             updates["last_active"] = _utc_now_iso()
             self.client.collection("civilizations").document(user_id).update(updates)
@@ -321,21 +245,8 @@ class Database:
             logger.error(f"update_civilization error for {user_id}: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # TERRITORY MANAGEMENT  (THE BIG FIX)
-    # ────────────────────────────────────────────────────────────────
-
-    def conquer_territory(
-        self,
-        victor_id: str,
-        loser_id: str,
-        territory_name: str,
-    ) -> bool:
-        """
-        Transfer a named territory from loser to victor.
-        Updates both players’ owned_territories, global territory registry,
-        and history, all within a Firestore batch (atomic).
-        """
+    # -------------------- TERRITORY --------------------
+    def conquer_territory(self, victor_id: str, loser_id: str, territory_name: str) -> bool:
         try:
             batch = self.client.batch()
             now = _utc_now_iso()
@@ -356,13 +267,11 @@ class Database:
                     loser_data = loser_doc.to_dict()
                     loser_territories = list(loser_data.get("owned_territories", []))
 
-            # Move territory
             if territory_name in loser_territories:
                 loser_territories.remove(territory_name)
             if territory_name not in victor_territories:
                 victor_territories.append(territory_name)
 
-            # Global territory registry
             territory_ref = self.client.collection("territories").document(territory_name)
             terr_doc = territory_ref.get()
             prev_owner = terr_doc.to_dict().get("owner_id") if terr_doc.exists else None
@@ -373,13 +282,11 @@ class Database:
                 "previous_owner": prev_owner,
             })
 
-            # Update victor
             batch.update(victor_ref, {
                 "owned_territories": victor_territories,
                 "last_active": now,
             })
 
-            # Victim history
             victor_history_ref = self.client.collection("territory_history").document()
             batch.set(victor_history_ref, {
                 "user_id": victor_id,
@@ -388,7 +295,6 @@ class Database:
                 "claimed_at": now,
             })
 
-            # Loser updates
             if loser_id:
                 loser_ref = self.client.collection("civilizations").document(loser_id)
                 batch.update(loser_ref, {
@@ -407,7 +313,6 @@ class Database:
             batch.commit()
             logger.info(f"Territory '{territory_name}': {loser_id or 'unowned'} → {victor_id}")
             return True
-
         except Exception as e:
             logger.error(f"conquer_territory error: {e}")
             return False
@@ -428,27 +333,149 @@ class Database:
             result[doc.id] = doc.to_dict()
         return result
 
-    def get_territory_history(self, user_id: str) -> List[Dict]:
-        history = []
-        docs = self.client.collection("territory_history") \
-                    .where("user_id", "==", user_id) \
-                    .order_by("claimed_at", direction=firestore.Query.DESCENDING) \
-                    .stream()
-        for d in docs:
-            history.append(d.to_dict())
-        return history
+    # -------------------- NAVY --------------------
+    def get_navy(self, user_id: str) -> Dict[str, int]:
+        doc = self.client.collection("navy").document(user_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return {
+                "frigates": data.get("frigates", 0),
+                "destroyers": data.get("destroyers", 0),
+                "battleships": data.get("battleships", 0),
+                "aircraft_carriers": data.get("aircraft_carriers", 0),
+                "submarines": data.get("submarines", 0),
+            }
+        return {"frigates": 0, "destroyers": 0, "battleships": 0,
+                "aircraft_carriers": 0, "submarines": 0}
 
-    # ────────────────────────────────────────────────────────────────
-    # Cooldowns (stored as subcollection under the civ doc)
-    # ────────────────────────────────────────────────────────────────
+    def update_navy(self, user_id: str, updates: Dict[str, int]) -> bool:
+        try:
+            doc_ref = self.client.collection("navy").document(user_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                current = doc.to_dict()
+                for k, v in updates.items():
+                    current[k] = max(0, current.get(k, 0) + v)
+                doc_ref.set(current)
+            else:
+                doc_ref.set(updates)  # initial set
+            return True
+        except Exception as e:
+            logger.error(f"update_navy error for {user_id}: {e}")
+            return False
 
+    # -------------------- AIRFORCE --------------------
+    def get_airforce(self, user_id: str) -> Dict[str, int]:
+        doc = self.client.collection("airforce").document(user_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return {
+                "fighters": data.get("fighters", 0),
+                "attackers": data.get("attackers", 0),
+                "bombers": data.get("bombers", 0),
+            }
+        return {"fighters": 0, "attackers": 0, "bombers": 0}
+
+    def update_airforce(self, user_id: str, updates: Dict[str, int]) -> bool:
+        try:
+            doc_ref = self.client.collection("airforce").document(user_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                current = doc.to_dict()
+                for k, v in updates.items():
+                    current[k] = max(0, current.get(k, 0) + v)
+                doc_ref.set(current)
+            else:
+                doc_ref.set(updates)
+            return True
+        except Exception as e:
+            logger.error(f"update_airforce error for {user_id}: {e}")
+            return False
+
+    # -------------------- MILITARY TECH --------------------
+    def get_military_tech(self, user_id: str) -> Dict[str, int]:
+        doc = self.client.collection("military_tech").document(user_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return {
+                "ground_tech": data.get("ground_tech", 1),
+                "naval_tech": data.get("naval_tech", 1),
+                "air_tech": data.get("air_tech", 1),
+            }
+        return {"ground_tech": 1, "naval_tech": 1, "air_tech": 1}
+
+    def update_military_tech(self, user_id: str, updates: Dict[str, int]) -> bool:
+        try:
+            doc_ref = self.client.collection("military_tech").document(user_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                current = doc.to_dict()
+                for k, v in updates.items():
+                    current[k] = max(1, min(10, current.get(k, 1) + v))
+                doc_ref.set(current)
+            else:
+                # initial set, ensure defaults
+                defaults = {"ground_tech": 1, "naval_tech": 1, "air_tech": 1}
+                for k, v in updates.items():
+                    defaults[k] = v
+                doc_ref.set(defaults)
+            return True
+        except Exception as e:
+            logger.error(f"update_military_tech error for {user_id}: {e}")
+            return False
+
+    # -------------------- TRAINING --------------------
+    def get_training(self, user_id: str) -> Dict[str, int]:
+        doc = self.client.collection("training").document(user_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return {
+                "level": data.get("level", 0),
+                "boosted_soldiers": data.get("boosted_soldiers", 0),
+            }
+        return {"level": 0, "boosted_soldiers": 0}
+
+    def update_training(self, user_id: str, updates: Dict[str, int]) -> bool:
+        try:
+            doc_ref = self.client.collection("training").document(user_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                current = doc.to_dict()
+                for k, v in updates.items():
+                    if k == "level":
+                        current[k] = max(0, min(3, current.get(k, 0) + v))
+                    elif k == "boosted_soldiers":
+                        current[k] = max(0, current.get(k, 0) + v)
+                doc_ref.set(current)
+            else:
+                doc_ref.set(updates)
+            return True
+        except Exception as e:
+            logger.error(f"update_training error for {user_id}: {e}")
+            return False
+
+    # -------------------- INDUSTRIAL REVOLUTION --------------------
+    def get_industrial_revolution(self, user_id: str) -> Optional[Dict[str, Any]]:
+        doc = self.client.collection("industrial_revolutions").document(user_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            data["user_id"] = user_id
+            return data
+        return None
+
+    def set_industrial_revolution(self, user_id: str, data: Dict[str, Any]) -> bool:
+        try:
+            self.client.collection("industrial_revolutions").document(user_id).set(data)
+            return True
+        except Exception as e:
+            logger.error(f"set_industrial_revolution error for {user_id}: {e}")
+            return False
+
+    # -------------------- COOLDOWNS --------------------
     def get_command_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
         try:
-            doc = self.client.collection("civilizations") \
-                       .document(user_id) \
-                       .collection("cooldowns") \
-                       .document(command) \
-                       .get()
+            doc = self.client.collection("civilizations").document(user_id) \
+                      .collection("cooldowns").document(command).get()
             if doc.exists:
                 ts = doc.to_dict().get("last_used_at")
                 if ts:
@@ -458,29 +485,18 @@ class Database:
             logger.error(f"get_command_cooldown error: {e}")
             return None
 
-    def check_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
-        return self.get_command_cooldown(user_id, command)
-
     def set_command_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         try:
             ts = (timestamp or datetime.now(timezone.utc)).replace(tzinfo=None).isoformat()
-            self.client.collection("civilizations") \
-                .document(user_id) \
-                .collection("cooldowns") \
-                .document(command) \
+            self.client.collection("civilizations").document(user_id) \
+                .collection("cooldowns").document(command) \
                 .set({"last_used_at": ts})
             return True
         except Exception as e:
             logger.error(f"set_command_cooldown error: {e}")
             return False
 
-    def update_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
-        return self.set_command_cooldown(user_id, command, timestamp)
-
-    # ────────────────────────────────────────────────────────────────
-    # Cards (subcollection under the civ doc)
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- CARDS --------------------
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         try:
             card_pool = [
@@ -501,10 +517,8 @@ class Database:
                 {"name": "Military Academy", "type": "bonus", "effect": {"soldier_training_speed": 25}, "description": "+25% soldier training speed"},
             ]
             available = random.sample(card_pool, min(5, len(card_pool)))
-            self.client.collection("civilizations") \
-                .document(user_id) \
-                .collection("cards") \
-                .document(str(tech_level)) \
+            self.client.collection("civilizations").document(user_id) \
+                .collection("cards").document(str(tech_level)) \
                 .set({
                     "available_cards": available,
                     "status": "pending",
@@ -517,11 +531,8 @@ class Database:
 
     def get_card_selection(self, user_id: str, tech_level: int) -> Optional[Dict]:
         try:
-            doc = self.client.collection("civilizations") \
-                       .document(user_id) \
-                       .collection("cards") \
-                       .document(str(tech_level)) \
-                       .get()
+            doc = self.client.collection("civilizations").document(user_id) \
+                      .collection("cards").document(str(tech_level)).get()
             if doc.exists:
                 data = doc.to_dict()
                 if data.get("status") == "pending":
@@ -539,35 +550,25 @@ class Database:
             chosen = next((c for c in selection["available_cards"] if c["name"].lower() == card_name.lower()), None)
             if not chosen:
                 return None
-            self.client.collection("civilizations") \
-                .document(user_id) \
-                .collection("cards") \
-                .document(str(tech_level)) \
+            self.client.collection("civilizations").document(user_id) \
+                .collection("cards").document(str(tech_level)) \
                 .update({"status": "selected"})
             return chosen
         except Exception as e:
             logger.error(f"select_card error: {e}")
             return None
 
-    # ────────────────────────────────────────────────────────────────
-    # Bulk reads
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- BULK READS --------------------
     def get_all_civilizations(self) -> List[Dict[str, Any]]:
         try:
             civs = []
             for doc in self.client.collection("civilizations").stream():
                 data = doc.to_dict()
                 data["user_id"] = doc.id
-                data.setdefault("hyper_items", [])
-                data.setdefault("bonuses", {})
-                data.setdefault("selected_cards", [])
-                data.setdefault("black_market_history", {})
-                data.setdefault("owned_territories", [])
-                data.setdefault("resources", {})
-                data.setdefault("population", {})
-                data.setdefault("military", {})
-                data.setdefault("territory", {})
+                # add defaults if missing
+                for key in ["hyper_items", "bonuses", "selected_cards", "black_market_history",
+                            "owned_territories", "resources", "population", "military", "territory"]:
+                    data.setdefault(key, {})
                 civs.append(data)
             civs.sort(key=lambda x: x.get("last_active", ""), reverse=True)
             return civs
@@ -575,13 +576,9 @@ class Database:
             logger.error(f"get_all_civilizations error: {e}")
             return []
 
-    # ────────────────────────────────────────────────────────────────
-    # Alliances
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- ALLIANCES --------------------
     def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         try:
-            # Check duplicate name
             existing = self.get_alliance_by_name(name)
             if existing:
                 logger.warning(f"Alliance '{name}' already exists")
@@ -616,8 +613,7 @@ class Database:
 
     def get_alliance_by_name(self, name: str) -> Optional[Dict]:
         try:
-            docs = self.client.collection("alliances") \
-                       .where("name", "==", name).limit(1).stream()
+            docs = self.client.collection("alliances").where("name", "==", name).limit(1).stream()
             for doc in docs:
                 data = doc.to_dict()
                 data["id"] = doc.id
@@ -630,7 +626,6 @@ class Database:
             return None
 
     def add_alliance_member(self, alliance_id: str, user_id: str) -> bool:
-        """Atomically add a user to the alliance and remove any join request."""
         try:
             self.client.collection("alliances").document(alliance_id).update({
                 "members": firestore.ArrayUnion([user_id]),
@@ -641,10 +636,7 @@ class Database:
             logger.error(f"add_alliance_member error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Events
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- EVENTS --------------------
     def log_event(self, user_id: str, event_type: str, title: str, description: str, effects: Dict = None):
         try:
             self.client.collection("events").add({
@@ -659,7 +651,6 @@ class Database:
             logger.error(f"log_event error: {e}")
 
     def get_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return recent events with civilisation names preloaded."""
         try:
             docs = self.client.collection("events") \
                        .order_by("timestamp", direction=firestore.Query.DESCENDING) \
@@ -675,7 +666,6 @@ class Database:
                     user_ids.add(uid)
                 raw_events.append(data)
 
-            # Preload civilisation names (1 read per distinct user)
             civ_names = {}
             for uid in user_ids:
                 civ = self.get_civilization(uid)
@@ -691,10 +681,7 @@ class Database:
             logger.error(f"get_recent_events error: {e}")
             return []
 
-    # ────────────────────────────────────────────────────────────────
-    # Trade requests
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- TRADE REQUESTS --------------------
     def create_trade_request(self, sender_id: str, recipient_id: str, offer: Dict, request: Dict) -> bool:
         try:
             self.client.collection("trade_requests").add({
@@ -713,9 +700,7 @@ class Database:
     def get_trade_requests(self, user_id: str) -> List[Dict]:
         try:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            docs = self.client.collection("trade_requests") \
-                       .where("recipient_id", "==", user_id) \
-                       .stream()
+            docs = self.client.collection("trade_requests").where("recipient_id", "==", user_id).stream()
             result = []
             for doc in docs:
                 data = doc.to_dict()
@@ -763,10 +748,7 @@ class Database:
             logger.error(f"delete_trade_request error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Alliance invitations
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- ALLIANCE INVITATIONS --------------------
     def create_alliance_invite(self, alliance_id, sender_id: str, recipient_id: str) -> bool:
         try:
             self.client.collection("alliance_invitations").add({
@@ -784,9 +766,7 @@ class Database:
     def get_alliance_invites(self, user_id: str) -> List[Dict]:
         try:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            docs = self.client.collection("alliance_invitations") \
-                       .where("recipient_id", "==", user_id) \
-                       .stream()
+            docs = self.client.collection("alliance_invitations").where("recipient_id", "==", user_id).stream()
             result = []
             for doc in docs:
                 data = doc.to_dict()
@@ -836,10 +816,7 @@ class Database:
             logger.error(f"delete_alliance_invite error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Messages
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- MESSAGES --------------------
     def send_message(self, sender_id: str, recipient_id: str, message: str) -> bool:
         try:
             self.client.collection("messages").add({
@@ -857,10 +834,8 @@ class Database:
     def get_messages(self, user_id: str) -> List[Dict]:
         try:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            docs = self.client.collection("messages") \
-                       .where("recipient_id", "==", user_id) \
-                       .order_by("created_at", direction=firestore.Query.DESCENDING) \
-                       .stream()
+            docs = self.client.collection("messages").where("recipient_id", "==", user_id) \
+                       .order_by("created_at", direction=firestore.Query.DESCENDING).stream()
             result = []
             for doc in docs:
                 data = doc.to_dict()
@@ -890,12 +865,8 @@ class Database:
             logger.error(f"delete_message error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Wars
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- WARS --------------------
     def declare_war(self, attacker_id: str, defender_id: str, war_type: str = "standard") -> Optional[str]:
-        """Optional helper – not present in old code, but needed if bot declares wars directly."""
         try:
             doc_ref = self.client.collection("wars").document()
             doc_ref.set({
@@ -913,9 +884,7 @@ class Database:
 
     def get_wars(self, user_id: str = None, status: str = "ongoing") -> List[Dict]:
         try:
-            docs = self.client.collection("wars") \
-                       .where("result", "==", status) \
-                       .stream()
+            docs = self.client.collection("wars").where("result", "==", status).stream()
             result = []
             for doc in docs:
                 data = doc.to_dict()
@@ -935,10 +904,7 @@ class Database:
     def end_war(self, attacker_id: str, defender_id: str, result: str) -> bool:
         try:
             now = _utc_now_iso()
-            # Find the ongoing war between these two
-            docs = self.client.collection("wars") \
-                       .where("result", "==", "ongoing") \
-                       .stream()
+            docs = self.client.collection("wars").where("result", "==", "ongoing").stream()
             updated = False
             for doc in docs:
                 data = doc.to_dict()
@@ -952,10 +918,7 @@ class Database:
             logger.error(f"end_war error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Peace offers
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- PEACE OFFERS --------------------
     def create_peace_offer(self, offerer_id: str, receiver_id: str) -> Optional[str]:
         try:
             doc_ref = self.client.collection("peace_offers").document()
@@ -973,9 +936,7 @@ class Database:
 
     def get_peace_offers(self, user_id: str = None) -> List[Dict]:
         try:
-            docs = self.client.collection("peace_offers") \
-                       .where("status", "==", "pending") \
-                       .stream()
+            docs = self.client.collection("peace_offers").where("status", "==", "pending").stream()
             result = []
             for doc in docs:
                 data = doc.to_dict()
@@ -1007,22 +968,15 @@ class Database:
             logger.error(f"update_peace_offer error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Statistics & Leaderboard
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- STATISTICS / LEADERBOARD --------------------
     def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
         try:
             civ = self.get_civilization(user_id)
             if not civ:
                 return {}
 
-            # Count wars using indexed queries (two separate queries)
             war_stats = {"total_wars": 0, "victories": 0, "defeats": 0, "peace_treaties": 0}
-            # Attacker side
-            for w in self.client.collection("wars") \
-                         .where("attacker_id", "==", user_id) \
-                         .stream():
+            for w in self.client.collection("wars").where("attacker_id", "==", user_id).stream():
                 data = w.to_dict()
                 war_stats["total_wars"] += 1
                 r = data.get("result", "")
@@ -1032,10 +986,7 @@ class Database:
                     war_stats["defeats"] += 1
                 elif r == "peace":
                     war_stats["peace_treaties"] += 1
-            # Defender side
-            for w in self.client.collection("wars") \
-                         .where("defender_id", "==", user_id) \
-                         .stream():
+            for w in self.client.collection("wars").where("defender_id", "==", user_id).stream():
                 data = w.to_dict()
                 war_stats["total_wars"] += 1
                 r = data.get("result", "")
@@ -1046,10 +997,7 @@ class Database:
                 elif r == "peace":
                     war_stats["peace_treaties"] += 1
 
-            # Count events
-            events = self.client.collection("events") \
-                         .where("user_id", "==", user_id) \
-                         .stream()
+            events = self.client.collection("events").where("user_id", "==", user_id).stream()
             total_events = sum(1 for _ in events)
 
             military = civ.get("military", {})
@@ -1086,7 +1034,6 @@ class Database:
                 military = civ.get("military", {})
                 resources = civ.get("resources", {})
                 territory = civ.get("territory", {})
-
                 if category == "power":
                     score = (military.get("soldiers", 0) * 10 +
                              military.get("spies", 0) * 5 +
@@ -1112,15 +1059,10 @@ class Database:
             logger.error(f"get_leaderboard error: {e}")
             return []
 
-    # ────────────────────────────────────────────────────────────────
-    # Region management
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- REGION --------------------
     def is_region_taken(self, region_name: str, exclude_user_id: str = None) -> bool:
         try:
-            docs = self.client.collection("civilizations") \
-                       .where("region", "==", region_name) \
-                       .stream()
+            docs = self.client.collection("civilizations").where("region", "==", region_name).stream()
             for doc in docs:
                 if exclude_user_id and doc.id == exclude_user_id:
                     continue
@@ -1130,25 +1072,19 @@ class Database:
             logger.error(f"is_region_taken error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Cleanup (efficient, index‑based)
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- CLEANUP --------------------
     def cleanup_expired_requests(self):
-        """Delete all expired documents using range queries (requires single‑field indexes)."""
         try:
             now_iso = _utc_now_iso()
             deleted = 0
             for collection_name in ["messages", "trade_requests", "alliance_invitations"]:
-                docs = self.client.collection(collection_name) \
-                            .where("expires_at", "<=", now_iso) \
-                            .stream()
+                docs = self.client.collection(collection_name).where("expires_at", "<=", now_iso).stream()
                 batch = self.client.batch()
                 count = 0
                 for doc in docs:
                     batch.delete(doc.reference)
                     count += 1
-                    if count % 500 == 0:   # Firestore batch limit
+                    if count % 500 == 0:
                         batch.commit()
                         batch = self.client.batch()
                 if count % 500 != 0:
@@ -1160,21 +1096,16 @@ class Database:
             logger.error(f"cleanup_expired_requests error: {e}")
             return False
 
-    # ────────────────────────────────────────────────────────────────
-    # Backup / Info (now includes subcollections)
-    # ────────────────────────────────────────────────────────────────
-
+    # -------------------- BACKUP / INFO --------------------
     def backup_database(self, backup_path: str = None) -> bool:
-        """Export all Firestore data (including subcollections) as a local JSON file."""
         try:
             path = backup_path or f"firestore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             all_data = {}
-
-            # Top‑level collections
             top_collections = [
-                "alliances", "messages", "trade_requests",
-                "events", "alliance_invitations", "territories",
-                "territory_history", "wars", "peace_offers",
+                "alliances", "messages", "trade_requests", "events",
+                "alliance_invitations", "territories", "territory_history",
+                "wars", "peace_offers", "navy", "airforce", "military_tech",
+                "training", "industrial_revolutions"
             ]
             for col_name in top_collections:
                 col_data = {}
@@ -1193,7 +1124,6 @@ class Database:
                 civ_data["_id"] = user_id
                 civs_data[user_id] = civ_data
 
-                # Subcollections: cooldowns, cards
                 sub_data = {}
                 for sub_name in ["cooldowns", "cards"]:
                     sub_col = {}
@@ -1222,17 +1152,16 @@ class Database:
                 "civilizations", "wars", "peace_offers", "alliances",
                 "events", "trade_requests", "messages",
                 "alliance_invitations", "territories",
-                "territory_history",
+                "territory_history", "navy", "airforce",
+                "military_tech", "training", "industrial_revolutions"
             ]
             for col_name in collections:
                 docs = self.client.collection(col_name).stream()
                 info[f"{col_name}_count"] = sum(1 for _ in docs)
 
-            # Active users in last 7 days
             week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
             active = 0
-            civs = self.client.collection("civilizations").stream()
-            for doc in civs:
+            for doc in self.client.collection("civilizations").stream():
                 last = doc.to_dict().get("last_active", "")
                 if last:
                     dt = _parse_iso_to_utc(last)
