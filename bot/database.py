@@ -5,45 +5,21 @@ import threading
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
-import time
-import dropbox
-from dropbox.exceptions import ApiError, AuthError
 import os
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import time
 
 logger = logging.getLogger(__name__)
 
 class Database:
-    def __init__(self, db_path: str = 'nationbot.db', dropbox_refresh_token: str = None,
-                 dropbox_app_key: str = None, dropbox_app_secret: str = None):
+    def __init__(self, db_path: str = 'warbot.db'):
         self.db_path = db_path
         self.local = threading.local()
-        self.dropbox_refresh_token = dropbox_refresh_token or os.getenv('DROPBOX_REFRESH_TOKEN')
-        self.dropbox_app_key = dropbox_app_key or os.getenv('DROPBOX_APP_KEY')
-        self.dropbox_app_secret = dropbox_app_secret or os.getenv('DROPBOX_APP_SECRET')
-        self.dropbox_client = None
-        self._last_upload = 0
-        self._upload_lock = threading.Lock()
-        self._upload_enabled = False
-        self._shutdown = False
-
         self._ensure_db_writable()
-
-        if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
-            self.init_dropbox()
-
-        if self.dropbox_client:
-            self._sync_from_dropbox(force=False)
-        else:
-            if not os.path.exists(self.db_path):
-                open(self.db_path, 'w').close()
-
         self.init_database()
         self.setup_cleanup_scheduler()
-        import atexit
-        atexit.register(self.shutdown)
 
     def _ensure_db_writable(self):
+        """Ensure the database file exists and is writable."""
         if not os.path.exists(self.db_path):
             try:
                 open(self.db_path, 'w').close()
@@ -59,182 +35,8 @@ class Database:
                 except Exception as e:
                     logger.error(f"Could not change permissions on {self.db_path}: {e}")
 
-    def init_dropbox(self):
-        try:
-            dbx = dropbox.Dropbox(
-                oauth2_refresh_token=self.dropbox_refresh_token,
-                app_key=self.dropbox_app_key,
-                app_secret=self.dropbox_app_secret
-            )
-            dbx.check_user()
-            self.dropbox_client = dbx
-            self._upload_enabled = True
-            logger.info("Dropbox client initialized successfully")
-        except AuthError as e:
-            logger.error(f"Dropbox auth error: {e}. Check your refresh token and app credentials.")
-            self.dropbox_client = None
-            self._upload_enabled = False
-        except Exception as e:
-            logger.error(f"Error initializing Dropbox: {e}")
-            self.dropbox_client = None
-            self._upload_enabled = False
-
-    def _get_remote_timestamp(self, file_path: str) -> float:
-        if not self.dropbox_client:
-            return 0
-        try:
-            meta = self.dropbox_client.files_get_metadata(file_path)
-            return meta.server_modified.timestamp()
-        except ApiError as e:
-            if e.error.is_path() and e.error.get_path().is_not_found():
-                return 0
-            logger.error(f"Error getting remote metadata for {file_path}: {e}")
-            return 0
-
-    def _sync_from_dropbox(self, force: bool = False):
-        if not self.dropbox_client:
-            return
-        remote_ts = self._get_remote_timestamp(f"/{os.path.basename(self.db_path)}")
-        local_ts = os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
-        logger.info(f"Remote timestamp: {remote_ts}, Local timestamp: {local_ts}")
-        if force or (remote_ts > 0 and (not os.path.exists(self.db_path) or remote_ts > local_ts + 1.0)):
-            if os.path.exists(self.db_path):
-                backup_path = f"{self.db_path}.backup"
-                try:
-                    os.rename(self.db_path, backup_path)
-                    logger.info(f"Local database backed up to {backup_path}")
-                except Exception as e:
-                    logger.warning(f"Could not backup local database: {e}")
-            self.download_database()
-        else:
-            logger.info("Local database is up-to-date or newer; skipping download.")
-
-    def download_database(self, file_path: str = None, dest_path: str = None):
-        if not self.dropbox_client:
-            logger.warning("No Dropbox client; cannot download.")
-            return False
-        if file_path is None:
-            file_path = f"/{os.path.basename(self.db_path)}"
-        if dest_path is None:
-            dest_path = self.db_path
-        try:
-            try:
-                self.dropbox_client.files_get_metadata(file_path)
-            except ApiError as e:
-                if e.error.is_path() and e.error.get_path().is_not_found():
-                    logger.info(f"File {file_path} not found in Dropbox.")
-                    return False
-                raise
-            self.dropbox_client.files_download_to_file(dest_path, file_path)
-            os.chmod(dest_path, 0o666)
-            logger.info(f"Downloaded {file_path} to {dest_path}")
-            return True
-        except Exception as e:
-            logger.error(f"Error downloading {file_path}: {e}")
-            return False
-
-    def force_sync(self) -> bool:
-        """Force download the previous version (warbot_prev.db) from Dropbox."""
-        if not self.dropbox_client:
-            logger.warning("Dropbox client not available.")
-            return False
-        prev_path = f"/warbot_prev.db"
-        if not self.download_database(prev_path, self.db_path):
-            logger.warning("No previous version found; falling back to latest.")
-            self._sync_from_dropbox(force=True)
-        else:
-            logger.info("Successfully rolled back to previous database version.")
-        return True
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((Exception,)),
-        reraise=True
-    )
-    def _upload_to_dropbox(self):
-        if not self._upload_enabled or not self.dropbox_client:
-            logger.warning("Dropbox upload skipped – client not available.")
-            return
-
-        now = time.time()
-        if now - self._last_upload < 30 and not self._shutdown:
-            logger.debug("Skipping upload – less than 30s since last upload.")
-            return
-
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA integrity_check")
-            if cursor.fetchone()[0] != "ok":
-                logger.error("Database integrity check failed; aborting upload.")
-                return
-
-            dropbox_path = f"/{os.path.basename(self.db_path)}"
-            prev_dropbox_path = f"/warbot_prev.db"
-            temp_prev_path = f"{self.db_path}.prev"
-
-            # ---- Step 1: Download current remote db (if exists) to use as previous ----
-            try:
-                self.dropbox_client.files_download_to_file(temp_prev_path, dropbox_path)
-                logger.info("Downloaded current remote db to use as previous version.")
-                has_previous = True
-            except ApiError as e:
-                if e.error.is_path() and e.error.get_path().is_not_found():
-                    logger.info("No remote database found; this is the first upload.")
-                    has_previous = False
-                else:
-                    raise
-
-            # ---- Step 2: Upload the new local database as the main file ----
-            with open(self.db_path, 'rb') as f:
-                self.dropbox_client.files_upload(
-                    f.read(),
-                    dropbox_path,
-                    mode=dropbox.files.WriteMode('overwrite')
-                )
-            logger.info(f"Uploaded new current database: {dropbox_path}")
-
-            # ---- Step 3: Upload the previous version (if it exists) ----
-            if has_previous:
-                with open(temp_prev_path, 'rb') as f:
-                    self.dropbox_client.files_upload(
-                        f.read(),
-                        prev_dropbox_path,
-                        mode=dropbox.files.WriteMode('overwrite')
-                    )
-                os.remove(temp_prev_path)
-                logger.info(f"Uploaded previous database: {prev_dropbox_path}")
-            else:
-                # No previous, delete any stale previous file
-                try:
-                    self.dropbox_client.files_delete(prev_dropbox_path)
-                    logger.info(f"Deleted stale {prev_dropbox_path}")
-                except ApiError as e:
-                    if e.error.is_path() and e.error.get_path().is_not_found():
-                        pass
-                    else:
-                        raise
-
-            self._last_upload = now
-
-        except Exception as e:
-            logger.error(f"Upload error: {e}")
-            raise
-
-    def upload_database(self, force=False):
-        if not self._upload_enabled:
-            return
-        if not force and not self._upload_lock.acquire(blocking=False):
-            logger.debug("Upload already in progress; skipping.")
-            return
-        try:
-            self._upload_to_dropbox()
-        finally:
-            if not force:
-                self._upload_lock.release()
-
     def get_connection(self):
+        """Get a thread-local connection to the local database."""
         if not hasattr(self.local, 'connection'):
             self._ensure_db_writable()
             self.local.connection = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -333,6 +135,15 @@ class Database:
         ''')
         self._migrate_civilizations_table()
         self._migrate_cooldowns_table()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cooldowns (
+                user_id TEXT,
+                command TEXT,
+                last_used_at TIMESTAMP,
+                PRIMARY KEY (user_id, command)
+            )
+        ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cards (
                 user_id TEXT,
@@ -453,10 +264,9 @@ class Database:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_peace_offers_status ON peace_offers(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)')
         conn.commit()
-        self.upload_database(force=True)
         logger.info("Database initialized")
 
-    # ---- CRUD operations (same as previous) ----
+    # ---- CRUD operations ----
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         try:
             default_resources = {"gold": 500, "food": 300, "stone": 100, "wood": 100}
@@ -497,7 +307,6 @@ class Database:
             ))
             self.generate_card_selection(user_id, 1)
             conn.commit()
-            self.upload_database(force=True)
             logger.info(f"Created civilization '{name}' for user {user_id}")
             return True
         except sqlite3.IntegrityError:
@@ -530,7 +339,6 @@ class Database:
             cursor.execute('DELETE FROM territory_history WHERE user_id = ?', (user_id,))
             cursor.execute('DELETE FROM industrial_revolutions WHERE user_id = ?', (user_id,))
             conn.commit()
-            self.upload_database(force=True)
             logger.info(f"Deleted civilization and all related data for user {user_id}")
             return True
         except Exception as e:
@@ -579,7 +387,6 @@ class Database:
             query = f"UPDATE civilizations SET {', '.join(set_clauses)} WHERE user_id = ?"
             cursor.execute(query, values)
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error updating civilization for {user_id}: {e}")
@@ -607,7 +414,6 @@ class Database:
             cursor.execute('INSERT OR REPLACE INTO cooldowns (user_id, command, last_used_at) VALUES (?, ?, ?)',
                            (user_id, command, timestamp.isoformat()))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error setting command cooldown: {e}")
@@ -641,7 +447,6 @@ class Database:
             cursor.execute('INSERT OR REPLACE INTO cards (user_id, tech_level, available_cards, status) VALUES (?, ?, ?, ?)',
                            (user_id, tech_level, json.dumps(available_cards), 'pending'))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error generating card selection: {e}")
@@ -674,7 +479,6 @@ class Database:
                 return None
             cursor.execute('UPDATE cards SET status = ? WHERE user_id = ? AND tech_level = ?', ('selected', user_id, tech_level))
             conn.commit()
-            self.upload_database(force=True)
             return selected
         except Exception as e:
             logger.error(f"Error selecting card: {e}")
@@ -708,7 +512,6 @@ class Database:
             cursor.execute('INSERT INTO alliances (name, leader_id, members, description) VALUES (?, ?, ?, ?)',
                            (name, leader_id, json.dumps([leader_id]), description))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except sqlite3.IntegrityError:
             logger.warning(f"Alliance '{name}' already exists")
@@ -724,7 +527,6 @@ class Database:
             cursor.execute('INSERT INTO events (user_id, event_type, title, description, effects) VALUES (?, ?, ?, ?, ?)',
                            (user_id, event_type, title, description, json.dumps(effects or {})))
             conn.commit()
-            self.upload_database(force=True)
         except Exception as e:
             logger.error(f"Error logging event: {e}")
 
@@ -754,7 +556,6 @@ class Database:
             cursor.execute('INSERT INTO trade_requests (sender_id, recipient_id, offer, request) VALUES (?, ?, ?, ?)',
                            (sender_id, recipient_id, json.dumps(offer), json.dumps(request)))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error creating trade request: {e}")
@@ -801,7 +602,6 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM trade_requests WHERE id = ?', (request_id,))
             conn.commit()
-            self.upload_database(force=True)
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting trade request: {e}")
@@ -814,7 +614,6 @@ class Database:
             cursor.execute('INSERT INTO alliance_invitations (alliance_id, sender_id, recipient_id) VALUES (?, ?, ?)',
                            (alliance_id, sender_id, recipient_id))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error creating alliance invite: {e}")
@@ -855,7 +654,6 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM alliance_invitations WHERE id = ?', (invite_id,))
             conn.commit()
-            self.upload_database(force=True)
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting alliance invite: {e}")
@@ -868,7 +666,6 @@ class Database:
             cursor.execute('INSERT INTO messages (sender_id, recipient_id, message) VALUES (?, ?, ?)',
                            (sender_id, recipient_id, message))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error sending message: {e}")
@@ -895,7 +692,6 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM messages WHERE id = ?', (message_id,))
             conn.commit()
-            self.upload_database(force=True)
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting message: {e}")
@@ -945,7 +741,6 @@ class Database:
             cursor.execute('UPDATE alliances SET members = ?, join_requests = ? WHERE id = ?',
                            (json.dumps(members), json.dumps(join_requests), alliance_id))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error adding alliance member: {e}")
@@ -1005,7 +800,6 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO peace_offers (offerer_id, receiver_id) VALUES (?, ?)', (offerer_id, receiver_id))
             conn.commit()
-            self.upload_database(force=True)
             return True
         except Exception as e:
             logger.error(f"Error creating peace offer: {e}")
@@ -1018,7 +812,6 @@ class Database:
             cursor.execute('UPDATE peace_offers SET status = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?',
                            (status, offer_id))
             conn.commit()
-            self.upload_database(force=True)
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error updating peace offer: {e}")
@@ -1034,7 +827,6 @@ class Database:
                 AND result = 'ongoing'
             ''', (result, attacker_id, defender_id, defender_id, attacker_id))
             conn.commit()
-            self.upload_database(force=True)
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error ending war: {e}")
@@ -1112,7 +904,6 @@ class Database:
             cursor.execute('DELETE FROM messages WHERE expires_at <= CURRENT_TIMESTAMP')
             msg_count = cursor.rowcount
             conn.commit()
-            self.upload_database(force=True)
             logger.info(f"Cleaned up {trade_count} trades, {invite_count} invites, {msg_count} messages")
             return True
         except Exception as e:
@@ -1123,12 +914,8 @@ class Database:
         try:
             import shutil
             if not backup_path:
-                backup_path = f"nationbot_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                backup_path = f"warbot_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
             shutil.copy2(self.db_path, backup_path)
-            if self.dropbox_client:
-                dropbox_path = f"/backups/{os.path.basename(backup_path)}"
-                with open(backup_path, 'rb') as f:
-                    self.dropbox_client.files_upload(f.read(), dropbox_path, mode=dropbox.files.WriteMode('add'))
             return True
         except Exception as e:
             logger.error(f"Error backing up database: {e}")
@@ -1155,13 +942,6 @@ class Database:
         if hasattr(self.local, 'connection'):
             self.local.connection.close()
             del self.local.connection
-
-    def shutdown(self):
-        self._shutdown = True
-        logger.info("Shutdown: uploading database one last time...")
-        self.upload_database(force=True)
-        self.close_connections()
-        logger.info("Shutdown complete.")
 
     def is_region_taken(self, region_name: str, exclude_user_id: str = None) -> bool:
         try:
