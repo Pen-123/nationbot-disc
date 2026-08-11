@@ -537,3 +537,16 @@ class CooldownManager:
             "formatted_time": format_time_duration(time_left),
             "expires_at": expiry
         }
+        import math
+
+def get_territory_modifier(land_size: int) -> float:
+    """
+    Diminishing returns on land size for resource generation.
+    Maxes out at 2.0 (so having huge land gives at most 2× resources).
+    """
+    if land_size <= 0:
+        return 1.0
+    # Use log10 to slow down growth: at 1000 km² → 1.0, at 100k → ~1.5, at 1M → ~2.0
+    # We cap at 2.0 to prevent runaway inflation.
+    factor = 0.3 * math.log10(land_size / 1000 + 1)
+    return min(1.0 + factor, 2.0)
