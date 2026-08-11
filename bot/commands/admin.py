@@ -26,14 +26,6 @@ class AdminCommands(commands.Cog):
     async def sync_commands(self, ctx, scope: str = "global", guild_id: int = None):
         """
         Owner-only command to sync slash commands.
-
-        Usage:
-        - .sync
-        - .sync global
-        - .sync current_guild
-        - .sync copy_global_to_guild
-        - .sync current_guild <guild_id>
-        - .sync copy_global_to_guild <guild_id>
         """
         scope = (scope or "global").lower().strip()
 
@@ -85,20 +77,9 @@ class AdminCommands(commands.Cog):
         except Exception as e:
             await _send(f"❌ Sync failed: {e}")
 
-    @commands.hybrid_command(name='forcesync')
-    # No permission required – anyone can use it
-    async def force_sync_db(self, ctx):
-        """Force‑sync the database from Dropbox (overwrites local)."""
-        if not self.bot.db.dropbox_client:
-            await ctx.send("❌ Dropbox client not available.")
-            return
-        if self.bot.db.force_sync():
-            await ctx.send("✅ Database force‑synced from Dropbox.")
-        else:
-            await ctx.send("❌ Failed to force‑sync database. Check logs.")
+    # .forcesync has been removed – no Dropbox sync.
 
     @commands.hybrid_command(name='exportdb')
-    # No permission required – anyone can use it
     async def export_database(self, ctx):
         """
         Export the current database file (.db) with instructions.
