@@ -91,7 +91,7 @@ class EconomyCommands(commands.Cog):
         possible_resources = ['gold', 'wood', 'stone', 'food']
         gathered = {}
         
-        # ---- EMPLOYMENT and TERRITORY (softened) ----
+        # ---- EMPLOYMENT and TERRITORY ----
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100  # 0.0 to 1.0
         employment_factor = 1 + employment_rate * 0.8  # 1.0 to 1.8 (high employment matters)
         
@@ -103,17 +103,20 @@ class EconomyCommands(commands.Cog):
             if random.random() < 0.7:  # 70% chance for each resource
                 base_amount = random.randint(10, 50)
                 amount = int(base_amount * employment_factor * territory_factor)
+                # Cap to prevent overflow
+                amount = min(amount, 1000000)  # 1 million max per resource
                 gathered[resource] = amount
         
         if not gathered:
             await ctx.send("🔍 Your scouts searched but found nothing of value this time.")
             return
             
-        # Apply luck modifier (unchanged)
+        # Apply luck modifier (capped)
         luck_modifier = self.civ_manager.calculate_total_modifier(user_id, "luck")
         if luck_modifier > 1.0:
             for resource in gathered:
                 gathered[resource] = int(gathered[resource] * luck_modifier)
+                gathered[resource] = min(gathered[resource], 1000000)  # re-cap
         
         self.civ_manager.update_resources(user_id, gathered)
         
@@ -161,12 +164,13 @@ class EconomyCommands(commands.Cog):
             
         self.civ_manager.update_employment(user_id, amount)
         
-        # Gold gain based on employment (unchanged)
+        # Gold gain based on employment (capped)
         gold_gain = amount * random.randint(1, 3)
         ideology = civ.get('ideology', '')
         if ideology == 'communism':
             gold_gain = int(gold_gain * 1.15)
-            
+        gold_gain = min(gold_gain, 1000000)  # Cap
+        
         self.civ_manager.update_resources(user_id, {"gold": gold_gain})
         
         new_rate = self.civ_manager.get_employment_rate(user_id)
@@ -195,7 +199,7 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # ---- SOFTER TERRITORY, MORE EMPLOYMENT ----
+        # ---- TERRITORY and EMPLOYMENT ----
         base_food = random.randint(20, 80)
         citizen_bonus = civ['population']['citizens'] // 10
         
@@ -219,6 +223,9 @@ class EconomyCommands(commands.Cog):
                 event_text = "🦗 Locust swarm damaged some crops!"
             else:
                 event_text = "🌈 Perfect weather blessed your harvest!"
+        
+        # Cap
+        total_food = min(total_food, 1000000)
         
         self.civ_manager.update_resources(user_id, {"food": total_food})
         
@@ -248,7 +255,7 @@ class EconomyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # ---- SOFTER TERRITORY, MORE EMPLOYMENT ----
+        # ---- EMPLOYMENT and TERRITORY ----
         stone_yield = random.randint(15, 60)
         wood_yield = random.randint(10, 40)
         
@@ -261,7 +268,7 @@ class EconomyCommands(commands.Cog):
         stone_yield = int(stone_yield * employment_factor * territory_factor)
         wood_yield = int(wood_yield * employment_factor * territory_factor)
         
-        # Tech level bonus (unchanged)
+        # Tech level bonus (capped)
         tech_bonus = 1 + (civ['military']['tech_level'] * 0.1)
         stone_yield = int(stone_yield * tech_bonus)
         wood_yield = int(wood_yield * tech_bonus)
@@ -270,7 +277,12 @@ class EconomyCommands(commands.Cog):
         bonus_gold = 0
         if random.random() < 0.2:
             bonus_gold = random.randint(5, 25)
-            
+        
+        # Cap everything
+        stone_yield = min(stone_yield, 500000)
+        wood_yield = min(wood_yield, 500000)
+        bonus_gold = min(bonus_gold, 10000)
+        
         updates = {"stone": stone_yield, "wood": wood_yield}
         if bonus_gold > 0:
             updates["gold"] = bonus_gold
@@ -322,7 +334,9 @@ class EconomyCommands(commands.Cog):
         
         if civ.get('ideology') == 'theocracy':
             total_harvest = int(total_harvest * 1.1)
-            
+        
+        total_harvest = min(total_harvest, 2000000)  # Cap
+        
         self.civ_manager.update_resources(user_id, {"food": total_harvest})
         self.civ_manager.update_population(user_id, {"happiness": 3})
         
@@ -372,6 +386,10 @@ class EconomyCommands(commands.Cog):
             gold_value += bonus_gold
             bonus_text = f"💎 Struck a rich vein! (+{format_number(bonus_gold)} gold)"
         
+        # Cap
+        gold_value = min(gold_value, 1000000)
+        stone_value = min(stone_value, 500000)
+        
         self.civ_manager.update_resources(user_id, {"gold": gold_value, "stone": stone_value})
         
         embed = create_embed(
@@ -409,6 +427,7 @@ class EconomyCommands(commands.Cog):
         
         if random.random() < 0.8:
             food_caught = int(random.randint(15, 45) * employment_factor * territory_factor)
+            food_caught = min(food_caught, 500000)
             self.civ_manager.update_resources(user_id, {"food": food_caught})
             embed = create_embed(
                 "🎣 Fishing",
@@ -417,6 +436,7 @@ class EconomyCommands(commands.Cog):
             )
         else:
             treasure_gold = int(random.randint(20, 100) * employment_factor * territory_factor)
+            treasure_gold = min(treasure_gold, 500000)
             self.civ_manager.update_resources(user_id, {"gold": treasure_gold})
             embed = create_embed(
                 "🎣 Fishing - Lucky Find!",
@@ -443,7 +463,7 @@ class EconomyCommands(commands.Cog):
             
         population = civ['population']
         
-        # ---- TAX BASED ON EMPLOYMENT AND TERRITORY (softer) ----
+        # ---- TAX BASED ON EMPLOYMENT AND TERRITORY ----
         base_tax = population['citizens'] * 2
         happiness_modifier = population['happiness'] / 100
         
@@ -455,7 +475,7 @@ class EconomyCommands(commands.Cog):
         
         total_tax = int(base_tax * happiness_modifier * employment_factor * territory_factor)
         
-        # Ideology effects (unchanged)
+        # Ideology effects
         ideology = civ.get('ideology', '')
         if ideology == 'democracy':
             total_tax = int(total_tax * 1.1)
@@ -464,7 +484,9 @@ class EconomyCommands(commands.Cog):
             self.civ_manager.update_population(user_id, {"happiness": -5})
         elif ideology == 'communism':
             total_tax = int(total_tax * 0.8)
-            
+        
+        total_tax = min(total_tax, 1000000)  # Cap
+        
         self.civ_manager.update_resources(user_id, {"gold": total_tax})
         self.civ_manager.update_population(user_id, {"happiness": -2})
         
@@ -542,6 +564,7 @@ class EconomyCommands(commands.Cog):
             color = guilded.Color.red()
             
         if winnings > 0:
+            winnings = min(winnings, 10000000)  # Cap winnings
             self.civ_manager.update_resources(user_id, {"gold": winnings})
             
         embed = create_embed(
@@ -597,6 +620,7 @@ class EconomyCommands(commands.Cog):
             if random.random() < 0.8:
                 profit_multiplier = random.uniform(1.2, 1.8)
                 returns = int(amount * profit_multiplier)
+                returns = min(returns, 10000000)  # Cap
                 self.civ_manager.update_resources(user_id, {"gold": returns})
                 try:
                     user = await self.bot.fetch_user(int(user_id))
@@ -646,7 +670,7 @@ class EconomyCommands(commands.Cog):
             success_chance += 0.1
             
         if random.random() < success_chance:
-            # ---- LOOT SCALES WITH EMPLOYMENT AND TERRITORY (softer) ----
+            # ---- LOOT SCALES WITH EMPLOYMENT AND TERRITORY ----
             employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
             employment_factor = 1 + employment_rate * 0.5  # up to 1.5
             
@@ -663,6 +687,10 @@ class EconomyCommands(commands.Cog):
             if random.random() < 0.1:
                 bonus_gold = random.randint(200, 500)
                 loot["gold"] += bonus_gold
+            
+            # Cap each
+            for key in loot:
+                loot[key] = min(loot[key], 500000)
                 
             self.civ_manager.update_resources(user_id, loot)
             
@@ -812,8 +840,6 @@ class EconomyCommands(commands.Cog):
             
         await ctx.send(embed=embed)
 
-    # NEW CORE MECHANICS
-
     @commands.command(name='sell')
     @app_commands.describe(item_name="Hyper item name to sell")
     @app_commands.autocomplete(item_name=_sell_item_autocomplete)
@@ -849,6 +875,7 @@ class EconomyCommands(commands.Cog):
         }
         
         gold_value = item_values.get(item_name, random.randint(50, 150))
+        gold_value = min(gold_value, 5000)  # Cap
         
         self.civ_manager.use_hyper_item(user_id, item_name)
         self.civ_manager.update_resources(user_id, {"gold": gold_value})
@@ -883,7 +910,7 @@ class EconomyCommands(commands.Cog):
             
         self.civ_manager.spend_resources(user_id, {"gold": ad_cost})
         
-        # ---- NEW CITIZENS: EMPLOYMENT and TERRITORY (softer) ----
+        # ---- NEW CITIZENS ----
         base_new_citizens = random.randint(100, 300)
         happiness_bonus = civ['population']['happiness'] // 10
         
@@ -900,7 +927,9 @@ class EconomyCommands(commands.Cog):
             total_new_citizens = int(total_new_citizens * 1.2)
         elif ideology == 'fascism':
             total_new_citizens = int(total_new_citizens * 0.8)
-            
+        
+        total_new_citizens = min(total_new_citizens, 5000)  # Cap
+        
         self.civ_manager.update_population(user_id, {"citizens": total_new_citizens})
         
         embed = create_embed(
