@@ -5,7 +5,7 @@ import sys
 import logging
 import hashlib
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -190,19 +190,18 @@ def map_png():
             buf.seek(0)
             return send_file(buf, mimetype='image/png')
 
-        # Read ownership from DB
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, owned_provinces FROM territories")
-        rows = cursor.fetchall()
-
+        # Read ownership from Firestore using db.get_all_territories()
+        territories = db.get_all_territories()  # dict {province_name: {owner_id: ...}}
         ownership = {}
-        for row in rows:
-            user_id = row[0]
-            provinces = json.loads(row[1]) if row[1] else []
-            civ = civ_manager.get_civilization(user_id)
-            name = civ['name'] if civ else user_id[:6]
-            ownership[user_id] = {"provinces": provinces, "name": name}
+        # We'll build ownership dict: user_id -> {"provinces": list, "name": civ_name}
+        for province_name, data in territories.items():
+            owner_id = data.get("owner_id")
+            if owner_id:
+                if owner_id not in ownership:
+                    civ = civ_manager.get_civilization(owner_id)
+                    name = civ['name'] if civ else owner_id[:6]
+                    ownership[owner_id] = {"provinces": [], "name": name}
+                ownership[owner_id]["provinces"].append(province_name)
 
         # Build deterministic key for cache
         ownership_key = hashlib.md5(json.dumps(ownership, sort_keys=True).encode()).hexdigest()
@@ -381,7 +380,7 @@ def health_check():
 
 
 def get_dashboard_stats():
-    """Get overall dashboard statistics"""
+    """Get overall dashboard statistics using Firestore."""
     try:
         if db is None:
             initialize_services()
@@ -392,31 +391,40 @@ def get_dashboard_stats():
             return get_empty_stats()
 
         # Calculate totals
-        total_population = sum(civ['population']['citizens'] for civ in civilizations)
+        total_population = sum(civ['population']['citizens'] for civ in civilizations if 'population' in civ)
         total_resources = sum(
-            sum(civ['resources'].values()) for civ in civilizations
+            sum(civ['resources'].values()) for civ in civilizations if 'resources' in civ
         )
 
-        # Get active wars
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM wars WHERE result = 'ongoing'")
-        result = cursor.fetchone()
-        active_wars = result[0] if result else 0
+        # Get active wars from Firestore
+        wars = db.get_wars(status="ongoing")
+        active_wars = len(wars)
 
         # Get total alliances
-        cursor.execute("SELECT COUNT(*) FROM alliances")
-        result = cursor.fetchone()
-        total_alliances = result[0] if result else 0
+        alliances_ref = db.client.collection("alliances")
+        docs = alliances_ref.stream()
+        total_alliances = sum(1 for _ in docs)
 
         # Get recent events count (last 24 hours)
-        yesterday = datetime.now() - timedelta(days=1)
-        cursor.execute("SELECT COUNT(*) FROM events WHERE timestamp > ?", (yesterday,))
-        result = cursor.fetchone()
-        recent_events = result[0] if result else 0
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        events = db.get_recent_events(limit=1000)  # get many and filter by timestamp
+        recent_events = 0
+        for ev in events:
+            ts = ev.get('timestamp')
+            if ts:
+                try:
+                    if isinstance(ts, str):
+                        ts = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    if ts >= yesterday:
+                        recent_events += 1
+                except:
+                    pass
 
         # Calculate average happiness
-        avg_happiness = sum(civ['population']['happiness'] for civ in civilizations) / len(civilizations)
+        happiness_values = [civ['population']['happiness'] for civ in civilizations if 'population' in civ and 'happiness' in civ['population']]
+        avg_happiness = sum(happiness_values) / len(happiness_values) if happiness_values else 0
 
         # Get ideology distribution
         ideology_count = {}
@@ -478,7 +486,7 @@ def get_top_civilizations(limit=10):
                 "resources": civ['resources'],
                 "military": civ['military'],
                 "territory": civ['territory']['land_size'],
-                "last_active": civ['last_active'],
+                "last_active": civ.get('last_active', ''),
                 "hyper_items": len(civ.get('hyper_items', []))
             })
 
@@ -491,7 +499,7 @@ def get_top_civilizations(limit=10):
 
 
 def get_recent_events(limit=20):
-    """Get recent events with formatting"""
+    """Get recent events with formatting using Firestore"""
     try:
         if db is None:
             initialize_services()
@@ -515,7 +523,7 @@ def get_recent_events(limit=20):
                 "civilization": event.get('civ_name', 'Global'),
                 "timestamp": event['timestamp'],
                 "time_ago": time_ago,
-                "effects": event['effects']
+                "effects": event.get('effects', {})
             })
 
         return formatted_events
@@ -544,47 +552,39 @@ def parse_timestamp(value):
 
 
 def get_alliance_info():
-    """Get alliance information"""
+    """Get alliance information using Firestore"""
     try:
         if db is None:
             initialize_services()
-        conn = db.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT a.*, COUNT(w.id) as active_wars 
-            FROM alliances a 
-            LEFT JOIN wars w ON (
-                a.members LIKE '%' || w.attacker_id || '%' OR 
-                a.members LIKE '%' || w.defender_id || '%'
-            ) AND w.result = 'ongoing'
-            GROUP BY a.id 
-            ORDER BY a.created_at DESC
-        ''')
-
-        rows = cursor.fetchall()
-        if not rows:
-            logger.info("No alliances found in database")
-            return []
-
+        alliances_ref = db.client.collection("alliances")
+        docs = alliances_ref.stream()
         alliances = []
-        for row in rows:
-            alliance = dict(row)
-            members = json.loads(alliance['members'])
 
+        for doc in docs:
+            data = doc.to_dict()
+            members = data.get("members", [])
             member_names = []
             for member_id in members:
                 civ = civ_manager.get_civilization(member_id)
                 if civ:
                     member_names.append(civ['name'])
 
+            # Count active wars for this alliance (any member in war)
+            active_wars = 0
+            wars = db.get_wars(status="ongoing")
+            for war in wars:
+                a = war.get("attacker_id")
+                d = war.get("defender_id")
+                if a in members or d in members:
+                    active_wars += 1
+
             alliances.append({
-                "name": alliance['name'],
-                "leader_id": alliance['leader_id'],
+                "name": data.get('name', 'Unknown'),
+                "leader_id": data.get('leader_id', ''),
                 "member_count": len(members),
                 "member_names": member_names,
-                "created_at": alliance['created_at'],
-                "active_wars": alliance['active_wars']
+                "created_at": data.get('created_at', ''),
+                "active_wars": active_wars
             })
 
         return alliances
@@ -647,7 +647,10 @@ def get_time_ago(timestamp):
     """Get human-readable time ago string"""
     now = datetime.now()
     if isinstance(timestamp, str):
-        timestamp = datetime.fromisoformat(timestamp)
+        try:
+            timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        except:
+            return "Unknown"
 
     diff = now - timestamp
 
