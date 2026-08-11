@@ -172,30 +172,17 @@ class Database:
 
             dropbox_path = f"/{os.path.basename(self.db_path)}"
             prev_dropbox_path = f"/warbot_prev.db"
+            temp_prev_path = f"{self.db_path}.prev"
 
-            # ---- Step 1: Move the current remote DB to previous version ----
+            # ---- Step 1: Download current remote db (if exists) to use as previous ----
             try:
-                # Check if current exists
-                self.dropbox_client.files_get_metadata(dropbox_path)
-                # Move it to previous (overwrite previous if exists)
-                self.dropbox_client.files_move(
-                    from_path=dropbox_path,
-                    to_path=prev_dropbox_path,
-                    autorename=False,
-                    allow_shared_folder=False,
-                    allow_ownership_transfer=False
-                )
-                logger.info(f"Moved existing {dropbox_path} to {prev_dropbox_path}")
+                self.dropbox_client.files_download_to_file(temp_prev_path, dropbox_path)
+                logger.info("Downloaded current remote db to use as previous version.")
+                has_previous = True
             except ApiError as e:
                 if e.error.is_path() and e.error.get_path().is_not_found():
-                    # No current remote, nothing to move
-                    # Delete any stale previous file
-                    try:
-                        self.dropbox_client.files_delete(prev_dropbox_path)
-                        logger.info(f"Deleted stale {prev_dropbox_path}")
-                    except ApiError as del_e:
-                        if not (del_e.error.is_path() and del_e.error.get_path().is_not_found()):
-                            raise
+                    logger.info("No remote database found; this is the first upload.")
+                    has_previous = False
                 else:
                     raise
 
@@ -207,6 +194,28 @@ class Database:
                     mode=dropbox.files.WriteMode('overwrite')
                 )
             logger.info(f"Uploaded new current database: {dropbox_path}")
+
+            # ---- Step 3: Upload the previous version (if it exists) ----
+            if has_previous:
+                with open(temp_prev_path, 'rb') as f:
+                    self.dropbox_client.files_upload(
+                        f.read(),
+                        prev_dropbox_path,
+                        mode=dropbox.files.WriteMode('overwrite')
+                    )
+                os.remove(temp_prev_path)
+                logger.info(f"Uploaded previous database: {prev_dropbox_path}")
+            else:
+                # No previous, delete any stale previous file
+                try:
+                    self.dropbox_client.files_delete(prev_dropbox_path)
+                    logger.info(f"Deleted stale {prev_dropbox_path}")
+                except ApiError as e:
+                    if e.error.is_path() and e.error.get_path().is_not_found():
+                        pass
+                    else:
+                        raise
+
             self._last_upload = now
 
         except Exception as e:
@@ -447,7 +456,7 @@ class Database:
         self.upload_database(force=True)
         logger.info("Database initialized")
 
-    # ---- CRUD operations ----
+    # ---- CRUD operations (same as previous) ----
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         try:
             default_resources = {"gold": 500, "food": 300, "stone": 100, "wood": 100}
