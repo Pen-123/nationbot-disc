@@ -4,6 +4,7 @@ import os
 import logging
 from discord.ext import commands
 from discord import app_commands
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class AdminCommands(commands.Cog):
             await _send(f"❌ Sync failed: {e}")
 
     @commands.hybrid_command(name='forcesync')
-    # @commands.is_owner()  # removed, anyone can use it now
+    # No permission required – anyone can use it
     async def force_sync_db(self, ctx):
         """Force‑sync the database from Dropbox (overwrites local)."""
         if not self.bot.db.dropbox_client:
@@ -97,11 +98,10 @@ class AdminCommands(commands.Cog):
             await ctx.send("❌ Failed to force‑sync database. Check logs.")
 
     @commands.hybrid_command(name='exportdb')
-    @commands.is_owner()
+    # No permission required – anyone can use it
     async def export_database(self, ctx):
         """
         Export the current database file (.db) with instructions.
-        Owner only.
         """
         try:
             db_path = self.bot.db.db_path
@@ -109,11 +109,9 @@ class AdminCommands(commands.Cog):
                 await ctx.send("❌ Database file not found.")
                 return
 
-            # Read the file into memory
             with open(db_path, 'rb') as f:
                 file_data = f.read()
 
-            # Check file size (Discord limit: 8MB for normal, 25MB for nitro)
             file_size_mb = len(file_data) / (1024 * 1024)
             if file_size_mb > 8:
                 await ctx.send(f"⚠️ Database file is **{file_size_mb:.1f} MB** – larger than Discord's 8MB limit. Please use a different method to retrieve it (e.g., direct download from Dropbox).")
