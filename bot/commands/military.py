@@ -1058,39 +1058,7 @@ class MilitaryCommands(commands.Cog):
         else:
             await ctx.send("❌ Invalid action. Use `.cards view` or `.cards use \"Card Name\"`.")
 
-    @commands.command(name='buycard')
-    async def buy_card(self, ctx):
-        """Purchase a random card for 500 gold."""
-        user_id = str(ctx.author.id)
-        civ = self.civ_manager.get_civilization(user_id)
-        if not civ:
-            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
-            return
-
-        # Check if they can afford 500 gold
-        if not self.civ_manager.can_afford(user_id, {"gold": 500}):
-            await ctx.send("❌ You need 500 gold to buy a card!")
-            return
-
-        # Deduct gold
-        self.civ_manager.spend_resources(user_id, {"gold": 500})
-
-        # Pick a random card from config.CARD_POOL
-        card = random.choice(config.CARD_POOL)
-
-        # Store in civilization's purchased_cards list
-        purchased_cards = civ.get('purchased_cards', [])
-        purchased_cards.append(card)
-        self.db.update_civilization(user_id, {"purchased_cards": purchased_cards})
-
-        embed = create_embed(
-            "🎴 Card Purchased!",
-            f"You spent 500 gold and received:\n**{card['name']}** – {card['description']}",
-            guilded.Color.gold()
-        )
-        embed.add_field(name="How to use", value="Use `.cards use \"Card Name\"` to activate it.", inline=False)
-        await ctx.send(embed=embed)
-    
+ 
     # ---- BORDERS ----
     @commands.command(name='addborder')
     async def add_border(self, ctx):
