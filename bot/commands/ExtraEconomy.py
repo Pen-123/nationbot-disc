@@ -22,6 +22,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot import config
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -45,12 +47,12 @@ class EconomyManager:
                 json.dump({}, f)
         self._load_fallback()
 
-        # Ephemeral shop config
+        # Shop config from config
         self.shop_items = {
-            "ak": {"price": 500, "stock": 5},
-            "ammo": {"price": 100, "stock": 10},
-            "glock17": {"price": 800, "stock": 5},
-            "crypto_miner": {"price": 4000, "stock": 2}
+            "ak": {"price": config.EXTRACONOMY["extrastore_prices"]["ak"], "stock": config.EXTRACONOMY["extrastore_stock"]["ak"]},
+            "ammo": {"price": config.EXTRACONOMY["extrastore_prices"]["ammo"], "stock": config.EXTRACONOMY["extrastore_stock"]["ammo"]},
+            "glock17": {"price": config.EXTRACONOMY["extrastore_prices"]["glock17"], "stock": config.EXTRACONOMY["extrastore_stock"]["glock17"]},
+            "crypto_miner": {"price": config.EXTRACONOMY["extrastore_prices"]["crypto_miner"], "stock": config.EXTRACONOMY["extrastore_stock"]["crypto_miner"]}
         }
 
     def _load_fallback(self):
@@ -118,7 +120,7 @@ class EconomyManager:
             return True
         return False
 
-    # gold operations (store gold on civ.resources.gold)
+    # gold operations
     def get_gold(self, user_id: str) -> int:
         try:
             civ = self._get_civ(user_id)
@@ -225,8 +227,6 @@ class EconomyCog(commands.Cog):
         self.bot = bot
         self.manager = EconomyManager(storage_dir=storage_dir, db=db, bot=bot)
         self.cooldowns: Dict[str, Dict[str, float]] = {}
-        self.default_cd_seconds = 60
-        self.extrawork_cd_seconds = 300
         self.coding_tasks: Dict[str, tuple] = {}
         self.product_last_pay: Dict[str, Dict[str, float]] = {}
         self._tasks: List[asyncio.Task] = []
@@ -246,7 +246,10 @@ class EconomyCog(commands.Cog):
         self._tasks.clear()
         logger.info("EconomyCog: background tasks cancelled")
 
-    # cooldown helpers
+    # cooldown helpers (using config)
+    def _get_cd_seconds(self, cmd_name: str) -> int:
+        return config.COOLDOWNS.get(cmd_name, 0) * 60  # convert minutes to seconds
+
     def _get_last(self, cmd_name: str, user_id: str) -> float:
         return self.cooldowns.get(cmd_name, {}).get(user_id, 0.0)
 
@@ -254,14 +257,17 @@ class EconomyCog(commands.Cog):
         ts = ts or time.time()
         self.cooldowns.setdefault(cmd_name, {})[user_id] = ts
 
-    def _is_on_cooldown(self, cmd_name: str, user_id: str, cd_seconds: int) -> Optional[int]:
+    def _is_on_cooldown(self, cmd_name: str, user_id: str) -> Optional[int]:
         last = self._get_last(cmd_name, user_id)
         if last == 0.0:
             return None
-        elapsed = time.time() - last
-        if elapsed >= cd_seconds:
+        cd = self._get_cd_seconds(cmd_name)
+        if cd == 0:
             return None
-        return int(cd_seconds - elapsed)
+        elapsed = time.time() - last
+        if elapsed >= cd:
+            return None
+        return int(cd - elapsed)
 
     # civ checks
     def _user_has_civ_via_bot(self, user_id: str) -> bool:
@@ -300,7 +306,7 @@ class EconomyCog(commands.Cog):
     async def _crypto_miner_loop(self):
         try:
             while True:
-                await asyncio.sleep(3600)
+                await asyncio.sleep(config.EXTRACONOMY["crypto_miner_interval"])
                 inv_map = {}
                 try:
                     if self.manager.db and hasattr(self.manager.db, "get_all_inventories"):
@@ -313,7 +319,7 @@ class EconomyCog(commands.Cog):
                             continue
                         miner_count = sum(1 for i in items if i == "crypto_miner")
                         if miner_count > 0:
-                            self.manager.add_gold(suid, 200 * miner_count)
+                            self.manager.add_gold(suid, config.EXTRACONOMY["crypto_miner_income"] * miner_count)
                 except Exception:
                     logger.exception("crypto miner loop error")
         except asyncio.CancelledError:
@@ -338,15 +344,16 @@ class EconomyCog(commands.Cog):
                             state = prods["messenger"]
                             last = self.product_last_pay.get(suid, {}).get("messenger", 0)
                             if state == "viral":
-                                interval = 18000
+                                interval = config.EXTRACONOMY["product_messenger_viral_interval"]
                                 if now - last >= interval:
-                                    payout = random.randint(1000, 5000)
+                                    payout = random.randint(config.EXTRACONOMY["product_messenger_viral_payout_min"],
+                                                            config.EXTRACONOMY["product_messenger_viral_payout_max"])
                                     self.manager.add_gold(suid, payout)
                                     self.product_last_pay.setdefault(suid, {})["messenger"] = now
                             else:
-                                interval = 10800
+                                interval = config.EXTRACONOMY["product_messenger_base_interval"]
                                 if now - last >= interval:
-                                    self.manager.add_gold(suid, 10)
+                                    self.manager.add_gold(suid, config.EXTRACONOMY["product_messenger_base_payout"])
                                     self.product_last_pay.setdefault(suid, {})["messenger"] = now
                 except Exception:
                     logger.exception("product income loop error")
@@ -365,15 +372,23 @@ class EconomyCog(commands.Cog):
                         finished.append((suid, proj))
                 for suid, proj in finished:
                     if proj == "website":
-                        self.manager.add_gold(suid, random.randint(50, 150))
+                        payout = random.randint(config.EXTRACONOMY["coding_projects"]["website"]["reward_min"],
+                                                config.EXTRACONOMY["coding_projects"]["website"]["reward_max"])
+                        self.manager.add_gold(suid, payout)
                     elif proj == "virus":
-                        if random.random() < 0.25:
+                        risk = config.EXTRACONOMY["coding_projects"]["virus"]["risk"]
+                        if random.random() < risk:
                             logger.debug(f"Virus coder {suid} got caught.")
                         else:
-                            self.manager.add_gold(suid, random.randint(250, 763))
+                            payout = random.randint(config.EXTRACONOMY["coding_projects"]["virus"]["reward_min"],
+                                                    config.EXTRACONOMY["coding_projects"]["virus"]["reward_max"])
+                            self.manager.add_gold(suid, payout)
                     elif proj == "messenger":
                         prods = self.manager.get_products(suid)
-                        prods["messenger"] = "viral" if random.random() < 0.45 else "flop"
+                        if random.random() < config.EXTRACONOMY["coding_projects"]["messenger"]["viral_chance"]:
+                            prods["messenger"] = "viral"
+                        else:
+                            prods["messenger"] = "flop"
                         self.manager.update_products(suid, prods)
                     self.coding_tasks.pop(suid, None)
         except asyncio.CancelledError:
@@ -384,25 +399,20 @@ class EconomyCog(commands.Cog):
         lines = ["🛒 Current Store Stock:"]
         for name, data in self.manager.shop_items.items():
             extra = " ⛏️ miner pays hourly" if name == "crypto_miner" else ""
-            lines.append(f"- {name.upper()} ({data['price']} gold) — {data['stock']} in stock{extra}")
+            lines.append(f"- {config.EXTRACONOMY['extrastore_item_names'][name]} ({data['price']} gold) — {data['stock']} in stock{extra}")
         lines.append("\nBuy items with .extrastore buy <item>")
         return "\n".join(lines)
 
     def build_darkweb_display(self) -> str:
-        lines = ["🌑 Dark Web Market (50% scam risk):",
-                 "- forged_documents (5000 gold)",
-                 "- stolen_data (3000 gold)",
-                 "- silencer (1500 gold)",
-                 "- explosives (5000 gold)",
-                 "- crypto_miner (3500 gold)"]
+        lines = ["🌑 Dark Web Market (50% scam risk):"]
+        for item, price in config.EXTRACONOMY["darkweb_items"].items():
+            lines.append(f"- {item} ({price} gold)")
         lines.append("\nUse .darkweb <item> to attempt a purchase.")
         return "\n".join(lines)
 
-    # ---------------- Commands (balance & profile removed) ----------------
-
+    # ---------------- Commands ----------------
     @commands.command()
     async def extrainventory(self, ctx):
-        """Shows the user's inventory (renamed from inventory)."""
         try:
             uid = str(ctx.author.id)
             if not await self.require_civ(ctx):
@@ -425,12 +435,6 @@ class EconomyCog(commands.Cog):
         ]
     )
     async def extrastore(self, ctx, action: Optional[str] = None, item: Optional[str] = None):
-        """
-        Store command (renamed from shop/buy).
-        Usage:
-          .extrastore                 -> show store
-          .extrastore buy <item>      -> buy item
-        """
         cmd = "extrastore"
         uid = str(ctx.author.id)
         try:
@@ -446,7 +450,7 @@ class EconomyCog(commands.Cog):
                 return
             if not await self.require_civ(ctx):
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -459,12 +463,11 @@ class EconomyCog(commands.Cog):
             if not self.manager.try_withdraw_gold(uid, price):
                 await ctx.send("Not enough gold. No cooldown applied.")
                 return
-            # update inventory
             inv = self.manager.get_inventory(uid) or []
             inv.append(key)
             self.manager.update_inventory(uid, inv)
             self._set_last(cmd, uid)
-            await ctx.send(f"✅ Purchased {key.upper()} for {price} gold.")
+            await ctx.send(f"✅ Purchased {config.EXTRACONOMY['extrastore_item_names'][key]} for {price} gold.")
         except Exception:
             logger.exception("extrastore command failed")
             await ctx.send("❌ Purchase failed. No cooldown applied.")
@@ -488,11 +491,11 @@ class EconomyCog(commands.Cog):
                 await ctx.send(self.build_darkweb_display())
                 return
             item = item.lower()
-            prices = {"forged_documents": 5000, "stolen_data": 3000, "silencer": 1500, "explosives": 5000, "crypto_miner": 3500}
+            prices = config.EXTRACONOMY["darkweb_items"]
             if item not in prices:
                 await ctx.send("Item not available. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -500,12 +503,12 @@ class EconomyCog(commands.Cog):
             if not self.manager.try_withdraw_gold(uid, price):
                 await ctx.send("You don't have enough gold. No cooldown applied.")
                 return
-            if random.random() < 0.5:
+            if random.random() < config.EXTRACONOMY["darkweb_scam_chance"]:
                 inv = self.manager.get_inventory(uid) or []
                 inv.append(item)
                 self.manager.update_inventory(uid, inv)
                 self._set_last(cmd, uid)
-                await ctx.send(f"✅ Dark web purchase succeeded: acquired {item.upper()}.")
+                await ctx.send(f"✅ Dark web purchase succeeded: acquired {item}.")
             else:
                 self._set_last(cmd, uid)
                 await ctx.send(f"💀 Scammed. Lost {price} gold.")
@@ -526,7 +529,7 @@ class EconomyCog(commands.Cog):
             if amount <= 0:
                 await ctx.send("Bet must be positive. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -536,12 +539,12 @@ class EconomyCog(commands.Cog):
             symbols = ["🍒", "🍋", "🔔", "💎", "7️⃣"]
             result = [random.choice(symbols) for _ in range(3)]
             if result == ["7️⃣", "7️⃣", "7️⃣"]:
-                win = amount * 10
+                win = amount * config.EXTRACONOMY["slots_jackpot_multiplier"]
                 self.manager.add_gold(uid, win)
                 self._set_last(cmd, uid)
                 await ctx.send(f"{' '.join(result)}\n🎉 JACKPOT! You won {win} gold!")
             elif result.count(result[0]) == 3:
-                win = amount * 2
+                win = amount * config.EXTRACONOMY["slots_triple_multiplier"]
                 self.manager.add_gold(uid, win)
                 self._set_last(cmd, uid)
                 await ctx.send(f"{' '.join(result)}\nNice triple! You won {win} gold!")
@@ -566,7 +569,7 @@ class EconomyCog(commands.Cog):
             if amount <= 0:
                 await ctx.send("Bet must be positive. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -592,10 +595,6 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def extracards(self, ctx, amount: Optional[int] = None):
-        """
-        Renamed cards command -> extracards
-        Usage: .extracards <amount>
-        """
         cmd = "extracards"
         uid = str(ctx.author.id)
         try:
@@ -607,7 +606,7 @@ class EconomyCog(commands.Cog):
             if amount <= 0:
                 await ctx.send("Bet must be positive. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -646,7 +645,7 @@ class EconomyCog(commands.Cog):
             if amount <= 0:
                 await ctx.send("Bet must be positive. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -654,18 +653,21 @@ class EconomyCog(commands.Cog):
                 await ctx.send("Not enough gold. No cooldown applied.")
                 return
             r = random.random()
-            if r < 0.45:
+            if r < config.EXTRACONOMY["extragamble_win_chance"]:
+                # loss
                 self.manager.try_withdraw_gold(uid, amount)
                 self._set_last(cmd, uid)
                 await ctx.send(f"💸 You lost {amount} gold.")
-            elif r < 0.90:
-                self.manager.add_gold(uid, amount)
-                self._set_last(cmd, uid)
-                await ctx.send(f"🎉 You won {amount} gold (1x profit).")
-            else:
+            elif r < config.EXTRACONOMY["extragamble_win_chance"] + config.EXTRACONOMY["extragamble_jackpot_chance"]:
+                # jackpot (2x)
                 self.manager.add_gold(uid, amount * 2)
                 self._set_last(cmd, uid)
                 await ctx.send(f"🎊 JACKPOT! You won {amount * 2} gold (2x profit).")
+            else:
+                # win (1x)
+                self.manager.add_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🎉 You won {amount} gold (1x profit).")
         except Exception:
             logger.exception("extragamble failed")
             await ctx.send("❌ Gambling failed. No cooldown applied.")
@@ -673,13 +675,7 @@ class EconomyCog(commands.Cog):
     @commands.command()
     async def jobs(self, ctx):
         try:
-            roles = {
-                "bank": ["Teller", "Manager", "Executive"],
-                "police": ["Recruit", "Officer", "Captain"],
-                "security": ["Guard", "Supervisor", "Chief"],
-                "government": ["Clerk", "Minister", "President", "Prime Minister"],
-                "military": ["Private", "Sergeant", "Commander"]
-            }
+            roles = config.EXTRACONOMY["job_application_roles"]
             text = ["📋 Available Jobs:"]
             for cat, rs in roles.items():
                 text.append(f"- {cat.title()}: {', '.join(rs)}")
@@ -706,18 +702,12 @@ class EconomyCog(commands.Cog):
             if job_type is None:
                 await ctx.send("Usage: /job <job_type>. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
             jt = job_type.lower()
-            mapping = {
-                "bank": ["Rejected", "Teller", "Manager", "Executive"],
-                "police": ["Rejected", "Recruit", "Officer", "Captain"],
-                "security": ["Rejected", "Guard", "Supervisor", "Chief"],
-                "government": ["Rejected", "Clerk", "Minister", "President", "Prime Minister"],
-                "military": ["Rejected", "Private", "Sergeant", "Commander"]
-            }
+            mapping = config.EXTRACONOMY["job_application_roles"]
             if jt not in mapping:
                 await ctx.send("Invalid job type. No cooldown applied.")
                 return
@@ -745,7 +735,7 @@ class EconomyCog(commands.Cog):
         try:
             if not await self.require_civ(ctx):
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.extrawork_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
@@ -756,14 +746,8 @@ class EconomyCog(commands.Cog):
             if job_name == "Unemployed":
                 await ctx.send("You need a job to work. Use /job to get one. No cooldown applied.")
                 return
-            salary_map = {
-                "Teller": 100, "Manager": 200, "Executive": 300,
-                "Recruit": 150, "Officer": 250, "Captain": 350,
-                "Guard": 120, "Supervisor": 220, "Chief": 320,
-                "Clerk": 180, "Minister": 280, "President": 500, "Prime Minister": 600,
-                "Private": 130, "Sergeant": 230, "Commander": 330
-            }
-            salary = salary_map.get(job_name, 50)
+            salary_map = config.EXTRACONOMY["extrawork_salary_multipliers"]
+            salary = salary_map.get(job_name, config.EXTRACONOMY["extrawork_base_salary"])
             self.manager.add_gold(uid, salary)
             self._set_last(cmd, uid)
             bal = self.manager.get_gold(uid)
@@ -789,15 +773,16 @@ class EconomyCog(commands.Cog):
             if job.lower() not in ["recruit", "officer", "captain", "police"]:
                 await ctx.send("🚫 Only police can arrest criminals. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
-            if random.random() < 0.6:
-                if self.manager.try_withdraw_gold(target_id, 200):
-                    self.manager.add_gold(uid, 200)
+            if random.random() < config.EXTRACONOMY["arrest_success_chance"]:
+                seize = config.EXTRACONOMY["arrest_seize_amount"]
+                if self.manager.try_withdraw_gold(target_id, seize):
+                    self.manager.add_gold(uid, seize)
                     self._set_last(cmd, uid)
-                    await ctx.send(f"🚓 Arrested {target.mention} and seized 200 gold!")
+                    await ctx.send(f"🚓 Arrested {target.mention} and seized {seize} gold!")
                 else:
                     self._set_last(cmd, uid)
                     await ctx.send(f"🚓 Arrested {target.mention} but they had no funds.")
@@ -826,12 +811,12 @@ class EconomyCog(commands.Cog):
                                "prime minister", "private", "sergeant", "commander"]:
                 await ctx.send("🚫 Only criminals can rob others. No cooldown applied.")
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
-            if random.random() < 0.5:
-                stolen = random.randint(100, 300)
+            if random.random() < config.EXTRACONOMY["rob_success_chance"]:
+                stolen = random.randint(config.EXTRACONOMY["rob_stolen_min"], config.EXTRACONOMY["rob_stolen_max"])
                 if self.manager.try_withdraw_gold(target_id, stolen):
                     self.manager.add_gold(uid, stolen)
                     self._set_last(cmd, uid)
@@ -858,33 +843,33 @@ class EconomyCog(commands.Cog):
             if not await self.require_civ(ctx):
                 return
             if project is None:
-                await ctx.send(
-                    "💻 Coding Projects:\n"
-                    "/code virus — 250 gold, finishes in ~25 min\n"
-                    "/code website — 50 gold, finishes in ~10 min\n"
-                    "/code messenger — 3500 gold, finishes in ~5 hours"
-                )
+                projects = config.EXTRACONOMY["coding_projects"]
+                lines = ["💻 Coding Projects:"]
+                for name, data in projects.items():
+                    if name == "messenger":
+                        lines.append(f"/code {name} — {data['cost']} gold, finishes in ~{data['duration_seconds']//60} min, creates a product")
+                    else:
+                        lines.append(f"/code {name} — {data['cost']} gold, finishes in ~{data['duration_seconds']//60} min, rewards gold")
+                await ctx.send("\n".join(lines))
                 return
-            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            rem = self._is_on_cooldown(cmd, uid)
             if rem:
                 await ctx.send(f"⏳ You are on cooldown for {rem}s.")
                 return
             p = project.lower()
-            if p == "virus":
-                cost, duration = 250, 1500
-            elif p == "website":
-                cost, duration = 50, 600
-            elif p == "messenger":
-                cost, duration = 3500, 18000
-            else:
+            projects = config.EXTRACONOMY["coding_projects"]
+            if p not in projects:
                 await ctx.send("Unknown project. No cooldown applied.")
                 return
+            data = projects[p]
+            cost = data["cost"]
+            duration = data["duration_seconds"]
             if not self.manager.try_withdraw_gold(uid, cost):
                 await ctx.send("Not enough gold. No cooldown applied.")
                 return
             self.coding_tasks[str(uid)] = (p, time.time() + duration)
             self._set_last(cmd, uid)
-            await ctx.send(f"🛠️ Started coding {p}. It will finish in approx {int(duration/60)} minutes.")
+            await ctx.send(f"🛠️ Started coding {p}. It will finish in approx {duration//60} minutes.")
         except Exception:
             logger.exception("code failed")
             await ctx.send("❌ Code command failed. No cooldown applied.")
