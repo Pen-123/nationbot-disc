@@ -500,15 +500,29 @@ class TerritoryCog(commands.Cog):
             logger.error(f"Failed to conquer province {province} for {user_id}")
             return False
 
-    def _calculate_soldier_cost(self, area: int) -> int:
-        """Base cost: 1 soldier per 595 km², min 10, max 5000."""
-        cost = max(10, int(area / 595))
-        return min(cost, 5000)
+    def _calculate_base_soldier_cost(self, area: int) -> int:
+        """
+        Returns the base soldier cost before any reductions.
+        For area >= 1,000,000 km²: 1 soldier per 10,000 km².
+        For area < 1,000,000 km²: 1 soldier per 595 km².
+        Then clamped to min 10, max 5000 (normal).
+        """
+        if area >= 1_000_000:
+            base = max(10, area // 10000)
+        else:
+            base = max(10, area // 595)
+        return min(base, 5000)
 
-    def _calculate_rapid_soldier_cost(self, area: int) -> int:
-        """Rapid expansion cost: 2× normal – 1 per 297.5 km², min 20, max 10000."""
-        cost = max(20, int(area / 297.5))
-        return min(cost, 10000)
+    def _calculate_base_rapid_soldier_cost(self, area: int) -> int:
+        """
+        Rapid expansion cost: 2× the normal base, with different min/max.
+        For area >= 1,000,000 km²: 2 * (area // 10000) – but we apply the multiplier after the base.
+        We'll just double the normal base and apply the rapid min/max.
+        """
+        normal_base = self._calculate_base_soldier_cost(area)
+        # Double it, but keep within rapid bounds (min 20, max 10000)
+        rapid = max(20, normal_base * 2)
+        return min(rapid, 10000)
 
     def _get_navy_and_airforce(self, user_id: str):
         """Return (has_navy, has_airforce) booleans."""
@@ -547,16 +561,13 @@ class TerritoryCog(commands.Cog):
         has_navy, has_airforce = self._get_navy_and_airforce(user_id)
         is_overseas = self._is_overseas(user_id, target_subregion)
 
-        # If overseas, navy is required (checked elsewhere), but reduction:
         if is_overseas:
             if has_navy:
                 reduction = 0.75  # 25% off
                 reason = "🛳️ Navy (25% off – overseas)"
             else:
-                # Should not happen, but fallback
                 return resource_cost, soldier_cost, "⚠️ No navy – overseas expansion blocked"
         else:
-            # Land (same continent)
             if has_airforce:
                 reduction = 0.5   # 50% off
                 reason = "✈️ Airforce (50% off – land)"
@@ -677,7 +688,9 @@ class TerritoryCog(commands.Cog):
 
             embed = discord.Embed(
                 title="🌍 Available Provinces",
-                description="Use `.expand <province>` to claim one. Each expansion costs resources + soldiers.\n\n**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
+                description="Use `.expand <province>` to claim one. Each expansion costs resources + soldiers.\n\n"
+                            "**Soldier cost:** For large provinces (≥1M km²) – 1 soldier per 10,000 km².\n"
+                            "**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
                 color=discord.Color.blue()
             )
 
@@ -779,7 +792,7 @@ class TerritoryCog(commands.Cog):
         }
 
         resource_cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
-        soldier_cost = self._calculate_soldier_cost(area)
+        soldier_cost = self._calculate_base_soldier_cost(area)
 
         # Apply reductions
         resource_cost, soldier_cost, reduction_reason = self._apply_expansion_reductions(
@@ -825,7 +838,7 @@ class TerritoryCog(commands.Cog):
     async def rapid_expansion(self, ctx, *, province: str = None):
         """
         Rapidly expand using soldiers instead of resources.
-        Cost: 2× normal soldier cost (1 per 297.5 km²), capped at 10,000.
+        Cost: 2× normal soldier cost (with the same area-based scaling), capped at 10,000.
         """
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -844,7 +857,7 @@ class TerritoryCog(commands.Cog):
             embed = discord.Embed(
                 title="⚡ Rapid Expansion",
                 description="Claim a province using soldiers instead of resources.\n"
-                            "Cost: **2× normal** – 1 soldier per 297.5 km² (min 20, max 10,000).\n\n"
+                            "Cost: **2× normal** – for large provinces (≥1M km²) 1 per 10,000 km² (min 20, max 10,000).\n\n"
                             "**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
                 color=discord.Color.orange()
             )
@@ -931,9 +944,9 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is overseas (different continent)! You need a navy to expand there. Build ships with `.buildship`.")
             return
 
-        # Base soldier cost
+        # Base soldier cost (rapid)
         area = self.province_areas.get(province, 1000)
-        soldier_cost = self._calculate_rapid_soldier_cost(area)
+        soldier_cost = self._calculate_base_rapid_soldier_cost(area)
 
         # Apply reductions (only soldier cost)
         dummy_resources = {"gold": 0, "food": 0, "wood": 0, "stone": 0}
