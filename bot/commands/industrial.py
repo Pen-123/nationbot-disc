@@ -10,6 +10,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from bot.utils import format_number, create_embed
+from bot import config
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,32 @@ DEFAULT_STATS = {
 }
 
 
+# ---- Cooldown decorator using config ----
+def industrial_cooldown(command_name: str):
+    def decorator(func):
+        async def wrapper(self, ctx, *args, **kwargs):
+            user_id = str(ctx.author.id)
+            # Check if command has cooldown in config
+            minutes = config.COOLDOWNS.get(command_name, 0)
+            if minutes <= 0:
+                return await func(self, ctx, *args, **kwargs)
+            # Use existing cooldown system (db based)
+            last_used = self.db.get_command_cooldown(user_id, command_name)
+            if last_used:
+                cooldown_end = last_used + timedelta(minutes=minutes)
+                if datetime.utcnow() < cooldown_end:
+                    remaining = cooldown_end - datetime.utcnow()
+                    mins = int(remaining.total_seconds() // 60)
+                    secs = int(remaining.total_seconds() % 60)
+                    await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
+                    return
+            # Update cooldown
+            self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
+            return await func(self, ctx, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
 class IndustrialCog(commands.Cog):
     """Industrial Revolution – permanent micromanagement challenge (once per player)."""
 
@@ -50,54 +77,39 @@ class IndustrialCog(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
-        self._active_revolutions = {}   # user_id -> data dict
+        self._active_revolutions = {}
         self._passive_task = None
 
     # ---- Firestore-based helpers ----
-
     def _get_revolution(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch a revolution from cache or Firestore."""
         if user_id in self._active_revolutions:
             return self._active_revolutions[user_id]
-
         data = self.db.get_industrial_revolution(user_id)
         if not data:
             return None
-
-        # Ensure all expected keys exist
         data.setdefault("active", False)
         data.setdefault("completed", False)
         data.setdefault("started_at", None)
         data.setdefault("stats", DEFAULT_STATS.copy())
-
-        # Convert started_at string to datetime if present
         if data.get("started_at") and isinstance(data["started_at"], str):
             try:
                 data["started_at"] = datetime.fromisoformat(data["started_at"])
             except ValueError:
                 data["started_at"] = None
-
-        # Ensure stats is a dict
         if not isinstance(data["stats"], dict):
             data["stats"] = DEFAULT_STATS.copy()
-
-        # Cache if active or completed
         if data["active"] or data["completed"]:
             self._active_revolutions[user_id] = data
         return data
 
     def _save_revolution(self, user_id: str, data: Dict[str, Any]):
-        """Persist revolution data to Firestore and update cache."""
-        # Prepare a copy for storage (convert datetime to iso string)
         store_data = {
             "active": data["active"],
             "completed": data.get("completed", False),
             "started_at": data["started_at"].isoformat() if data.get("started_at") else None,
-            "stats": data["stats"]   # already a dict
+            "stats": data["stats"]
         }
         self.db.set_industrial_revolution(user_id, store_data)
-
-        # Update cache
         if data["active"] or data.get("completed", False):
             self._active_revolutions[user_id] = data
         else:
@@ -114,7 +126,6 @@ class IndustrialCog(commands.Cog):
 
     # ---------- PASSIVE INCOME ----------
     async def _passive_income_loop(self):
-        """Background task: every 5 minutes, give passive income to active revolutions."""
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
             try:
@@ -126,51 +137,33 @@ class IndustrialCog(commands.Cog):
                 logger.error(f"Error in passive income loop: {e}", exc_info=True)
 
     async def _apply_passive_income(self):
-        """Apply passive income to all active revolutions."""
         for user_id, data in list(self._active_revolutions.items()):
             if not data["active"] or data.get("completed", False):
                 continue
-
             stats = data["stats"]
-
-            # ---- Calculate stockpile gain ----
-            base = stats["factory_output"] / 10  # e.g., 50 output -> 5 per tick
+            base = stats["factory_output"] / 10
             efficiency = stats["production_efficiency"] / 100
             morale = stats["worker_morale"] / 100
             tech_bonus = 1 + (stats["tech_level"] * 0.05)
-            unrest_penalty = 1 - (stats["labor_unrest"] / 200)  # max 0.5 penalty at 100 unrest
-
+            unrest_penalty = 1 - (stats["labor_unrest"] / 200)
             stockpile_gain = int(base * efficiency * morale * tech_bonus * unrest_penalty)
             stockpile_gain = max(0, stockpile_gain)
-
-            # ---- Calculate raw material gain (small) ----
-            raw_gain = int(stats["raw_materials"] * 0.02)  # 2% of current raw materials
+            raw_gain = int(stats["raw_materials"] * 0.02)
             raw_gain = max(1, raw_gain)
-
-            # ---- Calculate gold gain (financial reserves) ----
-            gold_gain = int(stats["financial_reserves"] * 0.01)  # 1% of current gold
+            gold_gain = int(stats["financial_reserves"] * 0.01)
             gold_gain = max(1, gold_gain)
-
-            # ---- Apply gains ----
             stats["resource_stockpile"] += stockpile_gain
             stats["raw_materials"] += raw_gain
             stats["financial_reserves"] += gold_gain
-
-            # ---- Also slight pollution increase from production ----
             stats["pollution"] = min(100, stats["pollution"] + max(0, int(stockpile_gain * 0.05)))
-
-            # ---- Save changes ----
             self._save_revolution(user_id, data)
-            logger.debug(f"Passive income for {user_id}: +{stockpile_gain} stockpile, +{raw_gain} raw, +{gold_gain} gold")
 
     async def cog_load(self):
-        """Start the passive income loop when cog loads."""
         if self._passive_task is None or self._passive_task.done():
             self._passive_task = asyncio.create_task(self._passive_income_loop())
             logger.info("Industrial passive income loop started")
 
     async def cog_unload(self):
-        """Cancel the passive income loop."""
         if self._passive_task and not self._passive_task.done():
             self._passive_task.cancel()
             try:
@@ -185,16 +178,13 @@ class IndustrialCog(commands.Cog):
         user_id = str(ctx.author.id)
         if user_id not in self._active_revolutions:
             return
-
         data = self._active_revolutions[user_id]
         if not data["active"] or data.get("completed", False):
             return
-
         stats = data["stats"]
         if stats["industrial_power"] >= 1000:
             await self._finish_revolution(ctx, user_id, data)
             return
-
         if random.random() < 0.30:
             await self._trigger_random_disaster(ctx, user_id, data)
 
@@ -218,10 +208,8 @@ class IndustrialCog(commands.Cog):
             ("Railway sabotage! -20 Railway Coverage", {"railway_coverage": -20}),
             ("Public panic! -20 Public Trust, +15 Unrest", {"public_trust": -20, "labor_unrest": 15}),
         ]
-
         event = random.choice(events)
         description, changes = event
-
         for stat, delta in changes.items():
             if stat in stats:
                 new_val = stats[stat] + delta
@@ -237,9 +225,7 @@ class IndustrialCog(commands.Cog):
                     stats[stat] = max(0, new_val)
                 else:
                     stats[stat] = new_val
-
         self._save_revolution(user_id, data)
-
         embed = discord.Embed(title="💥 INDUSTRIAL DISASTER!", description=description, color=discord.Color.red())
         embed.set_footer(text="Your revolution is getting messy!")
         await ctx.send(embed=embed)
@@ -247,11 +233,9 @@ class IndustrialCog(commands.Cog):
     async def _finish_revolution(self, ctx, user_id: str, data: Dict[str, Any]):
         stats = data["stats"]
         power = stats["industrial_power"]
-
         data["active"] = False
         data["completed"] = True
         self._save_revolution(user_id, data)
-
         if power >= 1000:
             gold_reward = random.randint(5000, 12000)
             food_reward = random.randint(3000, 7000)
@@ -259,7 +243,6 @@ class IndustrialCog(commands.Cog):
             wood_reward = random.randint(2000, 5000)
             citizens_reward = random.randint(200, 600)
             tech_reward = random.randint(3, 7)
-
             self._update_civ_resources(user_id, {
                 "gold": gold_reward,
                 "food": food_reward,
@@ -268,7 +251,6 @@ class IndustrialCog(commands.Cog):
             })
             self.civ_manager.update_population(user_id, {"citizens": citizens_reward})
             self.civ_manager.update_military(user_id, {"tech_level": tech_reward})
-
             embed = discord.Embed(
                 title="🏭 INDUSTRIAL REVOLUTION COMPLETE!",
                 description="You successfully transformed your nation!",
@@ -294,28 +276,25 @@ class IndustrialCog(commands.Cog):
                 color=discord.Color.red()
             )
             await ctx.send(embed=embed)
-
         self.db.log_event(user_id, "industrial_revolution", "Industrial Revolution Ended",
                           f"Power: {power}/1000 - {'Success' if power>=1000 else 'Failure'}")
 
-    # ---------- COMMANDS ----------
+    # ---------- COMMANDS (with cooldowns via decorator) ----------
     @commands.command(name='industrial_start')
+    @industrial_cooldown("industrial_start")
     async def industrial_start(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
-
         if data and data.get("completed", False):
             await ctx.send("❌ You have already completed the Industrial Revolution! It cannot be started again.")
             return
         if data and data["active"]:
             await ctx.send("❌ You already have an active revolution! Use `.industrial_status` to check.")
             return
-
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You need a civilization first! Use `.start`.")
             return
-
         embed = discord.Embed(
             title="🏭 Start the Industrial Revolution?",
             description=(
@@ -343,7 +322,6 @@ class IndustrialCog(commands.Cog):
         tech = civ['military']['tech_level']
         stats["tech_level"] = max(1, min(10, tech + random.randint(0, 2)))
         stats["financial_reserves"] = civ['resources'].get('gold', 500)
-
         data = {
             "active": True,
             "completed": False,
@@ -366,6 +344,7 @@ class IndustrialCog(commands.Cog):
         self.db.log_event(user_id, "industrial_revolution", "Industrial Revolution Started", "Began the revolution.")
 
     @commands.command(name='industrial_status')
+    @industrial_cooldown("industrial_status")
     async def industrial_status(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -375,14 +354,12 @@ class IndustrialCog(commands.Cog):
                 return
             await ctx.send("❌ No active revolution. Use `.industrial_start`.")
             return
-
         stats = data["stats"]
         embed = discord.Embed(
             title="🏭 Industrial Revolution Status",
             description="Reach 1000 Industrial Power to complete it.",
             color=discord.Color.blue()
         )
-
         groups = {
             "⚙️ Core": ["industrial_power", "factory_output", "production_efficiency", "tech_level"],
             "👷 Workforce": ["worker_morale", "labor_unrest", "education", "health"],
@@ -392,7 +369,6 @@ class IndustrialCog(commands.Cog):
             "🛡️ Safety & Stability": ["machine_breakdown_risk", "military_protection", "government_support", "public_trust", "trade_influence"],
             "⚡ Power": ["steam_pressure"]
         }
-
         for group_name, keys in groups.items():
             lines = []
             for key in keys:
@@ -409,7 +385,6 @@ class IndustrialCog(commands.Cog):
                     val_str = f"{val}"
                 lines.append(f"**{key.replace('_',' ').title()}:** {val_str}")
             embed.add_field(name=group_name, value="\n".join(lines), inline=False)
-
         progress = min(100, int((stats["industrial_power"] / 1000) * 100))
         bar = "▓" * (progress // 10) + "░" * (10 - progress // 10)
         embed.add_field(
@@ -420,6 +395,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='industrial_build')
+    @industrial_cooldown("industrial_build")
     async def industrial_build(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -441,6 +417,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send(f"🏗️ Factory built! Power +{gain} (now {stats['industrial_power']}/1000).")
 
     @commands.command(name='industrial_tech')
+    @industrial_cooldown("industrial_tech")
     async def industrial_tech(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -459,6 +436,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send(f"🔬 Tech advanced! Level: {stats['tech_level']}.")
 
     @commands.command(name='industrial_workers')
+    @industrial_cooldown("industrial_workers")
     async def industrial_workers(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -477,6 +455,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("👷 Workers trained! Morale +10, Unrest -5, Power +15.")
 
     @commands.command(name='industrial_cleanup')
+    @industrial_cooldown("industrial_cleanup")
     async def industrial_cleanup(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -495,6 +474,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🌿 Cleanup success! Pollution -15, Env Damage -10, Health +5.")
 
     @commands.command(name='industrial_railway')
+    @industrial_cooldown("industrial_railway")
     async def industrial_railway(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -514,6 +494,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🚂 Railways built! Infra +20, Coverage +15, Power +10.")
 
     @commands.command(name='industrial_transport')
+    @industrial_cooldown("industrial_transport")
     async def industrial_transport(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -532,6 +513,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🚚 Transport improved! +15 Network, +15 Power.")
 
     @commands.command(name='industrial_army')
+    @industrial_cooldown("industrial_army")
     async def industrial_army(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -550,6 +532,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🛡️ Military raised! Protection +20, Power +10.")
 
     @commands.command(name='industrial_policy')
+    @industrial_cooldown("industrial_policy")
     async def industrial_policy(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -568,6 +551,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("📜 Policy enacted! Gov Support +15, Trust +10, Power +10.")
 
     @commands.command(name='industrial_import')
+    @industrial_cooldown("industrial_import")
     async def industrial_import(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -585,6 +569,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("📦 Imports secured! +50 Raw Materials, +20 Power.")
 
     @commands.command(name='industrial_export')
+    @industrial_cooldown("industrial_export")
     async def industrial_export(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -603,6 +588,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("📤 Exported goods! +100 Gold, +15 Trade, +15 Power.")
 
     @commands.command(name='industrial_steam')
+    @industrial_cooldown("industrial_steam")
     async def industrial_steam(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -620,6 +606,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("💨 Steam research done! Pressure +20, Power +25.")
 
     @commands.command(name='industrial_mine')
+    @industrial_cooldown("industrial_mine")
     async def industrial_mine(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -638,6 +625,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("⛏️ Mine built! +30 Stockpile, +15 Power.")
 
     @commands.command(name='industrial_hospital')
+    @industrial_cooldown("industrial_hospital")
     async def industrial_hospital(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -656,6 +644,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🏥 Hospital built! Health +25, Power +10.")
 
     @commands.command(name='industrial_school')
+    @industrial_cooldown("industrial_school")
     async def industrial_school(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -674,6 +663,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("📚 School built! Education +20, Power +10.")
 
     @commands.command(name='industrial_law')
+    @industrial_cooldown("industrial_law")
     async def industrial_law(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -691,6 +681,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("⚖️ Law enforced! Unrest -20, Trust -5, Power -10.")
 
     @commands.command(name='industrial_trade')
+    @industrial_cooldown("industrial_trade")
     async def industrial_trade(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -708,6 +699,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🤝 Diplomatic trade! +25 Influence, +30 Power.")
 
     @commands.command(name='industrial_aid')
+    @industrial_cooldown("industrial_aid")
     async def industrial_aid(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -725,6 +717,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🤲 Aid received! +200 Gold, Power +5.")
 
     @commands.command(name='industrial_suppress')
+    @industrial_cooldown("industrial_suppress")
     async def industrial_suppress(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -741,6 +734,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🔫 Revolt suppressed! Unrest -30, Trust -15.")
 
     @commands.command(name='industrial_bribe')
+    @industrial_cooldown("industrial_bribe")
     async def industrial_bribe(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -758,6 +752,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("💵 Bribes paid! Morale +20, Unrest -10.")
 
     @commands.command(name='industrial_automate')
+    @industrial_cooldown("industrial_automate")
     async def industrial_automate(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -774,6 +769,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🤖 Automation complete! Efficiency +15, Power +10.")
 
     @commands.command(name='industrial_upgrade')
+    @industrial_cooldown("industrial_upgrade")
     async def industrial_upgrade(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -792,6 +788,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("⬆️ Factory upgraded! Power +30, Pollution +10.")
 
     @commands.command(name='industrial_relief')
+    @industrial_cooldown("industrial_relief")
     async def industrial_relief(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -810,6 +807,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🆘 Disaster relief! Health +20, Trust +15, Power -20.")
 
     @commands.command(name='industrial_expand')
+    @industrial_cooldown("industrial_expand")
     async def industrial_expand(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -827,24 +825,43 @@ class IndustrialCog(commands.Cog):
         self._save_revolution(user_id, data)
         await ctx.send("🏙️ City expanded! Urbanization +30, Power +15.")
 
+    # ---- FIXED BANKING COMMAND (no infinite spam) ----
     @commands.command(name='industrial_banking')
+    @industrial_cooldown("industrial_banking")
     async def industrial_banking(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
         if not data or not data["active"]:
             await ctx.send("❌ No active revolution.")
             return
+        
         stats = data["stats"]
+        
+        # Check max uses limit (stored in stats)
+        banking_uses = stats.get("banking_uses", 0)
+        max_uses = config.INDUSTRIAL.get("banking_max_uses", 5)
+        
+        if banking_uses >= max_uses:
+            await ctx.send(f"❌ You have already used banking {max_uses} times, which is the maximum allowed for this revolution.")
+            return
+        
         if stats["financial_reserves"] < 100:
             await ctx.send("❌ Need 100 Gold to invest.")
             return
+        
         stats["financial_reserves"] -= 100
-        stats["financial_reserves"] += 200
+        # Random return: 150-300 gold (profit 50-200)
+        gain = random.randint(150, 300)
+        stats["financial_reserves"] += gain
         stats["industrial_power"] += 20
+        # Increment use counter
+        stats["banking_uses"] = banking_uses + 1
+        
         self._save_revolution(user_id, data)
-        await ctx.send("🏦 Banking invest! +200 Gold, +20 Power.")
+        await ctx.send(f"🏦 Banking invest! +{gain} Gold, +20 Power. (Uses: {banking_uses+1}/{max_uses})")
 
     @commands.command(name='industrial_nationalize')
+    @industrial_cooldown("industrial_nationalize")
     async def industrial_nationalize(self, ctx):
         user_id = str(ctx.author.id)
         data = self._get_revolution(user_id)
@@ -861,6 +878,7 @@ class IndustrialCog(commands.Cog):
         await ctx.send("🏭 Nationalized! Power +50, Gov Support -30.")
 
     @commands.command(name='indushelp')
+    @industrial_cooldown("indushelp")
     async def indus_help(self, ctx):
         embed = discord.Embed(
             title="🏭 Industrial Revolution – Complete Command List",
@@ -894,7 +912,7 @@ class IndustrialCog(commands.Cog):
                 "`.industrial_upgrade` – Upgrade factories.\n"
                 "`.industrial_relief` – Disaster relief.\n"
                 "`.industrial_expand` – Expand cities.\n"
-                "`.industrial_banking` – Invest in banking.\n"
+                "`.industrial_banking` – Invest in banking (max 5 uses).\n"
                 "`.industrial_nationalize` – Nationalize industry."
             ),
             color=discord.Color.blue()
@@ -902,24 +920,19 @@ class IndustrialCog(commands.Cog):
         embed.set_footer(text="Manage wisely – disasters are brutal!")
         await ctx.send(embed=embed)
 
-    # ---------- ON READY: LOAD ACTIVE REVOLUTIONS FROM FIRESTORE ----------
+    # ---------- ON READY: LOAD ACTIVE REVOLUTIONS ----------
     @commands.Cog.listener()
     async def on_ready(self):
-        """Load all active or completed revolutions from Firestore into cache."""
         try:
-            # Fetch all documents from the industrial_revolutions collection
             docs = self.db.client.collection("industrial_revolutions").stream()
             count = 0
             for doc in docs:
                 data = doc.to_dict()
                 user_id = doc.id
-                # Only cache if active or completed
                 if data.get("active") or data.get("completed"):
-                    # Ensure stats is a dict
                     stats = data.get("stats", {})
                     if not isinstance(stats, dict):
                         stats = DEFAULT_STATS.copy()
-                    # Convert started_at from string if present
                     started_at = data.get("started_at")
                     if started_at and isinstance(started_at, str):
                         try:
@@ -936,7 +949,6 @@ class IndustrialCog(commands.Cog):
             logger.info(f"Restored {count} industrial revolutions from Firestore.")
         except Exception as e:
             logger.error(f"Error loading industrial revolutions on_ready: {e}")
-
 
 async def setup(bot):
     await bot.add_cog(IndustrialCog(bot))
