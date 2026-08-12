@@ -252,14 +252,19 @@ FORBIDDEN_START_PROVINCES = {
 PROVINCES = {
     "Eastern Europe": [
         "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
-        "Ukraine", "Belarus", "Moldova", "Russia", "Kosovo", "Serbia",
-        "Bosnia and Herzegovina", "Montenegro", "Albania", "North Macedonia",
-        "Slovenia", "Croatia"
+        "Ukraine", "Belarus", "Moldova", "Russia"
     ],
     "Western Europe": [
-        "France", "Germany", "United Kingdom", "Ireland", "Netherlands",
-        "Belgium", "Luxembourg", "Switzerland", "Austria", "Monaco",
-        "Andorra", "Liechtenstein", "San Marino"
+        "France", "United Kingdom", "Ireland", "Netherlands",
+        "Belgium", "Luxembourg", "Monaco", "Andorra",
+        "San Marino"
+    ],
+    "Central Europe": [
+        "Germany", "Austria", "Switzerland", "Liechtenstein"
+    ],
+    "Balkans": [
+        "Kosovo", "Serbia", "Bosnia and Herzegovina", "Montenegro",
+        "Albania", "North Macedonia", "Slovenia", "Croatia"
     ],
     "Southern Europe": [
         "Portugal", "Spain", "Italy", "Greece", "Malta", "Cyprus"
@@ -272,9 +277,8 @@ PROVINCES = {
         "Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan",
         "Tajikistan", "Afghanistan"
     ],
-    "East Asia": [
-        "China", "Japan", "South Korea", "North Korea", "Mongolia",
-        "Taiwan"
+    "Northeast Asia": [
+        "China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan"
     ],
     "South Asia": [
         "India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan"
@@ -359,15 +363,17 @@ ALL_PROVINCES = list(PROVINCE_TO_SUBREGION.keys())
 ALL_SUBREGIONS = list(PROVINCES.keys())
 
 SUBREGION_DATA = {
-    "Eastern Europe": {"neighbours": ["Western Europe", "Northern Europe", "Central Asia"]},
-    "Western Europe": {"neighbours": ["Southern Europe", "Northern Europe", "Eastern Europe"]},
-    "Southern Europe": {"neighbours": ["Western Europe", "Middle East", "North Africa"]},
-    "Northern Europe": {"neighbours": ["Western Europe", "Eastern Europe"]},
-    "Central Asia": {"neighbours": ["Eastern Europe", "South Asia", "East Asia", "Middle East"]},
-    "East Asia": {"neighbours": ["Central Asia", "South Asia", "Southeast Asia"]},
-    "South Asia": {"neighbours": ["Central Asia", "East Asia", "Southeast Asia", "Middle East"]},
-    "Southeast Asia": {"neighbours": ["East Asia", "South Asia", "Australia"]},
-    "Middle East": {"neighbours": ["Southern Europe", "Central Asia", "South Asia", "North Africa"]},
+    "Eastern Europe": {"neighbours": ["Central Europe", "Balkans", "Northern Europe", "Central Asia"]},
+    "Western Europe": {"neighbours": ["Southern Europe", "Central Europe", "Northern Europe"]},
+    "Central Europe": {"neighbours": ["Western Europe", "Eastern Europe", "Balkans", "Southern Europe"]},
+    "Balkans": {"neighbours": ["Central Europe", "Eastern Europe", "Southern Europe", "Middle East"]},
+    "Southern Europe": {"neighbours": ["Western Europe", "Central Europe", "Balkans", "Middle East", "North Africa"]},
+    "Northern Europe": {"neighbours": ["Western Europe", "Central Europe", "Eastern Europe"]},
+    "Central Asia": {"neighbours": ["Eastern Europe", "South Asia", "Northeast Asia", "Middle East"]},
+    "Northeast Asia": {"neighbours": ["Central Asia", "South Asia", "Southeast Asia"]},
+    "South Asia": {"neighbours": ["Central Asia", "Northeast Asia", "Southeast Asia", "Middle East"]},
+    "Southeast Asia": {"neighbours": ["Northeast Asia", "South Asia", "Australia"]},
+    "Middle East": {"neighbours": ["Southern Europe", "Balkans", "Central Asia", "South Asia", "North Africa"]},
     "North Africa": {"neighbours": ["Southern Europe", "Middle East", "West Africa", "Central Africa"]},
     "West Africa": {"neighbours": ["North Africa", "Central Africa", "Southern Africa"]},
     "Central Africa": {"neighbours": ["North Africa", "West Africa", "East Africa", "Southern Africa"]},
@@ -394,10 +400,12 @@ SUBREGION_DATA = {
 SUBREGION_TO_CONTINENT = {
     "Eastern Europe": "Europe",
     "Western Europe": "Europe",
+    "Central Europe": "Europe",
+    "Balkans": "Europe",
     "Southern Europe": "Europe",
     "Northern Europe": "Europe",
     "Central Asia": "Asia",
-    "East Asia": "Asia",
+    "Northeast Asia": "Asia",
     "South Asia": "Asia",
     "Southeast Asia": "Asia",
     "Middle East": "Asia",
@@ -424,6 +432,42 @@ SUBREGION_TO_CONTINENT = {
     "West Antarctica": "Antarctica",
 }
 
+# ---- FULL COUNTRYBALL MAPPING ----
+REGION_TO_COUNTRYBALL = {
+    "Eastern Europe": "soviet_union",
+    "Western Europe": "reich",
+    "Central Europe": "german_empire",      # Now German Empire directly
+    "Balkans": "austria-hungary",
+    "Southern Europe": "italy",
+    "Northern Europe": "british_empire",
+    "Central Asia": "soviet_union",
+    "Northeast Asia": "china",
+    "South Asia": "british_empire",
+    "Southeast Asia": "japanese_empire",
+    "Middle East": "ottoman_empire",
+    "North Africa": "ottoman_empire",
+    "West Africa": "france",
+    "Central Africa": "france",
+    "East Africa": "british_empire",
+    "Southern Africa": "british_empire",
+    "Western North America": "america",
+    "Central North America": "america",
+    "Eastern North America": "america",
+    "Mexico": "america",
+    "Central America": "america",
+    "Northern South America": "america",
+    "Western South America": "america",
+    "Eastern South America": "america",
+    "Brazil": "america",
+    "Southern Cone": "america",
+    "Australia": "british_empire",
+    "New Zealand": "british_empire",
+    "Pacific Islands": "british_empire",
+    "Antarctic Peninsula": None,
+    "East Antarctica": None,
+    "West Antarctica": None,
+}
+
 class TerritoryCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -433,32 +477,21 @@ class TerritoryCog(commands.Cog):
 
     # ---- Firestore-based territory helpers ----
     def _get_owned_provinces(self, user_id: str) -> List[str]:
-        """Return list of province names owned by the player."""
         return self.db.get_player_territories(user_id)
 
     def _add_province(self, user_id: str, province: str, ctx=None) -> bool:
-        """
-        Add a province to a player's territory.
-        Returns True if added (or already owned), False on failure.
-        Does NOT add if already owned.
-        Updates land_size only if newly added.
-        """
-        # First, check if the user already owns this province
         owned = self._get_owned_provinces(user_id)
         if province in owned:
             logger.debug(f"Province {province} already owned by {user_id}")
-            return True  # Already owned, consider success
+            return True
 
-        # Check if another player owns it
         owner = self.db.get_territory_owner(province)
         if owner and owner != user_id:
             logger.warning(f"Province {province} owned by {owner}, cannot add to {user_id}")
             return False
 
-        # Use conquer_territory to claim it (loser_id=None for unowned)
         success = self.db.conquer_territory(user_id, None, province)
         if success:
-            # Update civilization's land_size with the province area
             area = self.province_areas.get(province, 1000)
             self.civ_manager.update_territory(user_id, {"land_size": area})
             logger.info(f"Added province {province} to {user_id}, land_size +{area}")
@@ -470,7 +503,7 @@ class TerritoryCog(commands.Cog):
     def _calculate_soldier_cost(self, area: int) -> int:
         """
         Cost in soldiers to claim a province based on its area.
-        1 soldier per 595 km², minimum 10, maximum 5000 to prevent insane numbers.
+        1 soldier per 595 km², minimum 10, maximum 5000.
         """
         cost = max(10, int(area / 595))
         return min(cost, 5000)
@@ -605,7 +638,6 @@ class TerritoryCog(commands.Cog):
             return
         province = match
 
-        # Double-check ownership (in case of race condition)
         if province in owned:
             await ctx.send(f"❌ You already own **{province}**.")
             return
@@ -665,11 +697,9 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to claim **{province}**! You have {civ['military']['soldiers']}.")
             return
 
-        # ---- Deduct costs and add province ----
         self.civ_manager.spend_resources(user_id, cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
-        # Final ownership check before adding (to avoid double-add)
         if province in self._get_owned_provinces(user_id):
             await ctx.send(f"❌ You already own **{province}** (appeared between checks).")
             return
@@ -690,7 +720,7 @@ class TerritoryCog(commands.Cog):
     async def rapid_expansion(self, ctx, *, province: str = None):
         """
         Rapidly expand using soldiers instead of resources.
-        Cost: 1 soldier per 595 km² (minimum 10, capped at 5000).
+        Cost: 2× normal soldier cost (1 per 297.5 km²), capped at 10,000.
         """
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -708,7 +738,7 @@ class TerritoryCog(commands.Cog):
             embed = discord.Embed(
                 title="⚡ Rapid Expansion",
                 description="Claim a province using soldiers instead of resources.\n"
-                            "Cost: **1 soldier per 595 km²** (min 10, max 5000).",
+                            "Cost: **2× normal** – 1 soldier per 297.5 km² (min 20, max 10,000).",
                 color=discord.Color.orange()
             )
             by_subregion = {}
@@ -746,11 +776,13 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # ---- Calculate soldier cost based on area ----
+        # ---- Calculate soldier cost based on area (2× normal) ----
         area = self.province_areas.get(province, 1000)
-        soldier_cost = self._calculate_soldier_cost(area)
+        # Normal cost per 595, but we double it -> per 297.5
+        soldier_cost = max(20, int(area / 297.5))   # 2× normal
+        soldier_cost = min(soldier_cost, 10000)     # cap at 10000
 
-        # ---- Cross-subregion penalty ----
+        # ---- Cross-subregion penalty (applied after doubling) ----
         if owned:
             owned_subregions = set()
             for p in owned:
@@ -773,7 +805,6 @@ class TerritoryCog(commands.Cog):
         # ---- Deduct soldiers and add province ----
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
-        # Final ownership check
         if province in self._get_owned_provinces(user_id):
             await ctx.send(f"❌ You already own **{province}** (appeared between checks).")
             return
