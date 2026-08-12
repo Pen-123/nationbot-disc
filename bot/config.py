@@ -32,19 +32,19 @@ ECONOMY = {
     "mine_bonus_gold_min": 3,
     "mine_bonus_gold_max": 15,
     "mine_bonus_gold_cap": 10000,
-    # .harvest
+    # .harvest (buffed)
     "harvest_base_min": 50,
     "harvest_base_max": 120,
     "harvest_citizen_divisor": 10,
     "harvest_happiness_divisor": 4,
     "harvest_employment_coeff": 0.4,
-    "harvest_cap": 800000,
-    # .drill
+    "harvest_cap": 1500000,
+    # .drill (buffed)
     "drill_minerals_min": 20,
     "drill_minerals_max": 80,
     "drill_employment_coeff": 0.4,
-    "drill_gold_cap": 500000,
-    "drill_stone_cap": 250000,
+    "drill_gold_cap": 2000000,
+    "drill_stone_cap": 1000000,
     "drill_bonus_gold_chance": 0.15,
     "drill_bonus_gold_min": 50,
     "drill_bonus_gold_max": 200,
@@ -55,7 +55,7 @@ ECONOMY = {
     "fish_treasure_base_max": 60,
     "fish_employment_coeff": 0.4,
     "fish_cap": 250000,
-    # .tax
+    # .tax (nerfed)
     "tax_base_per_citizen": 1,
     "tax_employment_coeff": 0.3,
     "tax_happiness_penalty": -5,
@@ -65,7 +65,7 @@ ECONOMY = {
     "tax_population_loss_chance": 0.35,
     "tax_population_loss_min": 10,
     "tax_population_loss_max": 30,
-    # .raidcaravan
+    # .raidcaravan (buffed)
     "raid_gold_min": 150,
     "raid_gold_max": 450,
     "raid_food_min": 80,
@@ -75,12 +75,12 @@ ECONOMY = {
     "raid_stone_min": 30,
     "raid_stone_max": 100,
     "raid_employment_coeff": 0.6,
-    "raid_cap": 500000,
+    "raid_cap": 2000000,
     "raid_bonus_gold_chance": 0.1,
     "raid_bonus_gold_min": 200,
     "raid_bonus_gold_max": 500,
     "raid_min_soldiers": 5,
-    # .labor
+    # .labor (buffed)
     "labor_gold_min": 150,
     "labor_gold_max": 450,
     "labor_food_min": 80,
@@ -90,8 +90,8 @@ ECONOMY = {
     "labor_stone_min": 60,
     "labor_stone_max": 160,
     "labor_employment_coeff": 0.6,
-    "labor_cap": 600000,
-    "labor_happiness_cost": -15,
+    "labor_cap": 800000,
+    "labor_happiness_cost": -10,
     "labor_min_soldiers": 5,
     # .advertise
     "advertise_citizen_min": 120,
@@ -167,6 +167,7 @@ COOLDOWNS = {
     "work": 1,
     "farm": 1,
     "mine": 1,
+    "harvest": 0,
     "drill": 1,
     "fish": 1,
     "tax": 5,
@@ -179,8 +180,11 @@ COOLDOWNS = {
     "sell": 0,
     "festival": 1,
     "cheer": 1,
+    "cheerup": 10,
+    "buytech": 0,
     "buysoldiers": 0,
     "burn": 0,
+    "buycard": 0,
     # Military
     "train": 2,
     "find": 1,
@@ -196,8 +200,6 @@ COOLDOWNS = {
     "buildplane": 0,
     "tech": 0,
     "trainboost": 0,
-    # Cards
-    "buycard": 0,
     # Diplomacy
     "ally": 0,
     "acceptally": 0,
@@ -285,22 +287,29 @@ COOLDOWNS = {
     "nuke": 5,
     "obliterate": 13,
     "sacrifice": 1440,
+    # Corporations
+    "corporation": 0,
+    # Megaprojects
+    "megaproject": 0,
+    # Policies
+    "policy": 0,
+    "policieshelp": 0,
 }
 
-# ---- CAPS (maximum per command) ----
+# ---- CAPS ----
 CAPS = {
     "gather": 500000,
     "work": 1500000,
     "farm": 500000,
     "mine_stone": 250000,
     "mine_wood": 250000,
-    "harvest": 800000,
-    "drill_gold": 500000,
-    "drill_stone": 250000,
+    "harvest": 1500000,
+    "drill_gold": 2000000,
+    "drill_stone": 1000000,
     "fish": 250000,
     "tax": 300000,
-    "raidcaravan": 500000,
-    "labor": 600000,
+    "raidcaravan": 2000000,
+    "labor": 800000,
     "advertise": 5000,
     "immigration": 800,
     "sell": 10000,
@@ -457,7 +466,7 @@ EASTER_EGGS = {
 
 # ---- INDUSTRIAL REVOLUTION ----
 INDUSTRIAL = {
-    "banking_max_uses": 5,   # max times you can use .industrial_banking per revolution
+    "banking_max_uses": 5,
 }
 
 # ---- EXTRA ECONOMY ----
@@ -527,3 +536,109 @@ EXTRACONOMY = {
     "product_messenger_viral_payout_min": 1000,
     "product_messenger_viral_payout_max": 5000,
 }
+
+# ---- MEGAPROJECTS ----
+MEGAPROJECTS = {
+    "great_wall": {
+        "name": "Great Wall",
+        "cost": {"gold": 5000000, "stone": 2000000},
+        "effect": {"defense_strength": 50},
+        "description": "Permanent +50% defense bonus",
+        "tech_required": 5,
+    },
+    "space_program": {
+        "name": "Space Program",
+        "cost": {"gold": 10000000, "wood": 500000, "stone": 500000},
+        "effect": {"tech_speed": 100},
+        "description": "Permanent +100% tech research speed",
+        "tech_required": 7,
+    },
+    "global_bank": {
+        "name": "Global Bank",
+        "cost": {"gold": 8000000, "food": 1000000},
+        "effect": {"tax_bonus": 50},
+        "description": "Permanent +50% tax income",
+        "tech_required": 6,
+    },
+    "ai_network": {
+        "name": "AI Network",
+        "cost": {"gold": 15000000, "wood": 1000000, "stone": 1000000},
+        "effect": {"resource_production": 100},
+        "description": "Permanent +100% all resource production",
+        "tech_required": 8,
+    },
+    "green_energy": {
+        "name": "Green Energy Grid",
+        "cost": {"gold": 6000000, "wood": 300000, "stone": 300000},
+        "effect": {"happiness_boost": 20},
+        "description": "Permanent +20 happiness",
+        "tech_required": 4,
+    }
+}
+
+# ---- POLICIES ----
+POLICIES = {
+    "military_service": {
+        "name": "Military Service",
+        "levels": {
+            1: {"gold_cost": 50000, "effect": {"soldier_training_speed": 5}, "desc": "+5% soldier training"},
+            2: {"gold_cost": 150000, "effect": {"soldier_training_speed": 10}, "desc": "+10% soldier training"},
+            3: {"gold_cost": 300000, "effect": {"soldier_training_speed": 20}, "desc": "+20% soldier training"},
+        },
+        "max_level": 3,
+        "base_desc": "Boosts soldier training speed.",
+    },
+    "agricultural_subsidies": {
+        "name": "Agricultural Subsidies",
+        "levels": {
+            1: {"gold_cost": 40000, "food_cost": 20000, "effect": {"farm_bonus": 10}, "desc": "+10% farm yield"},
+            2: {"gold_cost": 120000, "food_cost": 60000, "effect": {"farm_bonus": 20}, "desc": "+20% farm yield"},
+            3: {"gold_cost": 250000, "food_cost": 120000, "effect": {"farm_bonus": 35}, "desc": "+35% farm yield"},
+        },
+        "max_level": 3,
+        "base_desc": "Increases food production from farming.",
+    },
+    "trade_agreements": {
+        "name": "Trade Agreements",
+        "levels": {
+            1: {"gold_cost": 60000, "effect": {"trade_profit": 5}, "desc": "+5% trade profit"},
+            2: {"gold_cost": 180000, "effect": {"trade_profit": 12}, "desc": "+12% trade profit"},
+            3: {"gold_cost": 400000, "effect": {"trade_profit": 25}, "desc": "+25% trade profit"},
+        },
+        "max_level": 3,
+        "base_desc": "Increases profit from trades.",
+    },
+    "public_education": {
+        "name": "Public Education",
+        "levels": {
+            1: {"gold_cost": 80000, "effect": {"tech_speed": 5}, "desc": "+5% tech research speed"},
+            2: {"gold_cost": 200000, "effect": {"tech_speed": 12}, "desc": "+12% tech research speed"},
+            3: {"gold_cost": 500000, "effect": {"tech_speed": 25}, "desc": "+25% tech research speed"},
+        },
+        "max_level": 3,
+        "base_desc": "Accelerates technology research.",
+    },
+    "environmental_protection": {
+        "name": "Environmental Protection",
+        "levels": {
+            1: {"gold_cost": 70000, "stone_cost": 30000, "effect": {"happiness_boost": 5, "resource_production": -5}, "desc": "+5% happiness, -5% resource production"},
+            2: {"gold_cost": 180000, "stone_cost": 80000, "effect": {"happiness_boost": 10, "resource_production": -3}, "desc": "+10% happiness, -3% resource production"},
+            3: {"gold_cost": 350000, "stone_cost": 150000, "effect": {"happiness_boost": 15, "resource_production": 0}, "desc": "+15% happiness"},
+        },
+        "max_level": 3,
+        "base_desc": "Boosts happiness but may reduce production initially.",
+    },
+    "industrial_innovation": {
+        "name": "Industrial Innovation",
+        "levels": {
+            1: {"gold_cost": 90000, "effect": {"resource_production": 5}, "desc": "+5% all resource production"},
+            2: {"gold_cost": 220000, "effect": {"resource_production": 12}, "desc": "+12% all resource production"},
+            3: {"gold_cost": 500000, "effect": {"resource_production": 25}, "desc": "+25% all resource production"},
+        },
+        "max_level": 3,
+        "base_desc": "Increases all resource production.",
+    },
+}
+
+# ---- TESTING MODE ----
+TESTING_GAIN = 999999999
