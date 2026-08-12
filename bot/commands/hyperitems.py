@@ -74,7 +74,6 @@ class HyperItemCommands(commands.Cog):
         return None
 
     @commands.command(name='laststand')
-    @check_cooldown_decorator("laststand")
     async def last_stand(self, ctx):
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -128,7 +127,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='sacrifice')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("sacrifice")
     async def mutual_destruction(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("💀 **MUTUAL DESTRUCTION**\nUsage: `.sacrifice <user>`\nRequires: Sacrifice HyperItem\n⚠️ COMPLETELY DESTROYS BOTH CIVILIZATIONS!")
@@ -261,7 +259,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='nuke')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("nuke")
     async def nuclear_strike(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("☢️ **Nuclear Strike**\nUsage: `.nuke <user>`\nRequires: Nuclear Warhead HyperItem\n⚠️ Causes massive destruction!")
@@ -351,7 +348,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='obliterate')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("obliterate")
     async def obliterate_civilization(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("💥 **Total Obliteration**\nUsage: `.obliterate <user>`\nRequires: HyperLaser HyperItem\n⚠️ COMPLETELY DESTROYS target civilization!")
@@ -367,19 +363,18 @@ class HyperItemCommands(commands.Cog):
             return
         civ = self.civ_manager.get_civilization(user_id)
 
-        # ---- NEW OBLITERATE REQUIREMENT ----
-        stats_to_check = {
-            "gold": civ['resources']['gold'],
-            "stone": civ['resources']['stone'],
-            "food": civ['resources']['food'],
-            "wood": civ['resources']['wood'],
-            "soldiers": civ['military']['soldiers'],
-            "citizens": civ['population']['citizens']
+        # ---- NEW OBLITERATE REQUIREMENT: target must have at least one stat at 0 ----
+        target_stats = {
+            "gold": target_civ['resources']['gold'],
+            "stone": target_civ['resources']['stone'],
+            "food": target_civ['resources']['food'],
+            "wood": target_civ['resources']['wood'],
+            "soldiers": target_civ['military']['soldiers'],
+            "citizens": target_civ['population']['citizens']
         }
-        if all(value > 0 for value in stats_to_check.values()):
-            await ctx.send("❌ To use Obliterate, you must sacrifice one of your stats to 0 first. "
-                           "Reduce one of the following to 0: gold, stone, food, wood, soldiers, or citizens.\n"
-                           "(Use `.burn` to zero out resources or spend them!)")
+        if all(value > 0 for value in target_stats.values()):
+            await ctx.send("❌ To obliterate a civilization, the target must have at least one stat at 0.\n"
+                           "Wait for them to be weakened (e.g., by war, resource drain, or population loss).")
             return
 
         defense = self._check_defenses(target_id, "HyperLaser obliteration")
@@ -456,7 +451,6 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='luckystrike')
-    @check_cooldown_decorator("luckystrike")
     async def lucky_strike(self, ctx):
         user_id = str(ctx.author.id)
         if not self._has_hyperitem(user_id, "Lucky Charm"):
@@ -482,7 +476,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='propaganda')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("propaganda")
     async def propaganda_campaign(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("📢 **Propaganda Campaign**\nUsage: `.propaganda <user>`\nRequires: Propaganda Kit HyperItem")
@@ -541,7 +534,6 @@ class HyperItemCommands(commands.Cog):
             pass
 
     @commands.command(name='hiremercs')
-    @check_cooldown_decorator("hiremercs")
     async def hire_mercenaries(self, ctx):
         user_id = str(ctx.author.id)
         if not self._has_hyperitem(user_id, "Mercenary Contract"):
@@ -569,7 +561,6 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='boosttech')
-    @check_cooldown_decorator("boosttech")
     async def boost_technology(self, ctx):
         user_id = str(ctx.author.id)
         if not self._has_hyperitem(user_id, "Ancient Scroll"):
@@ -597,7 +588,6 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='mintgold')
-    @check_cooldown_decorator("mintgold")
     async def mint_gold(self, ctx):
         user_id = str(ctx.author.id)
         if not self._has_hyperitem(user_id, "Gold Mint"):
@@ -624,7 +614,6 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='superharvest')
-    @check_cooldown_decorator("superharvest")
     async def super_harvest(self, ctx):
         user_id = str(ctx.author.id)
         if not self._has_hyperitem(user_id, "Harvest Engine"):
@@ -657,7 +646,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='superspy')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("superspy")
     async def super_spy_mission(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("🕵️ **Elite Spy Mission**\nUsage: `.superspy <user>`\nRequires: Spy Network HyperItem\nHigh-success elite espionage operation")
@@ -721,7 +709,6 @@ class HyperItemCommands(commands.Cog):
             await ctx.send(embed=embed)
 
     @commands.command(name='megainvent')
-    @check_cooldown_decorator("megainvent")
     async def mega_invention(self, ctx):
         user_id = str(ctx.author.id)
         if not self._has_hyperitem(user_id, "Tech Core"):
@@ -750,7 +737,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='backstab')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("backstab")
     async def assassination_attempt(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("🗡️ **Assassination Attempt**\nUsage: `.backstab <user>`\nRequires: Dagger HyperItem\nRisky but potentially devastating attack")
@@ -823,7 +809,6 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='bomb')
     @app_commands.describe(target="Target civilization leader")
-    @check_cooldown_decorator("bomb")
     async def missile_strike(self, ctx, target: Optional[guilded.Member] = None):
         if not target:
             await ctx.send("🚀 **Missile Strike**\nUsage: `.bomb <user>`\nRequires: Missiles HyperItem\nPowerful military attack between conventional and nuclear")
