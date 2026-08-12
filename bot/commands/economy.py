@@ -48,6 +48,7 @@ class EconomyCommands(commands.Cog):
 
     async def cog_load(self):
         self._tasks.append(asyncio.create_task(self._corporation_loop()))
+        self._tasks.append(asyncio.create_task(self._investment_bank_loop()))
 
     async def cog_unload(self):
         for t in self._tasks:
@@ -56,7 +57,7 @@ class EconomyCommands(commands.Cog):
             except:
                 pass
 
-    # ---- Corporation passive income loop ----
+    # ---- Corporation passive income loop (scales with tech) ----
     async def _corporation_loop(self):
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
@@ -66,9 +67,11 @@ class EconomyCommands(commands.Cog):
                     corps = civ.get('corporations', [])
                     if corps:
                         total_income = 0
+                        tech = civ['military']['tech_level']
                         for corp in corps:
                             level = corp.get('level', 1)
-                            total_income += self._get_corp_income(civ, level)
+                            income = self._get_corp_income(civ, level)
+                            total_income += income
                         if total_income > 0:
                             self.civ_manager.update_resources(civ['user_id'], {"gold": total_income})
                             logger.info(f"Corporation paid {total_income} gold to {civ['user_id']}")
@@ -77,15 +80,38 @@ class EconomyCommands(commands.Cog):
 
     def _get_corp_income(self, civ: dict, level: int) -> int:
         tech = civ['military']['tech_level']
+        # Base: level * 500, plus tech scaling (0.5x per tech)
         base = level * 500
-        if tech >= 5:
-            return base
+        tech_multiplier = 1 + (tech * 0.5)
+        # Before Tech 5, halved
+        if tech < 5:
+            return int(base * tech_multiplier / 2)
         else:
-            return base // 2
+            return int(base * tech_multiplier)
+
+    # ---- Investment Bank loop ----
+    async def _investment_bank_loop(self):
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            await asyncio.sleep(3600)  # every hour
+            try:
+                for civ in self.db.get_all_civilizations():
+                    bank = civ.get('bank', {})
+                    if bank.get('deposits', 0) > 0:
+                        tech = civ['military']['tech_level']
+                        # Interest rate: 0.5% + (tech * 0.1)% per hour
+                        rate = 0.005 + (tech * 0.001)  # e.g., at tech 10: 0.015 = 1.5% per hour
+                        interest = int(bank['deposits'] * rate)
+                        if interest > 0:
+                            bank['deposits'] += interest
+                            bank['last_interest'] = datetime.utcnow().isoformat()
+                            self.db.update_civilization(civ['user_id'], {"bank": bank})
+                            logger.info(f"Investment bank paid {interest} interest to {civ['user_id']}")
+            except Exception as e:
+                logger.error(f"Investment bank loop error: {e}")
 
     # ---- Helper: AI call for megaproject ----
     async def _ai_evaluate_megaproject(self, description: str, civ: dict) -> Optional[Dict[str, Any]]:
-        """Call AI to generate cost and effect for a custom megaproject."""
         tech_level = civ['military']['tech_level']
         pop = civ['population']['citizens']
         gold = civ['resources']['gold']
@@ -104,13 +130,11 @@ Current player stats:
 - Stone: {stone}
 
 Your task: Generate a JSON response with:
-- "cost": an object with gold, food, wood, stone (each a number, should be significant but affordable relative to their resources – aim for 20-50% of their current stockpile, but at least 100,000 each for major projects).
-- "effect": an object with game modifiers (e.g., "tax_bonus": 300, "resource_production": 100, "defense_strength": 50, "happiness_boost": 30, "tech_speed": 200). Use high numbers for major projects (e.g., 300% tax bonus is acceptable for endgame).
+- "cost": an object with gold, food, wood, stone (each a number, should be significant but affordable relative to their resources – aim for 20-50% of their current stockpile for each, but at least 100,000 each).
+- "effect": an object with game modifiers (e.g., "tax_bonus": 300, "resource_production": 100, "defense_strength": 50, "happiness_boost": 30, "tech_speed": 200). Use high numbers for major projects (e.g., 300-500% for endgame).
 - "description": a short description of the project.
 
-Make the cost and effect proportional to the ambition of the description. If the description is world-changing, make cost very high and effect very powerful. If it's minor, make it cheaper and less impactful.
-
-Return ONLY valid JSON, no extra text."""
+Make the cost and effect proportional to the ambition of the description. Return ONLY valid JSON, no extra text."""
 
         basic_cog = self.bot.get_cog("BasicCommands")
         if not basic_cog:
@@ -165,10 +189,7 @@ Return ONLY valid JSON, no extra text."""
             logger.error(f"Error checking civil war for {user_id}: {e}")
             return True
 
-    # ================================================================
-    # EARLY-GAME COMMANDS
-    # ================================================================
-
+    # ---- EARLY-GAME COMMANDS ----
     @commands.command(name='gather')
     @check_cooldown_decorator("gather")
     async def gather_resources(self, ctx):
@@ -197,11 +218,13 @@ Return ONLY valid JSON, no extra text."""
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
         employment_factor = 1 + employment_rate * config.ECONOMY["gather_employment_coeff"]
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        # Late-game scaling: tech level gives a multiplier
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.1)  # 2x at tech 10
         for resource in possible_resources:
             if random.random() < config.ECONOMY["gather_chance"]:
                 base = random.randint(config.ECONOMY["gather_base_min"], config.ECONOMY["gather_base_max"])
-                amount = int(base * employment_factor * territory_factor)
-                amount = min(amount, config.CAPS["gather"])
+                amount = int(base * employment_factor * territory_factor * tech_multiplier)
+                amount = min(amount, config.CAPS["gather"] * tech_multiplier)  # cap scales too
                 gathered[resource] = amount
 
         if not gathered:
@@ -212,7 +235,6 @@ Return ONLY valid JSON, no extra text."""
         if luck_modifier > 1.0:
             for resource in gathered:
                 gathered[resource] = int(gathered[resource] * luck_modifier)
-                gathered[resource] = min(gathered[resource], config.CAPS["gather"])
 
         self.civ_manager.update_resources(user_id, gathered)
         embed = create_embed("🔍 Resource Gathering", "Your scouts return with valuable resources!", guilded.Color.green())
@@ -221,6 +243,7 @@ Return ONLY valid JSON, no extra text."""
         embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
         embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
         embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
+        embed.add_field(name="Tech Multiplier", value=f"{tech_multiplier:.2f}x", inline=True)
         await ctx.send(embed=embed)
 
     @commands.command(name='work')
@@ -246,11 +269,10 @@ Return ONLY valid JSON, no extra text."""
 
         self.civ_manager.update_employment(user_id, amount)
 
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.1)
         gold_gain = amount * random.randint(config.ECONOMY["work_gold_per_citizen_min"], config.ECONOMY["work_gold_per_citizen_max"])
-        ideology = civ.get('ideology', '')
-        if ideology == 'communism':
-            gold_gain = int(gold_gain * 1.15)
-        gold_gain = min(gold_gain, config.CAPS["work"])
+        gold_gain = int(gold_gain * tech_multiplier)
+        gold_gain = min(gold_gain, config.CAPS["work"] * tech_multiplier)
 
         self.civ_manager.update_resources(user_id, {"gold": gold_gain})
         new_rate = self.civ_manager.get_employment_rate(user_id)
@@ -275,11 +297,12 @@ Return ONLY valid JSON, no extra text."""
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
         employment_factor = 1 + employment_rate * config.ECONOMY["farm_employment_coeff"]
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.1)
 
-        total_food = int((base_food + citizen_bonus) * employment_factor * territory_factor)
+        total_food = int((base_food + citizen_bonus) * employment_factor * territory_factor * tech_multiplier)
         if civ.get('ideology') == 'communism':
             total_food = int(total_food * 1.1)
-        total_food = min(total_food, config.CAPS["farm"])
+        total_food = min(total_food, config.CAPS["farm"] * tech_multiplier)
 
         event_text = ""
         if random.random() < 0.1:
@@ -313,15 +336,16 @@ Return ONLY valid JSON, no extra text."""
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
         employment_factor = 1 + employment_rate * config.ECONOMY["mine_employment_coeff"]
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.1)
 
-        stone_yield = int(stone_yield * employment_factor * territory_factor)
-        wood_yield = int(wood_yield * employment_factor * territory_factor)
+        stone_yield = int(stone_yield * employment_factor * territory_factor * tech_multiplier)
+        wood_yield = int(wood_yield * employment_factor * territory_factor * tech_multiplier)
         tech_bonus = 1 + (civ['military']['tech_level'] * 0.1)
         stone_yield = int(stone_yield * tech_bonus)
         wood_yield = int(wood_yield * tech_bonus)
 
-        stone_yield = min(stone_yield, config.CAPS["mine_stone"])
-        wood_yield = min(wood_yield, config.CAPS["mine_wood"])
+        stone_yield = min(stone_yield, config.CAPS["mine_stone"] * tech_multiplier)
+        wood_yield = min(wood_yield, config.CAPS["mine_wood"] * tech_multiplier)
 
         bonus_gold = 0
         if random.random() < config.ECONOMY["mine_bonus_gold_chance"]:
@@ -342,10 +366,7 @@ Return ONLY valid JSON, no extra text."""
         embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
         await ctx.send(embed=embed)
 
-    # ================================================================
-    # BUFFED MID-GAME COMMANDS
-    # ================================================================
-
+    # ---- BUFFED MID-GAME COMMANDS (with tech scaling) ----
     @commands.command(name='harvest')
     @check_cooldown_decorator("harvest")
     async def harvest_food(self, ctx):
@@ -360,9 +381,10 @@ Return ONLY valid JSON, no extra text."""
         pop = civ['population']['citizens']
         happiness = civ['population']['happiness']
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.15)  # stronger scaling
 
-        total_harvest = int((pop * 2 + happiness * 5) * territory_factor * 0.5)
-        total_harvest = min(total_harvest, config.CAPS["harvest"])
+        total_harvest = int((pop * 2 + happiness * 5) * territory_factor * 0.5 * tech_multiplier)
+        total_harvest = min(total_harvest, config.CAPS["harvest"] * tech_multiplier)
 
         self.civ_manager.update_resources(user_id, {"food": total_harvest})
         self.civ_manager.update_population(user_id, {"happiness": 3})
@@ -390,11 +412,11 @@ Return ONLY valid JSON, no extra text."""
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
 
         base = 200 + (tech * 50) + (pop // 20)
-        gold_gain = int(base * 2 * territory_factor)
-        stone_gain = int(base * 1.5 * territory_factor)
+        gold_gain = int(base * 2 * territory_factor * (1 + tech * 0.1))
+        stone_gain = int(base * 1.5 * territory_factor * (1 + tech * 0.1))
 
-        gold_gain = min(gold_gain, config.CAPS["drill_gold"])
-        stone_gain = min(stone_gain, config.CAPS["drill_stone"])
+        gold_gain = min(gold_gain, config.CAPS["drill_gold"] * (1 + tech * 0.1))
+        stone_gain = min(stone_gain, config.CAPS["drill_stone"] * (1 + tech * 0.1))
 
         self.civ_manager.update_resources(user_id, {"gold": gold_gain, "stone": stone_gain})
         embed = create_embed("⛏️ Deep Drilling", f"Extracted {format_number(gold_gain)} gold and {format_number(stone_gain)} stone!", guilded.Color.purple())
@@ -420,13 +442,13 @@ Return ONLY valid JSON, no extra text."""
 
         base = 50 + (pop // 10) + (tech * 20)
         loot = {
-            "gold": int(base * 1.2 * territory_factor),
-            "food": int(base * 1.0 * territory_factor),
-            "wood": int(base * 1.5 * territory_factor),
-            "stone": int(base * 1.5 * territory_factor)
+            "gold": int(base * 1.2 * territory_factor * (1 + tech * 0.05)),
+            "food": int(base * 1.0 * territory_factor * (1 + tech * 0.05)),
+            "wood": int(base * 1.5 * territory_factor * (1 + tech * 0.05)),
+            "stone": int(base * 1.5 * territory_factor * (1 + tech * 0.05))
         }
         for key in loot:
-            loot[key] = min(loot[key], config.CAPS["labor"])
+            loot[key] = min(loot[key], config.CAPS["labor"] * (1 + tech * 0.05))
 
         self.civ_manager.update_resources(user_id, loot)
         self.civ_manager.update_population(user_id, {"happiness": config.ECONOMY["labor_happiness_cost"]})
@@ -463,12 +485,14 @@ Return ONLY valid JSON, no extra text."""
             soldier_power = military['soldiers'] * 2
             spy_power = military['spies'] * 5
             territory_factor = get_territory_modifier(civ['territory']['land_size']) ** 1.3
+            tech = civ['military']['tech_level']
+            tech_multiplier = 1 + (tech * 0.1)
 
             loot = {
-                "gold": int(random.randint(config.ECONOMY["raid_gold_min"], config.ECONOMY["raid_gold_max"]) * territory_factor * (1 + soldier_power/500)),
-                "food": int(random.randint(config.ECONOMY["raid_food_min"], config.ECONOMY["raid_food_max"]) * territory_factor * (1 + soldier_power/500)),
-                "wood": int(random.randint(config.ECONOMY["raid_wood_min"], config.ECONOMY["raid_wood_max"]) * territory_factor * (1 + soldier_power/500)),
-                "stone": int(random.randint(config.ECONOMY["raid_stone_min"], config.ECONOMY["raid_stone_max"]) * territory_factor * (1 + soldier_power/500))
+                "gold": int(random.randint(config.ECONOMY["raid_gold_min"], config.ECONOMY["raid_gold_max"]) * territory_factor * (1 + soldier_power/500) * tech_multiplier),
+                "food": int(random.randint(config.ECONOMY["raid_food_min"], config.ECONOMY["raid_food_max"]) * territory_factor * (1 + soldier_power/500) * tech_multiplier),
+                "wood": int(random.randint(config.ECONOMY["raid_wood_min"], config.ECONOMY["raid_wood_max"]) * territory_factor * (1 + soldier_power/500) * tech_multiplier),
+                "stone": int(random.randint(config.ECONOMY["raid_stone_min"], config.ECONOMY["raid_stone_max"]) * territory_factor * (1 + soldier_power/500) * tech_multiplier)
             }
 
             if random.random() < config.ECONOMY["raid_bonus_gold_chance"]:
@@ -476,7 +500,7 @@ Return ONLY valid JSON, no extra text."""
                 loot["gold"] += bonus_gold
 
             for key in loot:
-                loot[key] = min(loot[key], config.CAPS["raidcaravan"])
+                loot[key] = min(loot[key], config.CAPS["raidcaravan"] * tech_multiplier)
 
             self.civ_manager.update_resources(user_id, loot)
 
@@ -489,10 +513,174 @@ Return ONLY valid JSON, no extra text."""
             embed = create_embed("🏴‍☠️ Caravan Raid - Failed!", f"The caravan's guards were too strong! You lost {soldier_loss} soldiers in the failed attack.", guilded.Color.red())
         await ctx.send(embed=embed)
 
-    # ================================================================
-    # CHEERUP & BUYTECH
-    # ================================================================
+    # ---- NEW LATE-GAME COMMANDS ----
+    @commands.command(name='globaltrade')
+    @check_cooldown_decorator("globaltrade")
+    @app_commands.describe(
+        resource="Resource to trade away",
+        amount="Amount to trade"
+    )
+    @app_commands.choices(resource=[
+        app_commands.Choice(name="gold", value="gold"),
+        app_commands.Choice(name="food", value="food"),
+        app_commands.Choice(name="wood", value="wood"),
+        app_commands.Choice(name="stone", value="stone"),
+    ])
+    async def global_trade(self, ctx, resource: Literal["gold","food","wood","stone"], amount: int):
+        """Trade resources at a profit – scales with tech level (10,000 minimum)."""
+        user_id = str(ctx.author.id)
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
 
+        tech = civ['military']['tech_level']
+        if tech < 3:
+            await ctx.send("❌ You need Tech Level 3 to access global trade!")
+            return
+        if amount < 10000:
+            await ctx.send("❌ Minimum trade amount is 10,000.")
+            return
+
+        # Profit margin: 1.0 + (tech * 0.03)  -> at Tech 10: 1.3x, at Tech 20 (if possible): 1.6x
+        margin = 1.0 + (tech * 0.03)
+        resources = ["gold", "food", "wood", "stone"]
+        resources.remove(resource)
+        receive = random.choice(resources)
+        receive_amount = int(amount * margin)
+
+        if not self.civ_manager.can_afford(user_id, {resource: amount}):
+            await ctx.send(f"❌ You don't have {format_number(amount)} {resource}.")
+            return
+
+        self.civ_manager.spend_resources(user_id, {resource: amount})
+        self.civ_manager.update_resources(user_id, {receive: receive_amount})
+
+        embed = create_embed(
+            "🌍 Global Trade",
+            f"Traded {format_number(amount)} {resource} for {format_number(receive_amount)} {receive} (profit: {int((margin-1)*100)}%)",
+            guilded.Color.blue()
+        )
+        await ctx.send(embed=embed)
+
+    @commands.command(name='investmentbank')
+    @check_cooldown_decorator("investmentbank")
+    async def investment_bank(self, ctx, action: Literal["deposit","withdraw","balance"], amount: int = None):
+        """Compound interest savings account – interest paid hourly, scales with tech."""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+
+        bank = civ.get('bank', {})
+        if action == "balance":
+            deposits = bank.get('deposits', 0)
+            tech = civ['military']['tech_level']
+            rate = (0.005 + (tech * 0.001)) * 100  # percent per hour
+            embed = create_embed("🏦 Investment Bank Balance", f"Current deposits: {format_number(deposits)} gold", guilded.Color.blue())
+            embed.add_field(name="Interest Rate", value=f"{rate:.2f}% per hour", inline=True)
+            embed.add_field(name="Projected Daily Growth", value=f"{format_number(int(deposits * (rate/100) * 24))} gold/day", inline=True)
+            await ctx.send(embed=embed)
+            return
+
+        if action == "deposit":
+            if amount is None or amount <= 0:
+                await ctx.send("❌ Please specify a positive amount to deposit.")
+                return
+            if not self.civ_manager.can_afford(user_id, {"gold": amount}):
+                await ctx.send(f"❌ You don't have {format_number(amount)} gold to deposit.")
+                return
+            self.civ_manager.spend_resources(user_id, {"gold": amount})
+            bank['deposits'] = bank.get('deposits', 0) + amount
+            bank['last_interest'] = datetime.utcnow().isoformat()
+            self.db.update_civilization(user_id, {"bank": bank})
+            await ctx.send(f"🏦 Deposited {format_number(amount)} gold. Your balance is now {format_number(bank['deposits'])} gold.")
+            return
+
+        if action == "withdraw":
+            if amount is None or amount <= 0:
+                await ctx.send("❌ Please specify a positive amount to withdraw.")
+                return
+            if bank.get('deposits', 0) < amount:
+                await ctx.send(f"❌ You only have {format_number(bank.get('deposits', 0))} gold in the bank.")
+                return
+            bank['deposits'] = bank.get('deposits', 0) - amount
+            self.db.update_civilization(user_id, {"bank": bank})
+            self.civ_manager.update_resources(user_id, {"gold": amount})
+            await ctx.send(f"🏦 Withdrew {format_number(amount)} gold. Your balance is now {format_number(bank['deposits'])} gold.")
+            return
+
+        await ctx.send("❌ Unknown action. Use deposit, withdraw, or balance.")
+
+    @commands.command(name='revolution')
+    @check_cooldown_decorator("revolution")
+    async def revolution(self, ctx):
+        """Tech 10 ultimate command – resets tech, gives permanent 100% production bonus."""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+
+        if civ['military']['tech_level'] < 10:
+            await ctx.send("❌ You need Tech Level 10 to start the revolution!")
+            return
+
+        # Check if already done
+        if civ.get('revolution_done', False):
+            await ctx.send("❌ Your civilization has already undergone a revolution!")
+            return
+
+        # Cost: 500M gold
+        cost = 500_000_000
+        if civ['resources']['gold'] < cost:
+            await ctx.send(f"❌ You need {format_number(cost)} gold to fund the revolution! You have {format_number(civ['resources']['gold'])}.")
+            return
+
+        # Confirm
+        embed = create_embed(
+            "💥 REVOLUTION",
+            "This will reset your tech level to 1, but give you a permanent **100% global production bonus** and unlock new megaprojects.\n\n"
+            "Type `yes` to confirm.",
+            guilded.Color.red()
+        )
+        await ctx.send(embed=embed)
+
+        def check(m):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id and m.content.lower() == "yes"
+
+        try:
+            await self.bot.wait_for('message', timeout=30.0, check=check)
+        except asyncio.TimeoutError:
+            await ctx.send("❌ Revolution cancelled.")
+            return
+
+        # Deduct cost
+        self.civ_manager.spend_resources(user_id, {"gold": cost})
+
+        # Reset tech to 1
+        self.civ_manager.update_military(user_id, {"tech_level": -9})  # to 1
+
+        # Apply permanent bonus: +100% resource production (we'll store in bonuses)
+        bonuses = civ.get('bonuses', {})
+        bonuses['revolution_bonus'] = 100  # +100% resource production
+        self.db.update_civilization(user_id, {
+            "revolution_done": True,
+            "bonuses": bonuses
+        })
+
+        embed = create_embed(
+            "💥 REVOLUTION COMPLETE!",
+            "Your civilization has been reborn! Tech level reset to 1, but you now have a permanent **+100% all resource production** bonus.",
+            guilded.Color.gold()
+        )
+        embed.add_field(name="New Era", value="You can now build 'Enlightenment Era' megaprojects with even greater effects!", inline=False)
+        await ctx.send(embed=embed)
+
+    # ---- CHEERUP & BUYTECH (updated) ----
     @commands.command(name='cheerup')
     @check_cooldown_decorator("cheerup")
     async def cheer_up(self, ctx):
@@ -537,10 +725,7 @@ Return ONLY valid JSON, no extra text."""
         embed.add_field(name="Cost", value="🪙 2,000 Gold", inline=True)
         await ctx.send(embed=embed)
 
-    # ================================================================
-    # CORPORATION SYSTEM
-    # ================================================================
-
+    # ---- CORPORATION SYSTEM (already updated) ----
     @commands.group(name='corporation', invoke_without_command=True)
     async def corporation(self, ctx):
         user_id = str(ctx.author.id)
@@ -607,25 +792,18 @@ Return ONLY valid JSON, no extra text."""
     async def corp_list(self, ctx):
         await self.corporation(ctx)
 
-    # ================================================================
-    # DYNAMIC MEGAPROJECT SYSTEM
-    # ================================================================
-
+    # ---- MEGAPROJECT SYSTEM ----
     @commands.group(name='megaproject', invoke_without_command=True)
     async def megaproject(self, ctx):
-        """Show megaproject help and list presets."""
         embed = create_embed(
             "🏗️ Megaprojects",
-            "**Custom Megaproject:** `.megaproject build <description>` – describe your project and AI will calculate cost & effect.\n"
-            "**Presets:** use `.megaproject preset <name>` to build a predefined project.\n"
-            "**List presets:** `.megaproject presets`",
+            "**Custom:** `.megaproject build <description>`\n**Presets:** `.megaproject preset <name>`\n**List presets:** `.megaproject presets`",
             guilded.Color.gold()
         )
         await ctx.send(embed=embed)
 
     @megaproject.command(name='presets')
     async def megaproject_presets(self, ctx):
-        """List all predefined megaprojects."""
         presets = config.MEGAPROJECTS
         embed = create_embed("📜 Predefined Megaprojects", "", guilded.Color.blue())
         for key, data in presets.items():
@@ -635,7 +813,7 @@ Return ONLY valid JSON, no extra text."""
                 value=f"Cost: {cost_str}\nEffect: {data['description']}",
                 inline=False
             )
-        embed.add_field(name="Usage", value="`.megaproject preset <name>` (e.g., `.megaproject preset great_wall`)", inline=False)
+        embed.add_field(name="Usage", value="`.megaproject preset <name>`", inline=False)
         await ctx.send(embed=embed)
 
     @megaproject.command(name='preset')
@@ -732,10 +910,7 @@ Return ONLY valid JSON, no extra text."""
         )
         await ctx.send(embed=embed)
 
-    # ================================================================
-    # POLICY SYSTEM
-    # ================================================================
-
+    # ---- POLICY SYSTEM (unchanged) ----
     @commands.group(name='policy', invoke_without_command=True)
     async def policy(self, ctx):
         user_id = str(ctx.author.id)
@@ -925,10 +1100,7 @@ Return ONLY valid JSON, no extra text."""
     async def policies_help(self, ctx):
         await self.policy_list(ctx)
 
-    # ================================================================
-    # REMAINING COMMANDS (tax, lottery, invest, etc.)
-    # ================================================================
-
+    # ---- REMAINING COMMANDS ----
     @commands.command(name='tax')
     @check_cooldown_decorator("tax")
     async def collect_taxes(self, ctx):
@@ -941,39 +1113,38 @@ Return ONLY valid JSON, no extra text."""
             return
 
         population = civ['population']
-        base_tax = population['citizens'] * config.ECONOMY["tax_base_per_citizen"]
+        tech = civ['military']['tech_level']
+        # Buffed tax: scales with tech and territory
+        base_tax = population['citizens'] * (3 + tech)  # at tech 10: 13 per citizen
         happiness_modifier = population['happiness'] / 100
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * config.ECONOMY["tax_employment_coeff"]
+        employment_factor = 1 + employment_rate * 0.5
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
 
         total_tax = int(base_tax * happiness_modifier * employment_factor * territory_factor)
+        total_tax = min(total_tax, 5_000_000 * (1 + tech * 0.1))  # cap scales
 
         ideology = civ.get('ideology', '')
         if ideology == 'democracy':
             total_tax = int(total_tax * 1.05)
         elif ideology == 'fascism':
             total_tax = int(total_tax * 1.1)
-            self.civ_manager.update_population(user_id, {"happiness": config.ECONOMY["tax_fascism_extra_penalty"]})
+            self.civ_manager.update_population(user_id, {"happiness": -5})
         elif ideology == 'communism':
             total_tax = int(total_tax * 0.8)
 
-        total_tax = min(total_tax, config.CAPS["tax"])
-
         self.civ_manager.update_resources(user_id, {"gold": total_tax})
-        self.civ_manager.update_population(user_id, {"happiness": config.ECONOMY["tax_happiness_penalty"]})
+        self.civ_manager.update_population(user_id, {"happiness": -5})
 
         population_loss = 0
-        if population['happiness'] < config.ECONOMY["tax_population_loss_threshold"] and random.random() < config.ECONOMY["tax_population_loss_chance"]:
-            population_loss = random.randint(config.ECONOMY["tax_population_loss_min"], config.ECONOMY["tax_population_loss_max"])
+        if population['happiness'] < 30 and random.random() < 0.3:
+            population_loss = random.randint(5, 20)
             self.civ_manager.update_population(user_id, {"citizens": -population_loss})
 
         embed = create_embed("💰 Tax Collection", f"Collected {format_number(total_tax)} gold in taxes from your citizens.", guilded.Color.gold())
-        if ideology == 'fascism':
-            embed.add_field(name="Regime Effect", value=f"Forced taxation decreased happiness by {abs(config.ECONOMY['tax_fascism_extra_penalty'])}!", inline=False)
         if population_loss > 0:
-            embed.add_field(name="⚠️ Population Loss", value=f"{population_loss} citizens emigrated in protest against high taxes!", inline=False)
-        embed.set_footer(text="Tax is now less rewarding due to public dissatisfaction.")
+            embed.add_field(name="⚠️ Population Loss", value=f"{population_loss} citizens emigrated!", inline=False)
+        embed.set_footer(text="Tax is now more rewarding but risky.")
         await ctx.send(embed=embed)
 
     @commands.command(name='lottery')
@@ -1223,14 +1394,15 @@ Return ONLY valid JSON, no extra text."""
 
         self.civ_manager.spend_resources(user_id, {"gold": ad_cost})
 
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.05)
         base_new_citizens = random.randint(config.ECONOMY["advertise_citizen_min"], config.ECONOMY["advertise_citizen_max"])
         happiness_bonus = civ['population']['happiness'] // 10
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
         employment_factor = 1 + employment_rate * config.ECONOMY["advertise_employment_coeff"]
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
 
-        total_new_citizens = int((base_new_citizens + happiness_bonus) * employment_factor * territory_factor)
-        total_new_citizens = min(total_new_citizens, config.CAPS["advertise"])
+        total_new_citizens = int((base_new_citizens + happiness_bonus) * employment_factor * territory_factor * tech_multiplier)
+        total_new_citizens = min(total_new_citizens, config.CAPS["advertise"] * tech_multiplier)
 
         ideology = civ.get('ideology', '')
         if ideology == 'democracy':
@@ -1371,12 +1543,13 @@ Return ONLY valid JSON, no extra text."""
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
 
+        tech_multiplier = 1 + (civ['military']['tech_level'] * 0.05)
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
         employment_factor = 1 + employment_rate * config.ECONOMY["immigration_employment_coeff"]
         territory_factor = get_territory_modifier(civ['territory']['land_size'])
         base_gain = random.randint(config.ECONOMY["immigration_citizen_min"], config.ECONOMY["immigration_citizen_max"])
-        gained = int(base_gain * employment_factor * territory_factor)
-        gained = min(gained, config.CAPS["immigration"])
+        gained = int(base_gain * employment_factor * territory_factor * tech_multiplier)
+        gained = min(gained, config.CAPS["immigration"] * tech_multiplier)
 
         self.civ_manager.update_population(user_id, {"citizens": gained})
 
