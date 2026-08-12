@@ -535,6 +535,26 @@ class MilitaryCommands(commands.Cog):
             if final_attacker > final_defender:
                 victory_margin = final_attacker / max(1, final_defender)
                 await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin, level)
+
+                # ---- NEW: TERRITORY CAPTURE CHANCE ----
+                capture_chance = 0.10 * level  # 10% at level 1, 100% at level 10
+                if random.random() < capture_chance:
+                    territory_cog = self.bot.get_cog("TerritoryCog")
+                    if territory_cog:
+                        defender_provinces = territory_cog._get_owned_provinces(target_id)
+                        if defender_provinces:
+                            captured_province = random.choice(defender_provinces)
+                            success = self.db.conquer_territory(user_id, target_id, captured_province)
+                            if success:
+                                area = territory_cog.province_areas.get(captured_province, 1000)
+                                self.civ_manager.update_territory(user_id, {"land_size": area})
+                                self.civ_manager.update_territory(target_id, {"land_size": -area})
+                                capture_embed = create_embed(
+                                    "🏴‍☠️ TERRITORY CAPTURED!",
+                                    f"Your forces captured **{captured_province}** from **{target_civ['name']}**!",
+                                    guilded.Color.gold()
+                                )
+                                await ctx.send(embed=capture_embed)
             else:
                 defeat_margin = final_defender / max(1, final_attacker)
                 await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin, level)
@@ -1058,7 +1078,6 @@ class MilitaryCommands(commands.Cog):
         else:
             await ctx.send("❌ Invalid action. Use `.cards view` or `.cards use \"Card Name\"`.")
 
- 
     # ---- BORDERS ----
     @commands.command(name='addborder')
     async def add_border(self, ctx):
