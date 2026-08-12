@@ -7,7 +7,33 @@ import logging
 from datetime import datetime, timedelta
 from typing import Literal, Optional, List
 
+from bot import config
+from bot.utils import create_embed
+
 logger = logging.getLogger(__name__)
+
+# ---- Cooldown decorator using config ----
+def diplomacy_cooldown(command_name: str):
+    def decorator(func):
+        async def wrapper(self, ctx, *args, **kwargs):
+            user_id = str(ctx.author.id)
+            minutes = config.COOLDOWNS.get(command_name, 0)
+            if minutes <= 0:
+                return await func(self, ctx, *args, **kwargs)
+            last_used = self.db.get_command_cooldown(user_id, command_name)
+            if last_used:
+                cooldown_end = last_used + timedelta(minutes=minutes)
+                if datetime.utcnow() < cooldown_end:
+                    remaining = cooldown_end - datetime.utcnow()
+                    mins = int(remaining.total_seconds() // 60)
+                    secs = int(remaining.total_seconds() % 60)
+                    await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
+                    return
+            self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
+            return await func(self, ctx, *args, **kwargs)
+        return wrapper
+    return decorator
+
 
 class DiplomacyCommands(commands.Cog):
     def __init__(self, bot):
@@ -39,6 +65,7 @@ class DiplomacyCommands(commands.Cog):
 
     @commands.command(name='ally')
     @app_commands.describe(target="Civilization leader to ally with", alliance_name="Name of the alliance")
+    @diplomacy_cooldown("ally")
     async def propose_alliance(self, ctx, target: Optional[guilded.Member] = None, alliance_name: str = None):
         """Propose an alliance with another civilization"""
         if not target or not alliance_name:
@@ -63,7 +90,7 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
             
-        # Check if already at war using Firestore
+        # Check if already at war
         wars = self.db.get_wars(status="ongoing")
         for war in wars:
             a = war.get("attacker_id")
@@ -73,10 +100,6 @@ class DiplomacyCommands(commands.Cog):
                 return
             
         # Check if alliance already exists between them
-        # We'll query alliances collection where members array contains both user IDs.
-        # Since Firestore doesn't support multiple array-contains in a single query easily,
-        # we'll get all alliances and check membership in-memory.
-        # For scalability, we could add a composite index but for now it's fine.
         alliances_ref = self.db.client.collection("alliances")
         docs = alliances_ref.stream()
         for doc in docs:
@@ -85,8 +108,7 @@ class DiplomacyCommands(commands.Cog):
             if user_id in members and target_id in members:
                 await ctx.send("❌ One of you is already in an alliance together!")
                 return
-            
-        # Also check if either user is in any alliance (to prevent multiple alliances)
+        # Also check if either user is in any alliance
         docs = alliances_ref.stream()
         for doc in docs:
             data = doc.to_dict()
@@ -98,15 +120,15 @@ class DiplomacyCommands(commands.Cog):
         # Generate unique alliance ID
         alliance_id = str(random.randint(100000, 999999))
         
-        # Store pending alliance
+        # Store pending alliance with expiry from config
+        expiry_minutes = config.DIPLOMACY.get("proposal_expiry_minutes", 30)
         self.pending_alliances[alliance_id] = {
             "proposer_id": user_id,
             "target_id": target_id,
             "alliance_name": alliance_name,
-            "expires": datetime.now() + timedelta(minutes=30)  # Expires in 30 min
+            "expires": datetime.now() + timedelta(minutes=expiry_minutes)
         }
         
-        # Send proposal in channel with ping
         embed = guilded.Embed(
             title="🤝 Alliance Proposal Received!",
             description=f"From **{civ['name']}** (led by {ctx.author.name})",
@@ -121,7 +143,7 @@ class DiplomacyCommands(commands.Cog):
         
         embed.add_field(
             name="How to Respond",
-            value=f"Use `.acceptally {alliance_id}` to accept\nOr `.rejectally {alliance_id}` to reject\nProposal expires in 30 minutes.",
+            value=f"Use `.acceptally {alliance_id}` to accept\nOr `.rejectally {alliance_id}` to reject\nProposal expires in {expiry_minutes} minutes.",
             inline=False
         )
         
@@ -132,63 +154,46 @@ class DiplomacyCommands(commands.Cog):
     @commands.command(name='acceptally')
     @app_commands.describe(alliance_id="Pending alliance proposal ID")
     @app_commands.autocomplete(alliance_id=_alliance_id_autocomplete)
+    @diplomacy_cooldown("acceptally")
     async def accept_alliance(self, ctx, alliance_id: str):
-        """Accept a pending alliance proposal"""
         user_id = str(ctx.author.id)
-        
         if alliance_id not in self.pending_alliances:
             await ctx.send("❌ Invalid or expired alliance ID!")
             return
-            
         proposal = self.pending_alliances[alliance_id]
-        
         if user_id != proposal["target_id"]:
             await ctx.send("❌ This alliance proposal isn't for you!")
             return
-            
         if datetime.now() > proposal["expires"]:
             await ctx.send("❌ This alliance proposal has expired!")
             del self.pending_alliances[alliance_id]
             return
-            
-        # Create the alliance in Firestore
         try:
-            # Use create_alliance (requires leader_id and name)
             success = self.db.create_alliance(proposal["alliance_name"], proposal["proposer_id"], description="")
             if not success:
                 await ctx.send("❌ Failed to create alliance. Please try again.")
                 return
-            
-            # Add the target as a member
             alliance = self.db.get_alliance_by_name(proposal["alliance_name"])
             if not alliance:
                 await ctx.send("❌ Alliance creation succeeded but not found. Please contact admin.")
                 return
-            
             alliance_id_doc = alliance["id"]
             self.db.add_alliance_member(alliance_id_doc, user_id)
-            
             embed = guilded.Embed(
                 title="🤝 Alliance Formed!",
                 description=f"**{proposal['alliance_name']}** has been established!",
                 color=guilded.Color.green()
             )
-            
             embed.add_field(
                 name="Alliance Benefits",
                 value="• Mutual defense pact\n• Resource sharing available\n• Coordinated military actions\n• Trade bonuses",
                 inline=False
             )
-            
             await ctx.send(embed=embed)
             await ctx.send(f"<@{proposal['proposer_id']}> 🤝 **Alliance Accepted!** Your proposal for **{proposal['alliance_name']}** has been accepted!")
-            
-            # Log events
             self.db.log_event(proposal["proposer_id"], "alliance", "Alliance Formed", f"Created alliance '{proposal['alliance_name']}'")
             self.db.log_event(user_id, "alliance", "Alliance Formed", f"Joined alliance '{proposal['alliance_name']}'")
-            
             del self.pending_alliances[alliance_id]
-            
         except Exception as e:
             logger.error(f"Error creating alliance: {e}")
             await ctx.send("❌ Failed to form alliance. Please try again.")
@@ -196,81 +201,58 @@ class DiplomacyCommands(commands.Cog):
     @commands.command(name='rejectally')
     @app_commands.describe(alliance_id="Pending alliance proposal ID")
     @app_commands.autocomplete(alliance_id=_alliance_id_autocomplete)
+    @diplomacy_cooldown("rejectally")
     async def reject_alliance(self, ctx, alliance_id: str):
-        """Reject a pending alliance proposal"""
         user_id = str(ctx.author.id)
-        
         if alliance_id not in self.pending_alliances:
             await ctx.send("❌ Invalid or expired alliance ID!")
             return
-            
         proposal = self.pending_alliances[alliance_id]
-        
         if user_id != proposal["target_id"]:
             await ctx.send("❌ This alliance proposal isn't for you!")
             return
-            
-        # Notify proposer in channel
         await ctx.send(f"<@{proposal['proposer_id']}> 🤝 **Alliance Rejected!** Your proposal for **{proposal['alliance_name']}** has been rejected.")
         await ctx.send("🤝 **Alliance Rejected!** You've declined the proposal.")
-        
-        # Log
         self.db.log_event(user_id, "alliance_reject", "Alliance Rejected", f"Rejected alliance {alliance_id}")
         self.db.log_event(proposal["proposer_id"], "alliance_reject", "Alliance Rejected", f"Alliance {alliance_id} rejected by target")
         del self.pending_alliances[alliance_id]
 
     @commands.command(name='break')
+    @diplomacy_cooldown("break")
     async def break_alliance(self, ctx):
-        """Break your current alliance"""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
-        
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
-        # Find user's alliance using Firestore
         alliances_ref = self.db.client.collection("alliances")
         docs = alliances_ref.where("members", "array_contains", user_id).stream()
-        
         alliance_doc = None
         for doc in docs:
             alliance_doc = doc
             break
-        
         if not alliance_doc:
             await ctx.send("❌ You are not currently in an alliance!")
             return
-            
         alliance_data = alliance_doc.to_dict()
         alliance_id = alliance_doc.id
         members = alliance_data.get("members", [])
-        
         if len(members) <= 2:
-            # Dissolve the alliance (delete the document)
             alliance_doc.reference.delete()
         else:
-            # Remove user from members
             members.remove(user_id)
             alliance_doc.reference.update({"members": members})
-            
-        # Happiness penalty for breaking alliance
         self.civ_manager.update_population(user_id, {"happiness": -10})
-        
         embed = guilded.Embed(
             title="💔 Alliance Broken",
             description=f"Your civilization has left the **{alliance_data['name']}** alliance.",
             color=guilded.Color.red()
         )
         embed.add_field(name="Consequence", value="Breaking diplomatic ties has upset your people. (-10 happiness)", inline=False)
-        
         await ctx.send(embed=embed)
-        
-        # Notify other alliance members in channel
         for member_id in members:
             if member_id != user_id:
                 await ctx.send(f"<@{member_id}> 💔 **Alliance Update**: {civ['name']} has left the **{alliance_data['name']}** alliance.")
-                
         self.db.log_event(user_id, "alliance_break", "Alliance Broken", f"Left the {alliance_data['name']} alliance")
 
     @commands.command(name='send')
@@ -285,46 +267,30 @@ class DiplomacyCommands(commands.Cog):
         app_commands.Choice(name="wood", value="wood"),
         app_commands.Choice(name="stone", value="stone"),
     ])
-    async def send_resources(
-        self,
-        ctx,
-        target: Optional[guilded.Member] = None,
-        resource_type: Optional[Literal["gold", "food", "wood", "stone"]] = None,
-        amount: int = None
-    ):
-        """Send resources to an ally"""
+    @diplomacy_cooldown("send")
+    async def send_resources(self, ctx, target: Optional[guilded.Member] = None, resource_type: Optional[Literal["gold", "food", "wood", "stone"]] = None, amount: int = None):
         if not target or not resource_type or amount is None:
             await ctx.send("📦 **Resource Transfer**\nUsage: `/send <user> <resource> <amount>`\nResources: gold, food, wood, stone")
             return
-            
         if resource_type not in ['gold', 'food', 'wood', 'stone']:
             await ctx.send("❌ Invalid resource type! Choose from: gold, food, wood, stone")
             return
-            
         if amount < 1:
             await ctx.send("❌ Amount must be positive!")
             return
-            
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
-        
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
         target_id = str(target.id)
-            
         target_civ = self.civ_manager.get_civilization(target_id)
         if not target_civ:
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
-            
-        # Check if can afford
         if not self.civ_manager.can_afford(user_id, {resource_type: amount}):
             await ctx.send(f"❌ You don't have {amount} {resource_type}!")
             return
-            
-        # Check if allied using Firestore
         alliances_ref = self.db.client.collection("alliances")
         docs = alliances_ref.stream()
         is_allied = False
@@ -334,40 +300,27 @@ class DiplomacyCommands(commands.Cog):
             if user_id in members and target_id in members:
                 is_allied = True
                 break
-            
-        # Calculate transfer efficiency
-        transfer_efficiency = 0.9  # 90% efficiency (10% lost in transport)
+        transfer_efficiency = 0.9
         if is_allied:
-            transfer_efficiency = 0.95  # 95% efficiency for allies
-            
+            transfer_efficiency = 0.95
         received_amount = int(amount * transfer_efficiency)
-        
-        # Process transfer
         self.civ_manager.spend_resources(user_id, {resource_type: amount})
         self.civ_manager.update_resources(target_id, {resource_type: received_amount})
-        
-        # Create success embed
         resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
-        
         embed = guilded.Embed(
             title="📦 Resources Sent",
             description=f"Successfully sent resources to **{target_civ['name']}**!",
             color=guilded.Color.blue()
         )
-        
         embed.add_field(
             name="Transfer Details",
             value=f"{resource_icons[resource_type]} Sent: {amount} {resource_type.capitalize()}\n{resource_icons[resource_type]} Received: {received_amount} {resource_type.capitalize()}\n📊 Efficiency: {int(transfer_efficiency * 100)}%",
             inline=False
         )
-        
         if is_allied:
             embed.add_field(name="Alliance Bonus", value="Higher transfer efficiency due to alliance!", inline=False)
-            
         await ctx.send(embed=embed)
         await ctx.send(f"<@{target_id}> 📦 **Resources Received!** {civ['name']} has sent you {received_amount} {resource_type}!")
-        
-        # Log the transfer
         self.db.log_event(user_id, "resource_transfer", "Resources Sent", f"Sent {amount} {resource_type} to {target_civ['name']}")
         self.db.log_event(target_id, "resource_transfer", "Resources Received", f"Received {received_amount} {resource_type} from {civ['name']}")
 
@@ -393,48 +346,30 @@ class DiplomacyCommands(commands.Cog):
             app_commands.Choice(name="stone", value="stone"),
         ]
     )
-    async def propose_trade(
-        self,
-        ctx,
-        target: Optional[guilded.Member] = None,
-        offer_resource: Optional[Literal["gold", "food", "wood", "stone"]] = None,
-        offer_amount: int = None,
-        request_resource: Optional[Literal["gold", "food", "wood", "stone"]] = None,
-        request_amount: int = None
-    ):
-        """Propose a resource trade with another civilization (requires acceptance)"""
+    @diplomacy_cooldown("trade")
+    async def propose_trade(self, ctx, target: Optional[guilded.Member] = None, offer_resource: Optional[Literal["gold", "food", "wood", "stone"]] = None, offer_amount: int = None, request_resource: Optional[Literal["gold", "food", "wood", "stone"]] = None, request_amount: int = None):
         if not all([target, offer_resource, offer_amount, request_resource, request_amount]):
             await ctx.send("💰 **Resource Trading**\nUsage: `/trade <user> <offer_resource> <offer_amount> <request_resource> <request_amount>`\nExample: `/trade @user gold 100 food 200`")
             return
-            
         valid_resources = ['gold', 'food', 'wood', 'stone']
         if offer_resource not in valid_resources or request_resource not in valid_resources:
             await ctx.send(f"❌ Invalid resource! Choose from: {', '.join(valid_resources)}")
             return
-            
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
-        
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
         target_id = str(target.id)
-            
         target_civ = self.civ_manager.get_civilization(target_id)
         if not target_civ:
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
-            
-        # Check if can afford the offer
         if not self.civ_manager.can_afford(user_id, {offer_resource: offer_amount}):
             await ctx.send(f"❌ You don't have {offer_amount} {offer_resource} to offer!")
             return
-            
-        # Generate unique trade ID
         trade_id = str(random.randint(100000, 999999))
-        
-        # Store pending trade
+        expiry_minutes = config.DIPLOMACY.get("proposal_expiry_minutes", 30)
         self.pending_trades[trade_id] = {
             "proposer_id": user_id,
             "target_id": target_id,
@@ -442,30 +377,24 @@ class DiplomacyCommands(commands.Cog):
             "offer_amount": offer_amount,
             "request_resource": request_resource,
             "request_amount": request_amount,
-            "expires": datetime.now() + timedelta(minutes=30)  # Expires in 30 min
+            "expires": datetime.now() + timedelta(minutes=expiry_minutes)
         }
-        
-        # Send proposal in channel with ping
         resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
-        
         embed = guilded.Embed(
             title="💰 Trade Proposal Received!",
             description=f"From **{civ['name']}** (led by {ctx.author.name})",
             color=guilded.Color.blue()
         )
-        
         embed.add_field(
             name="Proposed Trade",
             value=f"They offer: {resource_icons[offer_resource]} {offer_amount} {offer_resource.capitalize()}\nThey request: {resource_icons[request_resource]} {request_amount} {request_resource.capitalize()}",
             inline=False
         )
-        
         embed.add_field(
             name="How to Respond",
-            value=f"Use `.accepttrade {trade_id}` to accept\nOr `.rejecttrade {trade_id}` to reject\nProposal expires in 30 minutes.",
+            value=f"Use `.accepttrade {trade_id}` to accept\nOr `.rejecttrade {trade_id}` to reject\nProposal expires in {expiry_minutes} minutes.",
             inline=False
         )
-        
         await ctx.send(f"<@{target_id}>", embed=embed)
         await ctx.send(f"💰 **Trade Proposed!** Your offer has been sent to **{target_civ['name']}**.")
         self.db.log_event(user_id, "trade_proposal", "Trade Proposed", f"Proposed trade to {target_civ['name']}: {offer_amount} {offer_resource} for {request_amount} {request_resource}")
@@ -473,48 +402,34 @@ class DiplomacyCommands(commands.Cog):
     @commands.command(name='accepttrade')
     @app_commands.describe(trade_id="Pending trade proposal ID")
     @app_commands.autocomplete(trade_id=_trade_id_autocomplete)
+    @diplomacy_cooldown("accepttrade")
     async def accept_trade(self, ctx, trade_id: str):
-        """Accept a pending trade proposal"""
         user_id = str(ctx.author.id)
-        
         if trade_id not in self.pending_trades:
             await ctx.send("❌ Invalid or expired trade ID!")
             return
-            
         trade = self.pending_trades[trade_id]
-        
         if user_id != trade["target_id"]:
             await ctx.send("❌ This trade proposal isn't for you!")
             return
-            
         if datetime.now() > trade["expires"]:
             await ctx.send("❌ This trade proposal has expired!")
             del self.pending_trades[trade_id]
             return
-            
-        # Check if both can still afford
         if not self.civ_manager.can_afford(trade["proposer_id"], {trade["offer_resource"]: trade["offer_amount"]}):
             await ctx.send("❌ The proposer no longer has the offered resources!")
             del self.pending_trades[trade_id]
             return
-            
         if not self.civ_manager.can_afford(user_id, {trade["request_resource"]: trade["request_amount"]}):
             await ctx.send("❌ You no longer have the requested resources!")
             del self.pending_trades[trade_id]
             return
-            
-        # Execute trade
         self.civ_manager.spend_resources(trade["proposer_id"], {trade["offer_resource"]: trade["offer_amount"]})
         self.civ_manager.update_resources(trade["proposer_id"], {trade["request_resource"]: trade["request_amount"]})
-        
         self.civ_manager.spend_resources(user_id, {trade["request_resource"]: trade["request_amount"]})
         self.civ_manager.update_resources(user_id, {trade["offer_resource"]: trade["offer_amount"]})
-        
-        # Notify proposer in channel
         await ctx.send(f"<@{trade['proposer_id']}> 💰 **Trade Accepted!** Your trade proposal has been accepted!")
         await ctx.send("💰 **Trade Accepted!** The exchange has been completed.")
-        
-        # Log
         self.db.log_event(user_id, "trade_accept", "Trade Accepted", f"Accepted trade {trade_id}")
         self.db.log_event(trade["proposer_id"], "trade_accept", "Trade Accepted", f"Trade {trade_id} accepted by target")
         del self.pending_trades[trade_id]
@@ -522,56 +437,42 @@ class DiplomacyCommands(commands.Cog):
     @commands.command(name='rejecttrade')
     @app_commands.describe(trade_id="Pending trade proposal ID")
     @app_commands.autocomplete(trade_id=_trade_id_autocomplete)
+    @diplomacy_cooldown("rejecttrade")
     async def reject_trade(self, ctx, trade_id: str):
-        """Reject a pending trade proposal"""
         user_id = str(ctx.author.id)
-        
         if trade_id not in self.pending_trades:
             await ctx.send("❌ Invalid or expired trade ID!")
             return
-            
         trade = self.pending_trades[trade_id]
-        
         if user_id != trade["target_id"]:
             await ctx.send("❌ This trade proposal isn't for you!")
             return
-            
-        # Notify proposer in channel
         await ctx.send(f"<@{trade['proposer_id']}> 💰 **Trade Rejected!** Your trade proposal has been rejected.")
         await ctx.send("💰 **Trade Rejected!** You've declined the proposal.")
-        
-        # Log
         self.db.log_event(user_id, "trade_reject", "Trade Rejected", f"Rejected trade {trade_id}")
         self.db.log_event(trade["proposer_id"], "trade_reject", "Trade Rejected", f"Trade {trade_id} rejected by target")
         del self.pending_trades[trade_id]
 
     @commands.command(name='mail')
     @app_commands.describe(target="Message recipient", message="Diplomatic message")
+    @diplomacy_cooldown("mail")
     async def send_diplomatic_message(self, ctx, target: Optional[guilded.Member] = None, *, message: str = None):
-        """Send a diplomatic message to another civilization"""
         if not target or not message:
             await ctx.send("📜 **Diplomatic Mail**\nUsage: `/mail <user> <message>`\nSend diplomatic communications to other civilizations.")
             return
-            
         if len(message) > 500:
             await ctx.send("❌ Message too long! Maximum 500 characters.")
             return
-            
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
-        
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
         target_id = str(target.id)
-            
         target_civ = self.civ_manager.get_civilization(target_id)
         if not target_civ:
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
-            
-        # Store the message in Firestore using database.py method
         try:
             success = self.db.send_message(user_id, target_id, message)
             if not success:
@@ -581,31 +482,24 @@ class DiplomacyCommands(commands.Cog):
             logger.error(f"Error saving message: {e}")
             await ctx.send("❌ Failed to send message. Please try again.")
             return
-        
-        # Send notification ping (separate message)
         await ctx.send(f"<@{target_id}> 📜 You've got mail from {civ['name']}! Check your `.inbox` to read it.")
-        
-        # Send confirmation to sender
         await ctx.send("📜 **Sent diplomatic message**")
         self.db.log_event(user_id, "diplomatic_message", "Message Sent", f"Sent message to {target_civ['name']}")
 
     @commands.command(name='inbox')
+    @diplomacy_cooldown("inbox")
     async def check_inbox(self, ctx):
-        """Check your pending alliance, trade proposals, and diplomatic messages"""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
-        
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
         embed = guilded.Embed(
             title="📬 Inbox",
             description=f"Pending proposals and messages for **{civ['name']}**",
             color=guilded.Color.blue()
         )
-        
-        # Check pending alliances (from in-memory)
+        # Pending alliances
         alliance_proposals = []
         for alliance_id, proposal in self.pending_alliances.items():
             if proposal["target_id"] == user_id and datetime.now() < proposal["expires"]:
@@ -618,8 +512,7 @@ class DiplomacyCommands(commands.Cog):
                         f"Respond with: `.acceptally {alliance_id}` or `.rejectally {alliance_id}`\n"
                         f"Expires: <t:{int(proposal['expires'].timestamp())}:R>"
                     )
-        
-        # Check pending trades (from in-memory)
+        # Pending trades
         trade_proposals = []
         for trade_id, trade in self.pending_trades.items():
             if trade["target_id"] == user_id and datetime.now() < trade["expires"]:
@@ -634,19 +527,16 @@ class DiplomacyCommands(commands.Cog):
                         f"Respond with: `.accepttrade {trade_id}` or `.rejecttrade {trade_id}`\n"
                         f"Expires: <t:{int(trade['expires'].timestamp())}:R>"
                     )
-        
-        # Check diplomatic messages using Firestore method
+        # Diplomatic messages
         diplomatic_messages = []
         try:
             messages = self.db.get_messages(user_id)
-            
             for msg in messages:
                 sender_civ = self.civ_manager.get_civilization(msg['sender_id'])
                 if sender_civ:
                     timestamp = msg['created_at']
                     if isinstance(timestamp, str):
                         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    
                     diplomatic_messages.append(
                         f"**From**: {sender_civ['name']}\n"
                         f"**Message**: {msg['message']}\n"
@@ -655,8 +545,6 @@ class DiplomacyCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error fetching messages: {e}")
             diplomatic_messages.append("⚠️ Could not load messages")
-        
-        # Add fields to embed
         embed.add_field(
             name="Alliance Proposals",
             value="\n\n".join(alliance_proposals) if alliance_proposals else "No pending alliance proposals.",
@@ -672,71 +560,52 @@ class DiplomacyCommands(commands.Cog):
             value="\n\n".join(diplomatic_messages) if diplomatic_messages else "No diplomatic messages received.",
             inline=False
         )
-        
         await ctx.send(embed=embed)
 
     @commands.command(name='coalition')
     @app_commands.describe(target_alliance="Target alliance name")
+    @diplomacy_cooldown("coalition")
     async def form_coalition(self, ctx, target_alliance: str = None):
-        """Form a coalition against another alliance"""
         if not target_alliance:
             await ctx.send("⚔️ **Coalition Warfare**\nUsage: `.coalition <target_alliance_name>`\nForm a coalition to declare war on another alliance.")
             return
-            
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
-        
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
-        # Find user's alliance using Firestore
         alliances_ref = self.db.client.collection("alliances")
         docs = alliances_ref.where("members", "array_contains", user_id).stream()
-        
         user_alliance_doc = None
         for doc in docs:
             user_alliance_doc = doc
             break
-        
         if not user_alliance_doc:
             await ctx.send("❌ You must be in an alliance to form a coalition!")
             return
-            
         user_alliance_data = user_alliance_doc.to_dict()
         user_alliance_id = user_alliance_doc.id
-        
-        # Find target alliance by name
         target_alliance_data = self.db.get_alliance_by_name(target_alliance)
         if not target_alliance_data:
             await ctx.send(f"❌ Alliance '{target_alliance}' not found!")
             return
-            
         if user_alliance_data['name'] == target_alliance:
             await ctx.send("❌ You cannot form a coalition against your own alliance!")
             return
-            
         user_members = user_alliance_data.get("members", [])
         target_members = target_alliance_data.get("members", [])
-        
-        # Calculate coalition success chance
         success_chance = min(0.8, len(user_members) / max(1, len(target_members)))
-        
         if random.random() < success_chance:
-            # Coalition formed successfully
             embed = guilded.Embed(
                 title="⚔️ Coalition Formed!",
                 description=f"**{user_alliance_data['name']}** has formed a coalition against **{target_alliance}**!",
                 color=guilded.Color.red()
             )
-            
             embed.add_field(
                 name="Coalition Effects",
                 value="• All members can attack target alliance\n• Reduced diplomatic penalties\n• Coordinated military bonuses",
                 inline=False
             )
-            
-            # Notify all members of both alliances in channel
             all_affected = user_members + target_members
             for member_id in all_affected:
                 if member_id != user_id:
@@ -744,9 +613,7 @@ class DiplomacyCommands(commands.Cog):
                         await ctx.send(f"<@{member_id}> ⚔️ **Coalition Formed!** Your alliance has formed a coalition against {target_alliance}!")
                     else:
                         await ctx.send(f"<@{member_id}> ⚔️ **Coalition Against You!** {user_alliance_data['name']} has formed a coalition against your alliance!")
-                        
             await ctx.send(embed=embed)
-            
         else:
             embed = guilded.Embed(
                 title="⚔️ Coalition Failed",
@@ -754,8 +621,6 @@ class DiplomacyCommands(commands.Cog):
                 color=guilded.Color.red()
             )
             embed.add_field(name="Consequence", value="Failed diplomacy has consequences. (-10 happiness)", inline=False)
-            
-            # Penalty for failed coalition
             self.civ_manager.update_population(user_id, {"happiness": -10})
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "coalition_failed", "Coalition Failed", f"Failed coalition against {target_alliance}")
