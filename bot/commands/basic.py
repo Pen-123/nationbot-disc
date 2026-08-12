@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 from discord.ext import commands
 from discord import app_commands
 from bot.utils import format_number, get_ascii_art, create_embed
+from bot import config
 
 # Import subregion data from territory.py
 from bot.commands.territory import PROVINCES, SUBREGION_TO_CONTINENT, SUBREGION_DATA, ALL_SUBREGIONS, FORBIDDEN_START_PROVINCES
@@ -261,27 +262,34 @@ class BasicCommands(commands.Cog):
             except Exception:
                 civ_status = ""
 
-        # ----- COMPREHENSIVE SYSTEM PROMPT WITH ALL COMMANDS -----
+        # ----- COMPREHENSIVE SYSTEM PROMPT - UPDATED FOR CONFIG AND BALANCE -----
         system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
 Players build civilizations, manage resources, wage wars, and form alliances. 
 Your role is to help players understand game mechanics and strategies.
 
 {civ_status}
 
-**CURRENT ECONOMY STATE:** All resource gains have been reduced by 34% (multiplier 0.66) to balance expansion costs. Territory factor max is 3.0x.
+**CURRENT BALANCE (from config.py):**
+- Economy gains use config.ECONOMY values (e.g., gather base 5-20, cap 500k).
+- Tax is nerfed: base 1 per citizen, happiness penalty -5, higher population loss.
+- Soldier cost: 20 gold each.
+- Expansion: large provinces (≥1M km²) cost 1 soldier per {config.EXPANSION['soldier_per_area_large']:,} km² (small: 1 per {config.EXPANSION['soldier_per_area_small']} km²). Navy gives 25% off, airforce gives 50% off (land only).
+- Territory factor: max {config.TERRITORY_FACTOR['max']}x, coefficient {config.TERRITORY_FACTOR['coefficient']}.
+- Starting resources: {config.STARTING_RESOURCES}
 
 **KEY GAME CONCEPTS:**
-- Resources: gold, food, stone, wood (all capped at reasonable amounts)
-- Military: soldiers, spies, tech_level (max 10)
+- Resources: gold, food, stone, wood (capped per command)
+- Military: soldiers, spies, tech_level (max 10), navy ships, airforce planes
 - Population: citizens, happiness (0-100), hunger (0-100)
 - Territory: land_size (km²) – affects resource gains via territory factor
 - Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist, socialism, terrorism, capitalism, federalism, monarchy
-- Regions: Each subregion provides continent bonuses and unique provinces (one per player)
+- Regions: Subregions with unique provinces (one per player)
 - Countryballs: Collectible factions unlocked by completing subregions – give passive bonuses and synergies
 - Industrial Revolution: Permanent micromanagement challenge – reach 1000 Industrial Power (once per player)
 - HyperItems: Powerful one-time items from Black Market or rare drops
 - Cards: Purchasable for 500 gold (`.buycard`) – give bonuses or one-time effects
 - Borders: Defensive structures that boost battle defense
+- Navy & Airforce: Used for expansion – navy required for overseas expansion (different continent). Navy gives 25% cost reduction, airforce gives 50% reduction for land expansions.
 
 **FULL COMMAND LIST (alphabetical by category):**
 
@@ -295,15 +303,15 @@ Your role is to help players understand game mechanics and strategies.
 `.svc` – Close and delete saved chat
 `.warhelp [category]` – Show command categories or list commands in a category
 
-**Economy Commands (all affected by 34% nerf):**
+**Economy Commands (all resource gains use config.ECONOMY, tax is nerfed):**
 `.gather` – Gather random resources (gold, wood, stone, food) – 1min cooldown
 `.work <amount>` – Employ citizens to gain gold – 1min cooldown
 `.farm` – Farm food – 1min cooldown
 `.mine` – Mine stone and wood – 1min cooldown
-`.harvest` – Large harvest (longer cooldown)
+`.harvest` – Large harvest (no cooldown but longer)
 `.drill` – Extract rare minerals (requires Tech Level 2) – 1min cooldown
 `.fish` – Fish for food or treasure – 1min cooldown
-`.tax` – Collect taxes (5min cooldown, risk of population loss)
+`.tax` – Collect taxes (5min cooldown, now heavily nerfed: lower yield, -5 happiness, higher population loss chance)
 `.lottery <bet>` – Gamble gold for jackpot – 1min cooldown
 `.invest <amount>` – Invest gold (returns after 2 hours) – 5min cooldown
 `.raidcaravan` – Raid NPC caravans for loot (5min cooldown, needs 5 soldiers)
@@ -311,7 +319,10 @@ Your role is to help players understand game mechanics and strategies.
 `.advertise` – Attract new citizens (10min cooldown)
 `.census` – Display your gold and population stats
 `.recruit <number>` – Convert citizens into soldiers (risk of failure)
+`.buysoldiers <amount>` – Buy soldiers with gold at 20 gold each (no cooldown)
 `.sell <item>` – Sell hyper items to merchants
+`.burn` – Reduce all resources to 1000 if above that
+`.immigration` – Open borders to gain citizens (10min cooldown, risk of protests/riots)
 
 **Military & War Commands:**
 `.train <soldiers|spies> <amount>` – Train military units (2min cooldown)
@@ -327,8 +338,8 @@ Your role is to help players understand game mechanics and strategies.
 `.rectract <percentage>` – Assign soldiers to border (1min cooldown)
 `.retrieve <percentage>` – Retrieve soldiers from border (1min cooldown)
 `.borderinfo` – Check border status (1min cooldown)
-`.buildship <type> <amount>` – Build navy ships (5min cooldown)
-`.buildplane <type> <amount>` – Build airforce planes (10min cooldown, requires Industrial Revolution + Air Tech 3 for attackers/bombers)
+`.buildship <type> <amount>` – Build navy ships (no cooldown)
+`.buildplane <type> <amount>` – Build airforce planes (no cooldown, requires Industrial Revolution + Air Tech 3 for attackers/bombers)
 `.tech <ground|naval|air> [amount]` – Upgrade military tech (500 gold per level, max 10)
 `.trainboost [amount]` – Increase soldier training level (max 3, 500 gold per level)
 `.navy` – View your navy fleet
@@ -371,10 +382,13 @@ Your role is to help players understand game mechanics and strategies.
 `.bomb <user>` – Missile strike (1min cooldown, requires Missiles)
 `.buycard` – Purchase a random card for 500 gold (no cooldown)
 
-**Territory Commands:**
+**Territory Commands (config-driven expansion costs):**
 `.territories` – List your owned provinces
-`.expand <province>` – Claim a province (costs resources + soldiers based on area)
-`.rapidexpansion <province>` – Claim a province using only soldiers (1 per 595 km², min 10, max 5000)
+`.expand <province>` – Claim a province. 
+   - Cost formula: uses config.EXPANSION (1 per {config.EXPANSION['soldier_per_area_large']:,} km² for large provinces, 1 per {config.EXPANSION['soldier_per_area_small']} for small).
+   - Overseas (different continent) requires navy.
+   - Navy gives 25% off, airforce gives 50% off (land only).
+`.rapidexpansion <province>` – Claim using only soldiers (2× normal cost, cap {config.EXPANSION['rapid_max_soldier_cost']}, reductions apply).
 `.map` – Show the world map with civilization ownership
 
 **Countryball Commands:**
@@ -436,9 +450,12 @@ Your role is to help players understand game mechanics and strategies.
 `.exportdb` – Export the database file (owner only)
 
 **STRATEGY TIPS:**
-- Focus on expanding territory to boost resource gains (territory factor max 3.0x).
-- Use `.labor` for quick wood/stone but watch happiness.
-- Buy cards (`.buycard`) for permanent bonuses or one-time boosts.
+- Build a navy before expanding overseas – it gives 25% off and is required for non‑neighbour provinces.
+- Airforce gives 50% off for land expansions (neighbouring subregions) – build planes for cheaper land grabs.
+- Use `.buysoldiers` to quickly raise an army (20 gold each).
+- `.immigration` gives citizens but can trigger riots – use with care.
+- Tax is now weak – focus on active gathering and raids.
+- Buy cards for permanent bonuses – they cost 500 gold each.
 - Complete subregions to unlock countryballs for passive bonuses and synergies.
 - The Industrial Revolution gives huge rewards but is risky – every command has 30% disaster chance.
 - Black Market has pity system: guaranteed Uncommon every 3, Rare every 6, Legendary every 10 purchases.
@@ -590,7 +607,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- WARHELP (UPDATED CATEGORIES & COMMANDS) ----------
+    # ---------- WARHELP (updated with all categories) ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
         """
@@ -652,9 +669,11 @@ Remember to keep responses engaging but focused on the game.
             },
             "economy": {
                 "name": "💰 Economy",
-                "description": "Core resource gathering and management",
+                "description": "Resource gathering, taxes, immigration, and soldier buying",
                 "commands": {
                     "advertise": "Run promotional campaigns to attract new citizens",
+                    "burn": "Burn excess resources down to 1000 each",
+                    "buysoldiers": "Buy soldiers with gold at 20 gold each",
                     "census": "Display current gold and population status",
                     "cheer": "Spread cheer to boost citizen happiness",
                     "drill": "Extract rare minerals with advanced drilling",
@@ -664,6 +683,7 @@ Remember to keep responses engaging but focused on the game.
                     "fish": "Fish for food or occasionally find treasure",
                     "gather": "Gather random resources from your territory",
                     "harvest": "Large harvest with longer cooldown",
+                    "immigration": "Open borders to gain citizens (risk of protests/riots)",
                     "invest": "Invest gold for delayed profit",
                     "labor": "Forced labor for wood/stone (costs happiness)",
                     "lottery": "Gamble gold for a chance at the jackpot",
@@ -671,7 +691,7 @@ Remember to keep responses engaging but focused on the game.
                     "raidcaravan": "Raid NPC merchant caravans for loot",
                     "recruit": "Convert citizens into soldiers",
                     "sell": "Sell hyper items to wandering merchants",
-                    "tax": "Collect taxes from your citizens",
+                    "tax": "Collect taxes from your citizens (now nerfed)",
                     "work": "Employ citizens to work and gain immediate gold"
                 }
             },
@@ -706,8 +726,8 @@ Remember to keep responses engaging but focused on the game.
                     "airforce": "View your airforce fleet",
                     "attack": "Launch a direct attack (3min cooldown)",
                     "borderinfo": "Check your border status (1min cooldown)",
-                    "buildplane": "Build airforce planes (10min cooldown)",
-                    "buildship": "Build navy ships (5min cooldown)",
+                    "buildplane": "Build airforce planes (no cooldown)",
+                    "buildship": "Build navy ships (no cooldown)",
                     "cards": "View or use your purchased cards",
                     "declare": "Declare war on another civilization",
                     "find": "Search for wandering soldiers (1min cooldown)",
@@ -770,16 +790,16 @@ Remember to keep responses engaging but focused on the game.
             },
             "territory": {
                 "name": "🗺️ Territory & Countryballs",
-                "description": "Expansion, maps, and countryball collection",
+                "description": "Expansion, maps, and countryball collection (config-driven costs)",
                 "commands": {
                     "activate": "Activate a countryball as a manager",
                     "deactivate": "Deactivate a countryball manager",
                     "evolve": "Manually check evolution for countryballs",
-                    "expand": "Claim a province (costs resources + soldiers)",
+                    "expand": "Claim a province. Overseas expansion requires navy. Navy: 25% off, Airforce: 50% off (land only). Cost uses config.EXPANSION.",
                     "map": "Show the world map",
                     "openpacks": "Unlock countryballs for completed subregions",
                     "packs": "View your countryball collection",
-                    "rapidexpansion": "Claim a province using only soldiers",
+                    "rapidexpansion": "Claim a province using only soldiers (2× cost, cap 10000, reductions apply)",
                     "synergies": "Show active synergy bonuses",
                     "territories": "List your owned provinces"
                 }
@@ -846,7 +866,6 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
 
-        # If no region name given, show all available subregions
         if not region_name:
             embed = discord.Embed(
                 title="🌍 Available Subregions",
@@ -873,7 +892,6 @@ Remember to keep responses engaging but focused on the game.
             await ctx.send(embed=embed)
             return
 
-        # Normalize input
         input_name = region_name.strip().lower()
         matched_subregion = None
         for sub in ALL_SUBREGIONS:
@@ -907,7 +925,6 @@ Remember to keep responses engaging but focused on the game.
 
         chosen_province = random.choice(available_provinces)
 
-        # Continent bonuses
         continent = SUBREGION_TO_CONTINENT.get(matched_subregion, "Unknown")
         continent_bonuses = {
             "Europe": {"gold": 300, "tech_level": 1},
@@ -921,7 +938,6 @@ Remember to keep responses engaging but focused on the game.
         }
         bonuses = continent_bonuses.get(continent, continent_bonuses["Unknown"])
 
-        # Apply bonuses
         updated_resources = civ['resources'].copy()
         updated_population = civ['population'].copy()
         for resource, amount in bonuses.items():
@@ -936,7 +952,6 @@ Remember to keep responses engaging but focused on the game.
                 current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
                 self.db.update_civilization(user_id, {'bonuses': current_bonuses})
 
-        # Update civ with region, resources, population – let _add_province handle territory
         update_data = {
             'region': matched_subregion,
             'resources': updated_resources,
@@ -968,7 +983,7 @@ Remember to keep responses engaging but focused on the game.
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
-    # ---------- START COMMAND (multi-word) ----------
+    # ---------- START COMMAND ----------
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, *, civ_name: str = None):
