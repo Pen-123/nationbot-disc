@@ -432,11 +432,11 @@ SUBREGION_TO_CONTINENT = {
     "West Antarctica": "Antarctica",
 }
 
-# ---- FULL COUNTRYBALL MAPPING ----
+# ---- COUNTRYBALL MAPPING (unchanged) ----
 REGION_TO_COUNTRYBALL = {
     "Eastern Europe": "soviet_union",
     "Western Europe": "reich",
-    "Central Europe": "german_empire",      # Now German Empire directly
+    "Central Europe": "german_empire",
     "Balkans": "austria-hungary",
     "Southern Europe": "italy",
     "Northern Europe": "british_empire",
@@ -501,12 +501,68 @@ class TerritoryCog(commands.Cog):
             return False
 
     def _calculate_soldier_cost(self, area: int) -> int:
-        """
-        Cost in soldiers to claim a province based on its area.
-        1 soldier per 595 km², minimum 10, maximum 5000.
-        """
+        """Base cost: 1 soldier per 595 km², min 10, max 5000 (for normal expansion)."""
         cost = max(10, int(area / 595))
         return min(cost, 5000)
+
+    def _calculate_rapid_soldier_cost(self, area: int) -> int:
+        """Rapid expansion cost: 2× normal – 1 per 297.5 km², min 20, max 10000."""
+        cost = max(20, int(area / 297.5))
+        return min(cost, 10000)
+
+    def _get_navy_and_airforce(self, user_id: str):
+        """Return (has_navy, has_airforce) booleans based on fleet counts."""
+        navy = self.db.get_navy(user_id)
+        air = self.db.get_airforce(user_id)
+        # Consider having at least 1 ship/plane as having the capability
+        has_navy = sum(navy.values()) > 0
+        has_airforce = sum(air.values()) > 0
+        return has_navy, has_airforce
+
+    def _is_neighbour_subregion(self, user_id: str, target_subregion: str) -> bool:
+        """Check if target_subregion is a neighbour of any owned subregion."""
+        owned = self._get_owned_provinces(user_id)
+        owned_subregions = set()
+        for p in owned:
+            sub = PROVINCE_TO_SUBREGION.get(p)
+            if sub:
+                owned_subregions.add(sub)
+        if not owned_subregions:
+            return False  # shouldn't happen if we have provinces
+        for owned_sub in owned_subregions:
+            if target_subregion in SUBREGION_DATA.get(owned_sub, {}).get('neighbours', []):
+                return True
+        return False
+
+    def _apply_expansion_reductions(self, user_id: str, target_subregion: str, resource_cost: dict, soldier_cost: int):
+        """
+        Apply navy/airforce reductions.
+        Returns (new_resource_cost, new_soldier_cost, reduction_type)
+        where reduction_type is a string for display.
+        """
+        has_navy, has_airforce = self._get_navy_and_airforce(user_id)
+        is_neighbour = self._is_neighbour_subregion(user_id, target_subregion)
+
+        reduction = 1.0  # no reduction
+        reason = "No reduction"
+
+        if is_neighbour and has_airforce:
+            reduction = 0.5  # 50% off
+            reason = "Airforce (land expansion)"
+        elif has_navy:
+            reduction = 0.75  # 25% off
+            reason = "Navy (overseas expansion)" if not is_neighbour else "Navy (land expansion)"
+        else:
+            # No navy, and it's overseas -> we already blocked earlier, but keep safe
+            if not is_neighbour:
+                # Should not happen because we block earlier, but just in case
+                return resource_cost, soldier_cost, "No navy – overseas expansion blocked"
+
+        # Apply reduction to resources
+        new_resource_cost = {res: max(1, int(round(cost * reduction))) for res, cost in resource_cost.items()}
+        new_soldier_cost = max(1, int(round(soldier_cost * reduction)))
+
+        return new_resource_cost, new_soldier_cost, reason
 
     # ---- Other methods ----
     async def _check_subregion_completion(self, user_id: str, ctx=None):
@@ -617,8 +673,24 @@ class TerritoryCog(commands.Cog):
                 subregion = PROVINCE_TO_SUBREGION.get(p, "Unknown")
                 by_subregion.setdefault(subregion, []).append(p)
             for subregion, names in by_subregion.items():
-                embed.add_field(name=subregion, value=", ".join(names), inline=False)
-            embed.set_footer(text="Each expansion costs resources + soldiers based on area.")
+                # Show if navy/airforce needed
+                has_navy, has_air = self._get_navy_and_airforce(user_id)
+                is_neighbour = self._is_neighbour_subregion(user_id, subregion)
+                req = ""
+                if not is_neighbour:
+                    if not has_navy:
+                        req = "⚠️ Navy required (overseas)"
+                    else:
+                        req = "🛳️ Navy available (25% off)"
+                else:
+                    if has_air:
+                        req = "✈️ Airforce available (50% off)"
+                    elif has_navy:
+                        req = "🛳️ Navy available (25% off)"
+                    else:
+                        req = "🟢 Land expansion"
+                embed.add_field(name=f"{subregion} ({req})", value=", ".join(names), inline=False)
+            embed.set_footer(text="Each expansion costs resources + soldiers. Navy/Airforce can reduce costs.")
             await ctx.send(embed=embed)
             return
 
@@ -647,11 +719,25 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # ---- Area and cost ----
+        # ---- Determine target subregion and if overseas ----
+        target_subregion = PROVINCE_TO_SUBREGION.get(province)
+        if not target_subregion:
+            await ctx.send("❌ Province has no subregion mapping. Contact admin.")
+            return
+
+        is_neighbour = self._is_neighbour_subregion(user_id, target_subregion)
+
+        # ---- Navy/airforce check for overseas ----
+        has_navy, has_air = self._get_navy_and_airforce(user_id)
+        if not is_neighbour and not has_navy:
+            await ctx.send(f"❌ **{province}** is overseas! You need a navy to expand there. Build ships with `.buildship`.")
+            return
+
+        # ---- Calculate base costs (no cross-region penalty anymore) ----
         area = self.province_areas.get(province, 1000)
         cost_multiplier = min(math.sqrt(area / 1000), 20.0)
 
-        subregion = PROVINCE_TO_SUBREGION[province]
+        subregion = target_subregion
         province_count = len(PROVINCES[subregion])
         
         base_cost = {
@@ -661,43 +747,26 @@ class TerritoryCog(commands.Cog):
             "stone": 20 + (10 // max(1, province_count)),
         }
         
-        cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
-
-        # ---- CROSS-SUBREGION PENALTY: 50% more expensive ----
-        if owned:
-            owned_subregions = set()
-            for p in owned:
-                sub = PROVINCE_TO_SUBREGION.get(p)
-                if sub:
-                    owned_subregions.add(sub)
-            
-            target_subregion = PROVINCE_TO_SUBREGION.get(province)
-            
-            if target_subregion and target_subregion not in owned_subregions:
-                cross_region_multiplier = 1.5
-                cost = {k: int(v * cross_region_multiplier) for k, v in cost.items()}
-                is_cross_region = True
-            else:
-                is_cross_region = False
-        else:
-            is_cross_region = False
-
-        if not self.civ_manager.can_afford(user_id, cost):
-            cost_str = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
-            extra = " (cross-subregion penalty: +50%)" if is_cross_region else ""
-            await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.{extra}")
-            return
-
-        # ---- Soldier cost based on area ----
+        resource_cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
         soldier_cost = self._calculate_soldier_cost(area)
-        if is_cross_region:
-            soldier_cost = int(soldier_cost * 1.5)
+
+        # ---- Apply navy/airforce reductions ----
+        resource_cost, soldier_cost, reduction_reason = self._apply_expansion_reductions(
+            user_id, target_subregion, resource_cost, soldier_cost
+        )
+
+        # Check affordability
+        if not self.civ_manager.can_afford(user_id, resource_cost):
+            cost_str = ", ".join([f"{amount} {res}" for res, amount in resource_cost.items()])
+            await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.")
+            return
 
         if civ['military']['soldiers'] < soldier_cost:
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to claim **{province}**! You have {civ['military']['soldiers']}.")
             return
 
-        self.civ_manager.spend_resources(user_id, cost)
+        # Deduct costs
+        self.civ_manager.spend_resources(user_id, resource_cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
         if province in self._get_owned_provinces(user_id):
@@ -706,12 +775,13 @@ class TerritoryCog(commands.Cog):
 
         if self._add_province(user_id, province, ctx):
             embed = discord.Embed(title="🏹 Expansion Successful!", description=f"**{civ['name']}** has claimed **{province}**!", color=discord.Color.green())
-            cost_display = ", ".join([f"{amount} {res}" for res, amount in cost.items()])
-            extra = " (+50% cross-subregion penalty)" if is_cross_region else ""
-            embed.add_field(name="Cost", value=cost_display + f"\n⚔️ {soldier_cost} soldiers{extra}", inline=True)
+            cost_display = ", ".join([f"{amount} {res}" for res, amount in resource_cost.items()])
+            embed.add_field(name="Cost", value=cost_display + f"\n⚔️ {soldier_cost} soldiers", inline=True)
             embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
+            embed.add_field(name="Reduction Applied", value=reduction_reason, inline=False)
+            embed.add_field(name="Overseas", value="✅" if not is_neighbour else "❌", inline=True)
             await ctx.send(embed=embed)
-            self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province}")
+            self.db.log_event(user_id, "expansion", "Province Claimed", f"Claimed {province} (overseas: {not is_neighbour})")
         else:
             await ctx.send("❌ Failed to claim province. Please try again.")
 
@@ -746,7 +816,22 @@ class TerritoryCog(commands.Cog):
                 subregion = PROVINCE_TO_SUBREGION.get(p, "Unknown")
                 by_subregion.setdefault(subregion, []).append(p)
             for subregion, names in by_subregion.items():
-                embed.add_field(name=subregion, value=", ".join(names), inline=False)
+                has_navy, has_air = self._get_navy_and_airforce(user_id)
+                is_neighbour = self._is_neighbour_subregion(user_id, subregion)
+                req = ""
+                if not is_neighbour:
+                    if not has_navy:
+                        req = "⚠️ Navy required (overseas)"
+                    else:
+                        req = "🛳️ Navy available (25% off)"
+                else:
+                    if has_air:
+                        req = "✈️ Airforce available (50% off)"
+                    elif has_navy:
+                        req = "🛳️ Navy available (25% off)"
+                    else:
+                        req = "🟢 Land expansion"
+                embed.add_field(name=f"{subregion} ({req})", value=", ".join(names), inline=False)
             embed.set_footer(text="Use `.rapidexpansion <province>` to claim.")
             await ctx.send(embed=embed)
             return
@@ -776,27 +861,31 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is not currently available for expansion.")
             return
 
-        # ---- Calculate soldier cost based on area (2× normal) ----
-        area = self.province_areas.get(province, 1000)
-        # Normal cost per 595, but we double it -> per 297.5
-        soldier_cost = max(20, int(area / 297.5))   # 2× normal
-        soldier_cost = min(soldier_cost, 10000)     # cap at 10000
+        # ---- Determine target subregion and if overseas ----
+        target_subregion = PROVINCE_TO_SUBREGION.get(province)
+        if not target_subregion:
+            await ctx.send("❌ Province has no subregion mapping. Contact admin.")
+            return
 
-        # ---- Cross-subregion penalty (applied after doubling) ----
-        if owned:
-            owned_subregions = set()
-            for p in owned:
-                sub = PROVINCE_TO_SUBREGION.get(p)
-                if sub:
-                    owned_subregions.add(sub)
-            target_subregion = PROVINCE_TO_SUBREGION.get(province)
-            if target_subregion and target_subregion not in owned_subregions:
-                soldier_cost = int(soldier_cost * 1.5)
-                is_cross_region = True
-            else:
-                is_cross_region = False
-        else:
-            is_cross_region = False
+        is_neighbour = self._is_neighbour_subregion(user_id, target_subregion)
+
+        # ---- Navy/airforce check for overseas ----
+        has_navy, has_air = self._get_navy_and_airforce(user_id)
+        if not is_neighbour and not has_navy:
+            await ctx.send(f"❌ **{province}** is overseas! You need a navy to expand there. Build ships with `.buildship`.")
+            return
+
+        # ---- Calculate base soldier cost (rapid) ----
+        area = self.province_areas.get(province, 1000)
+        soldier_cost = self._calculate_rapid_soldier_cost(area)
+
+        # ---- Apply reductions (only soldier cost, since no resources) ----
+        # We reuse the same reduction logic but only for soldier cost
+        # We'll call the helper but we need to pass a dummy resource dict
+        dummy_resources = {"gold": 0, "food": 0, "wood": 0, "stone": 0}
+        _, soldier_cost, reduction_reason = self._apply_expansion_reductions(
+            user_id, target_subregion, dummy_resources, soldier_cost
+        )
 
         if civ['military']['soldiers'] < soldier_cost:
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to rapidly expand into **{province}**! You have {civ['military']['soldiers']}.")
@@ -815,11 +904,12 @@ class TerritoryCog(commands.Cog):
                 description=f"**{civ['name']}** has rapidly expanded into **{province}** using {soldier_cost} soldiers!",
                 color=discord.Color.gold()
             )
-            extra = " (+50% cross-region penalty)" if is_cross_region else ""
-            embed.add_field(name="Soldiers Spent", value=f"⚔️ {soldier_cost}{extra}", inline=True)
+            embed.add_field(name="Soldiers Spent", value=f"⚔️ {soldier_cost}", inline=True)
             embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
+            embed.add_field(name="Reduction Applied", value=reduction_reason, inline=False)
+            embed.add_field(name="Overseas", value="✅" if not is_neighbour else "❌", inline=True)
             await ctx.send(embed=embed)
-            self.db.log_event(user_id, "rapid_expansion", "Rapid Expansion", f"Expanded into {province} using {soldier_cost} soldiers")
+            self.db.log_event(user_id, "rapid_expansion", "Rapid Expansion", f"Expanded into {province} using {soldier_cost} soldiers (overseas: {not is_neighbour})")
         else:
             await ctx.send("❌ Failed to claim province. Please try again.")
 
