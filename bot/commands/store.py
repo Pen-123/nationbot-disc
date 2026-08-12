@@ -5,6 +5,7 @@ from discord import app_commands
 import logging
 from typing import Literal, Optional
 from bot.utils import format_number, check_cooldown_decorator, create_embed
+from bot import config
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ class StoreCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         
-        # Store items with costs and effects
+        # Store items with costs and effects (can be moved to config later)
         self.store_items = {
             "farm_upgrade": {
                 "name": "Farm Upgrade",
@@ -87,7 +88,6 @@ class StoreCommands(commands.Cog):
                 "description": "Instantly hire professional soldiers",
                 "command": "hiremercs"
             },
-            
             # Uncommon (20%)
             "Spy Network": {
                 "rarity": "uncommon",
@@ -113,7 +113,6 @@ class StoreCommands(commands.Cog):
                 "description": "Massive instant food production",
                 "command": "superharvest"
             },
-            
             # Rare (8%)
             "Nuclear Warhead": {
                 "rarity": "rare",
@@ -133,7 +132,6 @@ class StoreCommands(commands.Cog):
                 "description": "Mid-tier military strike capability",
                 "command": "bomb"
             },
-            
             # Legendary (1-2%)
             "HyperLaser": {
                 "rarity": "legendary",
@@ -148,8 +146,8 @@ class StoreCommands(commands.Cog):
                 "command": "megainvent"
             },
             "Anti-Nuke Shield": {
-                "rarity": "legendary",
-                "weight": 2,
+                "rarity": "epic",           # changed from legendary
+                "weight": 6,                # increased
                 "description": "Blocks one nuclear attack completely",
                 "command": "shield"
             }
@@ -206,7 +204,6 @@ class StoreCommands(commands.Cog):
                 discord.Color.blue()
             )
             
-            # Group items by category
             categories = {
                 "🌾 Economic": ["farm_upgrade", "marketplace", "granary"],
                 "⛏️ Industrial": ["mine_upgrade", "library"],
@@ -238,7 +235,7 @@ class StoreCommands(commands.Cog):
             
         item_data = self.store_items[item]
         
-        # Check if already purchased (simplified - could track individual upgrades)
+        # Check if already purchased (simplified)
         bonuses = civ.get('bonuses', {})
         if any(effect_key in bonuses for effect_key in item_data['effect'].keys()):
             await ctx.send(f"❌ You already own {item_data['name']} or a similar upgrade!")
@@ -272,8 +269,6 @@ class StoreCommands(commands.Cog):
         embed.add_field(name="Status", value="✅ Upgrade Active", inline=True)
         
         await ctx.send(embed=embed)
-        
-        # Log the purchase
         self.db.log_event(user_id, "store_purchase", "Store Purchase", f"Purchased {item_data['name']}")
 
     @commands.hybrid_command(name='blackmarket')
@@ -286,17 +281,17 @@ class StoreCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Black market entry fee
-        entry_fee = {"gold": 1000}
+        # Black market entry fee - from config
+        entry_fee = {"gold": config.BLACK_MARKET["entry_cost"]}
         
         if not self.civ_manager.can_afford(user_id, entry_fee):
-            await ctx.send("❌ Black Market entry fee: 1,000 gold! You cannot afford it.")
+            await ctx.send(f"❌ Black Market entry fee: {config.BLACK_MARKET['entry_cost']} gold! You cannot afford it.")
             return
             
         # Pay entry fee
         self.civ_manager.spend_resources(user_id, entry_fee)
         
-        # Get user's black market history – ensure all keys exist
+        # Get user's black market history
         raw_history = civ.get('black_market_history', {})
         black_market_history = self._ensure_history_keys(raw_history)
         
@@ -306,21 +301,21 @@ class StoreCommands(commands.Cog):
         black_market_history['since_rare'] += 1
         black_market_history['since_legendary'] += 1
         
-        # Check pity system
+        # Check pity system (from config)
         forced_rarity = None
         pity_message = ""
         
-        if black_market_history['since_legendary'] >= 10:
+        if black_market_history['since_legendary'] >= config.BLACK_MARKET["pity_legendary"]:
             forced_rarity = "legendary"
-            pity_message = "🎉 **PITY SYSTEM ACTIVATED!** After 10 purchases, you're guaranteed a LEGENDARY item!"
+            pity_message = f"🎉 **PITY SYSTEM ACTIVATED!** After {config.BLACK_MARKET['pity_legendary']} purchases, you're guaranteed a LEGENDARY item!"
             black_market_history['since_legendary'] = 0
-        elif black_market_history['since_rare'] >= 6:
+        elif black_market_history['since_rare'] >= config.BLACK_MARKET["pity_rare"]:
             forced_rarity = "rare"
-            pity_message = "💎 **PITY SYSTEM!** After 6 purchases, you're guaranteed a RARE item!"
+            pity_message = f"💎 **PITY SYSTEM!** After {config.BLACK_MARKET['pity_rare']} purchases, you're guaranteed a RARE item!"
             black_market_history['since_rare'] = 0
-        elif black_market_history['since_uncommon'] >= 3:
+        elif black_market_history['since_uncommon'] >= config.BLACK_MARKET["pity_uncommon"]:
             forced_rarity = "uncommon"
-            pity_message = "🔵 **PITY SYSTEM!** After 3 purchases, you're guaranteed an UNCOMMON item!"
+            pity_message = f"🔵 **PITY SYSTEM!** After {config.BLACK_MARKET['pity_uncommon']} purchases, you're guaranteed an UNCOMMON item!"
             black_market_history['since_uncommon'] = 0
         
         # Roll for HyperItem (with pity system if applicable)
@@ -333,7 +328,6 @@ class StoreCommands(commands.Cog):
         item_data = self.hyperitem_pool[hyper_item]
         actual_rarity = item_data['rarity']
         
-        # Reset appropriate counters based on actual rarity
         if actual_rarity in ['uncommon', 'rare', 'legendary']:
             black_market_history['since_uncommon'] = 0
         if actual_rarity in ['rare', 'legendary']:
@@ -344,7 +338,7 @@ class StoreCommands(commands.Cog):
         # Add to user's collection
         self.civ_manager.add_hyper_item(user_id, hyper_item)
         
-        # Update black market history in database
+        # Update black market history
         self.civ_manager.db.update_civilization(user_id, {'black_market_history': black_market_history})
         
         # Create dramatic reveal embed
@@ -352,6 +346,7 @@ class StoreCommands(commands.Cog):
             "common": discord.Color.green(),
             "uncommon": discord.Color.blue(), 
             "rare": discord.Color.purple(),
+            "epic": discord.Color.magenta(),
             "legendary": discord.Color.gold()
         }
         
@@ -359,29 +354,31 @@ class StoreCommands(commands.Cog):
             "common": "🟢",
             "uncommon": "🔵", 
             "rare": "🟣",
+            "epic": "🟣",
             "legendary": "🟡"
         }
         
         embed = create_embed(
             "🕴️ Black Market Transaction",
             "The shadowy dealer hands you a mysterious package...",
-            rarity_colors[item_data['rarity']]
+            rarity_colors.get(item_data['rarity'], discord.Color.dark_gray())
         )
         
-        # Add pity message if applicable
         if pity_message:
             embed.add_field(name="Pity System", value=pity_message, inline=False)
         
         embed.add_field(
-            name=f"{rarity_emojis[item_data['rarity']]} {hyper_item}",
+            name=f"{rarity_emojis.get(item_data['rarity'], '🟢')} {hyper_item}",
             value=f"**Rarity**: {item_data['rarity'].capitalize()}\n**Description**: {item_data['description']}\n**Command**: `.{item_data['command']}`",
             inline=False
         )
         
-        # Add purchase stats
         embed.add_field(
             name="Purchase Stats", 
-            value=f"Total Purchases: {black_market_history['total_purchases']}\nSince Uncommon: {black_market_history['since_uncommon']}/3\nSince Rare: {black_market_history['since_rare']}/6\nSince Legendary: {black_market_history['since_legendary']}/10",
+            value=f"Total Purchases: {black_market_history['total_purchases']}\n"
+                  f"Since Uncommon: {black_market_history['since_uncommon']}/{config.BLACK_MARKET['pity_uncommon']}\n"
+                  f"Since Rare: {black_market_history['since_rare']}/{config.BLACK_MARKET['pity_rare']}\n"
+                  f"Since Legendary: {black_market_history['since_legendary']}/{config.BLACK_MARKET['pity_legendary']}",
             inline=True
         )
         
@@ -390,8 +387,8 @@ class StoreCommands(commands.Cog):
         elif item_data['rarity'] == 'rare':
             embed.add_field(name="💎 Rare Find!", value="This powerful item will serve you well in battle!", inline=False)
             
-        embed.add_field(name="Entry Fee", value="🪙 1,000 Gold", inline=True)
-        embed.add_field(name="Item Obtained", value=f"{rarity_emojis[item_data['rarity']]} {hyper_item}", inline=True)
+        embed.add_field(name="Entry Fee", value=f"🪙 {config.BLACK_MARKET['entry_cost']} Gold", inline=True)
+        embed.add_field(name="Item Obtained", value=f"{rarity_emojis.get(item_data['rarity'], '🟢')} {hyper_item}", inline=True)
         
         await ctx.send(embed=embed)
         
@@ -402,35 +399,26 @@ class StoreCommands(commands.Cog):
                 f"**{civ.get('name','Unknown')}** has obtained the legendary **{hyper_item}** from the Black Market!",
                 discord.Color.gold()
             )
-            
-            # Send to all channels (simplified - in real implementation would track channels)
             try:
                 await ctx.send(embed=global_embed)
             except:
                 pass
                 
-        # Log the transaction
         self.db.log_event(user_id, "black_market", "Black Market Purchase", 
                          f"Obtained {hyper_item} ({item_data['rarity']}) - Total: {black_market_history['total_purchases']}")
 
     def _roll_hyperitem(self) -> str:
         """Roll for a random HyperItem based on drop rates"""
-        # Create weighted list
         weighted_items = []
         for item_name, item_data in self.hyperitem_pool.items():
             weighted_items.extend([item_name] * item_data['weight'])
-            
         return random.choice(weighted_items)
 
     def _roll_hyperitem_with_pity(self, forced_rarity: str) -> str:
         """Roll for a HyperItem with forced rarity (pity system)"""
-        # Get all items of the forced rarity
         items_of_rarity = [item for item, data in self.hyperitem_pool.items() if data['rarity'] == forced_rarity]
-        
         if not items_of_rarity:
-            # Fallback to normal roll if no items of that rarity exist
             return self._roll_hyperitem()
-            
         return random.choice(items_of_rarity)
 
     @commands.hybrid_command(name='inventory')
@@ -464,8 +452,9 @@ class StoreCommands(commands.Cog):
                         "common": "🟢",
                         "uncommon": "🔵", 
                         "rare": "🟣",
+                        "epic": "🟣",
                         "legendary": "🟡"
-                    }[item_data['rarity']]
+                    }.get(item_data['rarity'], "🟢")
                     item_list.append(f"{rarity_emoji} **{item}** - `.{item_data['command']}`")
                     
             embed.add_field(
@@ -479,7 +468,6 @@ class StoreCommands(commands.Cog):
         # Store upgrades section
         if bonuses:
             upgrades = []
-            # Map active bonus keys back to store upgrade names.
             for bonus_key in bonuses.keys():
                 for item_data in self.store_items.values():
                     if bonus_key in item_data['effect']:
@@ -487,22 +475,21 @@ class StoreCommands(commands.Cog):
                         if upgrade_name not in upgrades:
                             upgrades.append(upgrade_name)
                         break
-                            
             if upgrades:
                 embed.add_field(name="🏪 Store Upgrades", value="\n".join(upgrades), inline=False)
         
         # Black Market stats
         if black_market_history:
-            until_uncommon = max(0, 3 - black_market_history.get('since_uncommon', 0))
-            until_rare = max(0, 6 - black_market_history.get('since_rare', 0))
-            until_legendary = max(0, 10 - black_market_history.get('since_legendary', 0))
+            until_uncommon = max(0, config.BLACK_MARKET["pity_uncommon"] - black_market_history.get('since_uncommon', 0))
+            until_rare = max(0, config.BLACK_MARKET["pity_rare"] - black_market_history.get('since_rare', 0))
+            until_legendary = max(0, config.BLACK_MARKET["pity_legendary"] - black_market_history.get('since_legendary', 0))
             embed.add_field(
                 name="🕴️ Black Market Stats",
                 value=(
                     f"Total Purchases: {black_market_history.get('total_purchases', 0)}\n"
-                    f"Until Uncommon: {until_uncommon}/3\n"
-                    f"Until Rare: {until_rare}/6\n"
-                    f"Until Legendary: {until_legendary}/10"
+                    f"Until Uncommon: {until_uncommon}/{config.BLACK_MARKET['pity_uncommon']}\n"
+                    f"Until Rare: {until_rare}/{config.BLACK_MARKET['pity_rare']}\n"
+                    f"Until Legendary: {until_legendary}/{config.BLACK_MARKET['pity_legendary']}"
                 ),
                 inline=False
             )
@@ -527,7 +514,7 @@ class StoreCommands(commands.Cog):
         
         embed.add_field(
             name="💰 Entry Fee",
-            value="1,000 Gold per transaction",
+            value=f"{config.BLACK_MARKET['entry_cost']} Gold per transaction",
             inline=True
         )
         
@@ -545,13 +532,19 @@ class StoreCommands(commands.Cog):
         
         embed.add_field(
             name="🎁 Pity System",
-            value="**Guaranteed drops after certain purchases:**\n• 🔵 Uncommon: Every 3 purchases\n• 🟣 Rare: Every 6 purchases\n• 🟡 Legendary: Every 10 purchases\n*Counters reset when you hit the pity or when you naturally roll that rarity.*",
+            value=f"**Guaranteed drops after certain purchases:**\n"
+                  f"• 🔵 Uncommon: Every {config.BLACK_MARKET['pity_uncommon']} purchases\n"
+                  f"• 🟣 Rare: Every {config.BLACK_MARKET['pity_rare']} purchases\n"
+                  f"• 🟡 Legendary: Every {config.BLACK_MARKET['pity_legendary']} purchases\n"
+                  f"*Counters reset when you hit the pity or when you naturally roll that rarity.*",
             inline=False
         )
         
         embed.add_field(
             name="🎁 HyperItem Types",
-            value="• **Weapons**: Nuclear Warhead, HyperLaser, Missiles, Dagger\n• **Tools**: Lucky Charm, Ancient Scroll, Gold Mint, Harvest Engine\n• **Support**: Anti-Nuke Shield, Spy Network, Propaganda Kit, Mercenary Contract",
+            value="• **Weapons**: Nuclear Warhead, HyperLaser, Missiles, Dagger\n"
+                  "• **Tools**: Lucky Charm, Ancient Scroll, Gold Mint, Harvest Engine\n"
+                  "• **Support**: Anti-Nuke Shield, Spy Network, Propaganda Kit, Mercenary Contract",
             inline=False
         )
         
