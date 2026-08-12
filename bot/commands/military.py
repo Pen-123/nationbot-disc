@@ -2,6 +2,7 @@ import random
 import re
 import logging
 import math
+import asyncio
 from datetime import datetime, timedelta
 from typing import Literal, Optional, List, Dict, Any, Tuple
 
@@ -108,6 +109,26 @@ class MilitaryCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.cooldowns = {}
+        self.blockades = {}  # {target_id: {"attacker": attacker_id, "expires": datetime}}
+        self._blockade_cleanup_task = None
+
+    async def cog_load(self):
+        self._blockade_cleanup_task = asyncio.create_task(self._cleanup_blockades())
+
+    async def cog_unload(self):
+        if self._blockade_cleanup_task:
+            self._blockade_cleanup_task.cancel()
+
+    # ---- BLOCKADE CLEANUP TASK ----
+    async def _cleanup_blockades(self):
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            await asyncio.sleep(60)  # check every minute
+            now = datetime.utcnow()
+            expired = [uid for uid, data in self.blockades.items() if data["expires"] <= now]
+            for uid in expired:
+                del self.blockades[uid]
+                logger.info(f"Blockade against {uid} expired.")
 
     # ---- HELPERS (Firestore-based) ----
     def _get_navy(self, user_id: str) -> Dict[str, int]:
@@ -238,6 +259,29 @@ class MilitaryCommands(commands.Cog):
 
         territory_bonus = civ['territory']['land_size'] / 10000
         return ground_power + spy_power + navy_power + air_power + territory_bonus
+
+    # ---- NEW HELPERS FOR NAVAL/AIR ----
+    def _get_naval_strength(self, user_id: str) -> float:
+        navy = self._get_navy(user_id)
+        tech = self._get_military_tech(user_id)
+        naval_tech = tech.get("naval_tech", 1)
+        total = 0
+        for ship_type, count in navy.items():
+            stats = SHIP_TYPES.get(ship_type)
+            if stats:
+                total += count * stats["strength"] * naval_tech
+        return total
+
+    def _get_air_strength(self, user_id: str) -> float:
+        air = self._get_airforce(user_id)
+        tech = self._get_military_tech(user_id)
+        air_tech = tech.get("air_tech", 1)
+        total = 0
+        for plane_type, count in air.items():
+            stats = PLANE_TYPES.get(plane_type)
+            if stats:
+                total += count * stats["strength"] * air_tech
+        return total
 
     def _extract_user_id(self, input_str: str) -> str:
         if not input_str:
@@ -536,7 +580,7 @@ class MilitaryCommands(commands.Cog):
                 victory_margin = final_attacker / max(1, final_defender)
                 await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin, level)
 
-                # ---- NEW: TERRITORY CAPTURE CHANCE ----
+                # ---- TERRITORY CAPTURE CHANCE ----
                 capture_chance = 0.10 * level  # 10% at level 1, 100% at level 10
                 if random.random() < capture_chance:
                     territory_cog = self.bot.get_cog("TerritoryCog")
@@ -1314,7 +1358,7 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in borderinfo command: {e}", exc_info=True)
 
-    # ---- NAVY, AIRFORCE, TECH, TRAINING (no cooldowns) ----
+    # ---- NAVY, AIRFORCE, TECH, TRAINING ----
     @commands.command(name='buildship')
     @app_commands.describe(ship_type="Type of ship to build", amount="How many ships to build")
     @app_commands.choices(ship_type=[
@@ -1626,6 +1670,283 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Total Air Strength", value=format_number(total_strength), inline=True)
 
         await ctx.send(embed=embed)
+
+    # ---- NEW COMMANDS ----
+    @commands.command(name='navalattack')
+    @app_commands.describe(target="Civilization leader to attack with navy")
+    async def naval_attack(self, ctx, target: Optional[guilded.Member] = None):
+        try:
+            user_id = str(ctx.author.id)
+            cooldown_seconds = config.COOLDOWNS.get("navalattack", 10) * 60
+            if not self._check_cooldown(user_id, 'navalattack', cooldown_seconds):
+                remaining = self._get_cooldown_remaining(user_id, 'navalattack')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using naval attack again!")
+                return
+
+            if not target:
+                await ctx.send("🚢 **Naval Attack**\nUsage: `.navalattack <user>`\nLaunch a naval strike using your fleet. Requires war.")
+                return
+
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+            civ = self.civ_manager.get_civilization(user_id)
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first!")
+                return
+
+            target_id = str(target.id)
+            if target_id == user_id:
+                await ctx.send("❌ You cannot attack yourself!")
+                return
+            target_civ = self.civ_manager.get_civilization(target_id)
+            if not target_civ:
+                await ctx.send("❌ Target user doesn't have a civilization!")
+                return
+
+            if not self._check_war(user_id, target_id):
+                await ctx.send("❌ You must declare war first! Use `.declare @user`")
+                return
+
+            my_navy = self._get_navy(user_id)
+            total_ships = sum(my_navy.values())
+            if total_ships < 1:
+                await ctx.send("❌ You need at least 1 ship for a naval attack!")
+                return
+
+            attacker_strength = self._get_naval_strength(user_id)
+            defender_strength = self._get_naval_strength(target_id)
+
+            att_roll = random.uniform(0.8, 1.2)
+            def_roll = random.uniform(0.8, 1.2)
+            att_final = attacker_strength * att_roll
+            def_final = defender_strength * def_roll
+
+            if att_final > def_final:
+                margin = att_final / def_final
+                defender_losses = min(int(total_ships * 0.3 * margin), total_ships)
+                attacker_losses = min(int(total_ships * 0.1), total_ships)
+                gold_stolen = min(int(target_civ['resources']['gold'] * 0.1 * margin), target_civ['resources']['gold'])
+                food_stolen = min(int(target_civ['resources']['food'] * 0.05 * margin), target_civ['resources']['food'])
+                self.civ_manager.update_resources(user_id, {"gold": gold_stolen, "food": food_stolen})
+                self.civ_manager.update_resources(target_id, {"gold": -gold_stolen, "food": -food_stolen})
+                self._reduce_navy(user_id, attacker_losses)
+                self._reduce_navy(target_id, defender_losses)
+                embed = create_embed("🚢 Naval Victory!", f"Your fleet defeated **{target_civ['name']}**'s navy!", guilded.Color.green())
+                embed.add_field(name="Spoils", value=f"🪙 {format_number(gold_stolen)} gold\n🌾 {format_number(food_stolen)} food", inline=True)
+                embed.add_field(name="Your Losses", value=f"{attacker_losses} ships", inline=True)
+                embed.add_field(name="Enemy Losses", value=f"{defender_losses} ships", inline=True)
+                await ctx.send(embed=embed)
+            else:
+                margin = def_final / att_final
+                attacker_losses = min(int(total_ships * 0.4 * margin), total_ships)
+                defender_losses = min(int(total_ships * 0.1), total_ships)
+                self._reduce_navy(user_id, attacker_losses)
+                self._reduce_navy(target_id, defender_losses)
+                embed = create_embed("🚢 Naval Defeat!", f"Your fleet was defeated by **{target_civ['name']}**'s navy!", guilded.Color.red())
+                embed.add_field(name="Your Losses", value=f"{attacker_losses} ships", inline=True)
+                embed.add_field(name="Enemy Losses", value=f"{defender_losses} ships", inline=True)
+                await ctx.send(embed=embed)
+
+            self.db.log_event(user_id, "naval_attack", "Naval Attack", f"Attacked {target_civ['name']} with navy")
+
+        except Exception as e:
+            logger.error(f"Error in navalattack: {e}", exc_info=True)
+
+    def _reduce_navy(self, user_id: str, losses: int):
+        if losses <= 0:
+            return
+        navy = self._get_navy(user_id)
+        order = ["frigate", "destroyer", "battleship", "aircraft_carrier", "submarine"]
+        remaining = losses
+        for ship in order:
+            if remaining <= 0:
+                break
+            count = navy.get(ship, 0)
+            if count > 0:
+                remove = min(count, remaining)
+                navy[ship] = count - remove
+                remaining -= remove
+        for ship in order:
+            if navy.get(ship, 0) < 0:
+                navy[ship] = 0
+        self._update_navy(user_id, navy)
+
+    def _reduce_airforce(self, user_id: str, losses: int):
+        if losses <= 0:
+            return
+        air = self._get_airforce(user_id)
+        order = ["fighter", "attacker", "bomber"]
+        remaining = losses
+        for plane in order:
+            if remaining <= 0:
+                break
+            count = air.get(plane, 0)
+            if count > 0:
+                remove = min(count, remaining)
+                air[plane] = count - remove
+                remaining -= remove
+        for plane in order:
+            if air.get(plane, 0) < 0:
+                air[plane] = 0
+        self._update_airforce(user_id, air)
+
+    @commands.command(name='airattack')
+    @app_commands.describe(target="Civilization leader to attack with airforce")
+    async def air_attack(self, ctx, target: Optional[guilded.Member] = None):
+        try:
+            user_id = str(ctx.author.id)
+            cooldown_seconds = config.COOLDOWNS.get("airattack", 10) * 60
+            if not self._check_cooldown(user_id, 'airattack', cooldown_seconds):
+                remaining = self._get_cooldown_remaining(user_id, 'airattack')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using air attack again!")
+                return
+
+            if not target:
+                await ctx.send("✈️ **Air Attack**\nUsage: `.airattack <user>`\nLaunch an air strike using your airforce. Requires war.")
+                return
+
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+            civ = self.civ_manager.get_civilization(user_id)
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first!")
+                return
+
+            target_id = str(target.id)
+            if target_id == user_id:
+                await ctx.send("❌ You cannot attack yourself!")
+                return
+            target_civ = self.civ_manager.get_civilization(target_id)
+            if not target_civ:
+                await ctx.send("❌ Target user doesn't have a civilization!")
+                return
+
+            if not self._check_war(user_id, target_id):
+                await ctx.send("❌ You must declare war first! Use `.declare @user`")
+                return
+
+            my_air = self._get_airforce(user_id)
+            total_planes = sum(my_air.values())
+            if total_planes < 1:
+                await ctx.send("❌ You need at least 1 plane for an air attack!")
+                return
+
+            attacker_strength = self._get_air_strength(user_id)
+            defender_air_strength = self._get_air_strength(target_id)
+            ground_defense = target_civ['military']['soldiers'] * 0.1
+            defender_strength = defender_air_strength + ground_defense
+
+            att_roll = random.uniform(0.8, 1.2)
+            def_roll = random.uniform(0.8, 1.2)
+            att_final = attacker_strength * att_roll
+            def_final = defender_strength * def_roll
+
+            if att_final > def_final:
+                margin = att_final / def_final
+                soldier_loss = min(int(target_civ['military']['soldiers'] * 0.1 * margin), target_civ['military']['soldiers'])
+                gold_stolen = min(int(target_civ['resources']['gold'] * 0.05 * margin), target_civ['resources']['gold'])
+                wood_stolen = min(int(target_civ['resources']['wood'] * 0.1 * margin), target_civ['resources']['wood'])
+                stone_stolen = min(int(target_civ['resources']['stone'] * 0.1 * margin), target_civ['resources']['stone'])
+                attacker_losses = min(int(total_planes * 0.15), total_planes)
+                defender_losses = min(int(total_planes * 0.1), total_planes)
+                self._reduce_airforce(user_id, attacker_losses)
+                self._reduce_airforce(target_id, defender_losses)
+
+                self.civ_manager.update_military(target_id, {"soldiers": -soldier_loss})
+                self.civ_manager.update_resources(user_id, {"gold": gold_stolen, "wood": wood_stolen, "stone": stone_stolen})
+                self.civ_manager.update_resources(target_id, {"gold": -gold_stolen, "wood": -wood_stolen, "stone": -stone_stolen})
+
+                embed = create_embed("✈️ Air Strike Victory!", f"Your airforce devastated **{target_civ['name']}**!", guilded.Color.green())
+                embed.add_field(name="Spoils", value=f"🪙 {format_number(gold_stolen)} gold\n🪵 {format_number(wood_stolen)} wood\n🪨 {format_number(stone_stolen)} stone", inline=True)
+                embed.add_field(name="Soldiers Killed", value=f"{format_number(soldier_loss)}", inline=True)
+                embed.add_field(name="Your Plane Losses", value=f"{attacker_losses}", inline=True)
+                await ctx.send(embed=embed)
+            else:
+                margin = def_final / att_final
+                attacker_losses = min(int(total_planes * 0.3 * margin), total_planes)
+                self._reduce_airforce(user_id, attacker_losses)
+                embed = create_embed("✈️ Air Strike Defeat!", f"Your airforce was repelled by **{target_civ['name']}**!", guilded.Color.red())
+                embed.add_field(name="Plane Losses", value=f"{attacker_losses}", inline=True)
+                await ctx.send(embed=embed)
+
+            self.db.log_event(user_id, "air_attack", "Air Attack", f"Attacked {target_civ['name']} with airforce")
+
+        except Exception as e:
+            logger.error(f"Error in airattack: {e}", exc_info=True)
+
+    @commands.command(name='navalblockade')
+    @app_commands.describe(target="Civilization leader to blockade")
+    async def naval_blockade(self, ctx, target: Optional[guilded.Member] = None):
+        try:
+            user_id = str(ctx.author.id)
+            cooldown_seconds = config.COOLDOWNS.get("navalblockade", 20) * 60
+            if not self._check_cooldown(user_id, 'navalblockade', cooldown_seconds):
+                remaining = self._get_cooldown_remaining(user_id, 'navalblockade')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using naval blockade again!")
+                return
+
+            if not target:
+                await ctx.send("🚢 **Naval Blockade**\nUsage: `.navalblockade <user>`\nImpose a blockade that reduces enemy resource income by 30% for 2 hours. Requires war.")
+                return
+
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+            civ = self.civ_manager.get_civilization(user_id)
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first!")
+                return
+
+            target_id = str(target.id)
+            if target_id == user_id:
+                await ctx.send("❌ You cannot blockade yourself!")
+                return
+            target_civ = self.civ_manager.get_civilization(target_id)
+            if not target_civ:
+                await ctx.send("❌ Target user doesn't have a civilization!")
+                return
+
+            if not self._check_war(user_id, target_id):
+                await ctx.send("❌ You must declare war first! Use `.declare @user`")
+                return
+
+            if target_id in self.blockades:
+                await ctx.send("❌ That civilization is already under blockade!")
+                return
+
+            my_navy = self._get_navy(user_id)
+            total_ships = sum(my_navy.values())
+            if total_ships < 5:
+                await ctx.send("❌ You need at least 5 ships to impose a blockade!")
+                return
+
+            duration_minutes = 120
+            expires = datetime.utcnow() + timedelta(minutes=duration_minutes)
+            self.blockades[target_id] = {"attacker": user_id, "expires": expires}
+
+            blockade_loss = max(1, int(total_ships * 0.2))
+            self._reduce_navy(user_id, blockade_loss)
+
+            embed = create_embed(
+                "🚢 Blockade Imposed!",
+                f"**{civ['name']}** has blockaded **{target_civ['name']}**!",
+                guilded.Color.blue()
+            )
+            embed.add_field(name="Duration", value=f"{duration_minutes} minutes", inline=True)
+            embed.add_field(name="Effect", value="The blockaded civilization's resource income is reduced by 30%!", inline=False)
+            embed.add_field(name="Ships Committed", value=f"{blockade_loss} ships lost to maintain the blockade", inline=True)
+            await ctx.send(embed=embed)
+
+            self.db.log_event(user_id, "naval_blockade", "Naval Blockade", f"Blockaded {target_civ['name']}")
+
+        except Exception as e:
+            logger.error(f"Error in navalblockade: {e}", exc_info=True)
+
 
 async def setup(bot):
     await bot.add_cog(MilitaryCommands(bot))
