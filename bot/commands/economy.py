@@ -128,6 +128,73 @@ class EconomyCommands(commands.Cog):
         embed.set_footer(text="Economy is nerfed by 34% to balance expansion costs.")
         await ctx.send(embed=embed)
 
+    @commands.command(name='immigration')
+    @check_cooldown_decorator(minutes=10)
+    async def open_immigration(self, ctx):
+        """Open borders to immigrants – gain citizens but risk protests!"""
+        user_id = str(ctx.author.id)
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+
+        # Gain citizens (scaled with territory and employment, but smaller)
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        base_gain = random.randint(50, 150)
+        gained = int(base_gain * employment_factor * territory_factor)
+        gained = int(gained * ECONOMY_MULTIPLIER)  # 34% nerf
+        gained = min(gained, 500)  # cap so it doesn't get out of hand
+
+        # Apply citizens
+        self.civ_manager.update_population(user_id, {"citizens": gained})
+
+        # ---- PROTEST MECHANICS ----
+        # Base happiness loss
+        happiness_loss = random.randint(8, 18)
+        self.civ_manager.update_population(user_id, {"happiness": -happiness_loss})
+
+        # Extra effects: 25% chance of a serious protest (riot)
+        riot_triggered = False
+        if random.random() < 0.25:
+            riot_triggered = True
+            extra_happiness_loss = random.randint(5, 15)
+            soldier_loss = random.randint(1, 5)
+            self.civ_manager.update_population(user_id, {"happiness": -extra_happiness_loss})
+            self.civ_manager.update_military(user_id, {"soldiers": -soldier_loss})
+            self.db.log_event(user_id, "immigration_riot", "Immigration Riot!", 
+                              f"Anti-immigration protests turned violent! Lost {soldier_loss} soldiers and {extra_happiness_loss} happiness.")
+
+        # Log the event
+        self.db.log_event(user_id, "immigration", "Immigration Opened", 
+                          f"Gained {gained} citizens but lost {happiness_loss} happiness. Riot: {riot_triggered}")
+
+        # Build embed
+        embed = create_embed(
+            "🛂 Immigration Open!",
+            f"Your borders are now open to immigrants! {gained} new citizens have arrived.",
+            guilded.Color.blue()
+        )
+        embed.add_field(name="👥 Citizens Gained", value=f"+{format_number(gained)}", inline=True)
+        embed.add_field(name="😡 Happiness Change", value=f"-{happiness_loss}", inline=True)
+
+        if riot_triggered:
+            embed.add_field(
+                name="💥 PROTEST RIOT!",
+                value=f"Anti-immigration protests turned violent! Lost {soldier_loss} soldiers and an additional {extra_happiness_loss} happiness!",
+                inline=False
+            )
+            embed.color = guilded.Color.red()
+        else:
+            embed.add_field(name="⚠️ Tensions Rising", value="Protests are simmering – be careful!", inline=False)
+
+        embed.set_footer(text="Cooldown: 10 minutes. Immigration is controversial!")
+        await ctx.send(embed=embed)
+    
     @commands.command(name='work')
     @check_cooldown_decorator(minutes=1)
     async def work(self, ctx, amount: int = None):
