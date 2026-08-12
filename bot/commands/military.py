@@ -428,7 +428,7 @@ class MilitaryCommands(commands.Cog):
 
     # ---------- CARD SYSTEM (BUY + USE) ----------
     @commands.command(name='buycard')
-    @check_cooldown_decorator(minutes=1)   # optional, remove if you want no cooldown
+ #   @check_cooldown_decorator(minutes=1)   # optional, remove if you want no cooldown
     async def buy_card(self, ctx):
         """Purchase a random card for 500 gold."""
         user_id = str(ctx.author.id)
