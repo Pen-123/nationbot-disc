@@ -12,7 +12,7 @@ ECONOMY = {
     # .work
     "work_gold_per_citizen_min": 2,
     "work_gold_per_citizen_max": 5,
-    "work_employment_coeff": 0.4,  # not used directly but for scaling
+    "work_employment_coeff": 0.4,
     "work_cap": 1500000,
     # .farm
     "farm_base_min": 10,
@@ -55,7 +55,7 @@ ECONOMY = {
     "fish_treasure_base_max": 60,
     "fish_employment_coeff": 0.4,
     "fish_cap": 250000,
-    # .tax (nerfed)
+    # .tax
     "tax_base_per_citizen": 1,
     "tax_employment_coeff": 0.3,
     "tax_happiness_penalty": -5,
@@ -111,7 +111,7 @@ ECONOMY = {
     "immigration_riot_happiness_loss_max": 20,
     "immigration_riot_soldier_loss_min": 2,
     "immigration_riot_soldier_loss_max": 8,
-    # .sell (hyper item sale)
+    # .sell
     "sell_common_min": 100,
     "sell_common_max": 250,
     "sell_rare_min": 300,
@@ -121,29 +121,26 @@ ECONOMY = {
     "sell_cap": 10000,
 }
 
-# ---- EXPANSION COSTS ----
+# ---- EXPANSION ----
 EXPANSION = {
-    # Soldier cost formula
-    "soldier_per_area_small": 595,      # km² per soldier for areas < 1M
-    "soldier_per_area_large": 2000,     # km² per soldier for areas >= 1M
+    "soldier_per_area_small": 595,
+    "soldier_per_area_large": 2000,
     "min_soldier_cost": 10,
     "max_soldier_cost": 5000,
     "rapid_multiplier": 2,
     "rapid_min_soldier_cost": 20,
     "rapid_max_soldier_cost": 10000,
-    # Resource costs
     "base_gold_per_province": 300,
     "base_food_per_province": 100,
     "base_wood_per_province": 20,
     "base_stone_per_province": 20,
     "resource_cost_multiplier": 0.75,
-    "cross_region_penalty_multiplier": 1.5,  # no longer used but kept for reference
 }
 
 # ---- MILITARY ----
 MILITARY = {
-    "soldier_buy_cost": 20,              # gold per soldier
-    "tech_upgrade_cost": 500,            # gold per level
+    "soldier_buy_cost": 20,
+    "tech_upgrade_cost": 500,
     "train_cost_soldier_gold": 50,
     "train_cost_soldier_food": 10,
     "train_cost_spy_gold": 100,
@@ -165,6 +162,7 @@ MILITARY = {
 
 # ---- COOLDOWNS (in minutes) ----
 COOLDOWNS = {
+    # Economy
     "gather": 1,
     "work": 1,
     "farm": 1,
@@ -178,6 +176,12 @@ COOLDOWNS = {
     "labor": 5,
     "advertise": 10,
     "immigration": 10,
+    "sell": 0,
+    "festival": 1,
+    "cheer": 1,
+    "buysoldiers": 0,
+    "burn": 0,
+    # Military
     "train": 2,
     "find": 1,
     "attack": 3,
@@ -188,15 +192,85 @@ COOLDOWNS = {
     "rectract": 1,
     "retrieve": 1,
     "borderinfo": 1,
-    "buildship": 0,     # no cooldown
-    "buildplane": 0,    # no cooldown
+    "buildship": 0,
+    "buildplane": 0,
     "tech": 0,
     "trainboost": 0,
+    # Cards
     "buycard": 0,
-    "buy_soldiers": 0,
-    "sell": 0,
-    "festival": 1,
-    "cheer": 1,
+    # Diplomacy
+    "ally": 0,
+    "acceptally": 0,
+    "rejectally": 0,
+    "break": 0,
+    "send": 0,
+    "trade": 0,
+    "accepttrade": 0,
+    "rejecttrade": 0,
+    "mail": 0,
+    "inbox": 0,
+    "coalition": 0,
+    # Store
+    "blackmarket": 0,
+    "store": 0,
+    "inventory": 0,
+    "market": 0,
+    # Territory
+    "expand": 0,
+    "rapidexpansion": 0,
+    "territories": 0,
+    "map": 0,
+    # Countryballs
+    "openpacks": 0,
+    "evolve": 0,
+    "packs": 0,
+    "activate": 0,
+    "deactivate": 0,
+    "synergies": 0,
+    # Industrial Revolution
+    "industrial_start": 0,
+    "industrial_status": 0,
+    "industrial_build": 2,
+    "industrial_tech": 2,
+    "industrial_workers": 2,
+    "industrial_cleanup": 2,
+    "industrial_railway": 2,
+    "industrial_transport": 2,
+    "industrial_army": 2,
+    "industrial_policy": 2,
+    "industrial_import": 2,
+    "industrial_export": 2,
+    "industrial_steam": 2,
+    "industrial_mine": 2,
+    "industrial_hospital": 2,
+    "industrial_school": 2,
+    "industrial_law": 2,
+    "industrial_trade": 2,
+    "industrial_aid": 2,
+    "industrial_suppress": 2,
+    "industrial_bribe": 2,
+    "industrial_automate": 2,
+    "industrial_upgrade": 2,
+    "industrial_relief": 2,
+    "industrial_expand": 2,
+    "industrial_banking": 10,
+    "industrial_nationalize": 5,
+    "indushelp": 0,
+    # ExtraEconomy
+    "extrawork": 5,
+    "extragamble": 1,
+    "extracards": 1,
+    "slots": 1,
+    "blackjack": 1,
+    "job": 1,
+    "arrest": 1,
+    "rob": 1,
+    "code": 0,
+    "darkweb": 0,
+    "extrastore": 1,
+    "extrainventory": 0,
+    "setbalance": 0,
+    # HyperItems
     "laststand": 60,
     "luckystrike": 60,
     "propaganda": 3,
@@ -211,74 +285,9 @@ COOLDOWNS = {
     "nuke": 5,
     "obliterate": 13,
     "sacrifice": 1440,
-    "ally": 0,
-    "acceptally": 0,
-    "rejectally": 0,
-    "break": 0,
-    "send": 0,
-    "trade": 0,
-    "accepttrade": 0,
-    "rejecttrade": 0,
-    "mail": 0,
-    "inbox": 0,
-    "coalition": 0,
-    "blackmarket": 0,
-    "store": 0,
-    "inventory": 0,
-    "market": 0,
-    "expand": 0,
-    "rapidexpansion": 0,
-    "territories": 0,
-    "map": 0,
-    "openpacks": 0,
-    "evolve": 0,
-    "packs": 0,
-    "activate": 0,
-    "deactivate": 0,
-    "synergies": 0,
-    "industrial_start": 0,
-    "industrial_status": 0,
-    "industrial_build": 0,
-    "industrial_tech": 0,
-    "industrial_workers": 0,
-    "industrial_cleanup": 0,
-    "industrial_railway": 0,
-    "industrial_transport": 0,
-    "industrial_army": 0,
-    "industrial_policy": 0,
-    "industrial_import": 0,
-    "industrial_export": 0,
-    "industrial_steam": 0,
-    "industrial_mine": 0,
-    "industrial_hospital": 0,
-    "industrial_school": 0,
-    "industrial_law": 0,
-    "industrial_trade": 0,
-    "industrial_aid": 0,
-    "industrial_suppress": 0,
-    "industrial_bribe": 0,
-    "industrial_automate": 0,
-    "industrial_upgrade": 0,
-    "industrial_relief": 0,
-    "industrial_expand": 0,
-    "industrial_banking": 0,
-    "industrial_nationalize": 0,
-    "indushelp": 0,
-    # ExtraEconomy
-    "extrawork": 5,
-    "extragamble": 1,
-    "extracards": 1,
-    "slots": 1,
-    "blackjack": 1,
-    "job": 1,
-    "arrest": 1,
-    "rob": 1,
-    "code": 0,
-    "darkweb": 0,
-    "setbalance": 0,
 }
 
-# ---- CAPS (maximum resource gains per command) ----
+# ---- CAPS (maximum per command) ----
 CAPS = {
     "gather": 500000,
     "work": 1500000,
@@ -297,7 +306,7 @@ CAPS = {
     "sell": 10000,
 }
 
-# ---- IDEOLOGY MODIFIERS (full dictionary) ----
+# ---- IDEOLOGY MODIFIERS ----
 IDEOLOGY_MODIFIERS = {
     "fascism": {
         "soldier_training_speed": 1.25,
@@ -380,7 +389,7 @@ REGION_MODIFIERS = {
     "Antarctica": {"research_speed": 1.25, "unique_discoveries": 1.30}
 }
 
-# ---- HYPERITEM / BLACK MARKET ----
+# ---- BLACK MARKET ----
 BLACK_MARKET = {
     "entry_cost": 1000,
     "pity_uncommon": 3,
@@ -388,7 +397,7 @@ BLACK_MARKET = {
     "pity_legendary": 10,
 }
 
-# ---- CARD POOL (reused from database.py) ----
+# ---- CARD POOL ----
 CARD_POOL = [
     {"name": "Resource Boost", "type": "bonus", "effect": {"resource_production": 10}, "description": "+10% resource production"},
     {"name": "Military Training", "type": "bonus", "effect": {"soldier_training_speed": 15}, "description": "+15% soldier training speed"},
@@ -407,10 +416,10 @@ CARD_POOL = [
     {"name": "Military Academy", "type": "bonus", "effect": {"soldier_training_speed": 25}, "description": "+25% soldier training speed"},
 ]
 
-# ---- TERRITORY FACTOR (utils.py) ----
+# ---- TERRITORY FACTOR ----
 TERRITORY_FACTOR = {
-    "coefficient": 0.8,        # for log scaling
-    "max": 3.0,                # maximum multiplier
+    "coefficient": 0.8,
+    "max": 3.0,
 }
 
 # ---- STARTING RESOURCES ----
@@ -428,7 +437,7 @@ STARTING_RESOURCES = {
     "hyper_items": ["Anti-Nuke Shield"],
 }
 
-# ---- EASTER EGG BONUSES ----
+# ---- EASTER EGGS ----
 EASTER_EGGS = {
     "ncsw": {
         "bonuses": {"soldier_training_speed": 20, "happiness_boost": -5},
@@ -444,4 +453,77 @@ EASTER_EGGS = {
         "hyper_item": "Red Banner",
         "message": "☭ The people's republic rises! (+15% resource production, -10% trade profit)"
     }
+}
+
+# ---- INDUSTRIAL REVOLUTION ----
+INDUSTRIAL = {
+    "banking_max_uses": 5,   # max times you can use .industrial_banking per revolution
+}
+
+# ---- EXTRA ECONOMY ----
+EXTRACONOMY = {
+    "extrawork_base_salary": 50,
+    "extrawork_salary_multipliers": {
+        "Teller": 100, "Manager": 200, "Executive": 300,
+        "Recruit": 150, "Officer": 250, "Captain": 350,
+        "Guard": 120, "Supervisor": 220, "Chief": 320,
+        "Clerk": 180, "Minister": 280, "President": 500, "Prime Minister": 600,
+        "Private": 130, "Sergeant": 230, "Commander": 330
+    },
+    "job_application_roles": {
+        "bank": ["Rejected", "Teller", "Manager", "Executive"],
+        "police": ["Rejected", "Recruit", "Officer", "Captain"],
+        "security": ["Rejected", "Guard", "Supervisor", "Chief"],
+        "government": ["Rejected", "Clerk", "Minister", "President", "Prime Minister"],
+        "military": ["Rejected", "Private", "Sergeant", "Commander"]
+    },
+    "extrastore_prices": {
+        "ak": 500,
+        "ammo": 100,
+        "glock17": 800,
+        "crypto_miner": 4000,
+    },
+    "extrastore_stock": {
+        "ak": 5,
+        "ammo": 10,
+        "glock17": 5,
+        "crypto_miner": 2,
+    },
+    "extrastore_item_names": {
+        "ak": "AK-47",
+        "ammo": "Ammo Box",
+        "glock17": "Glock 17",
+        "crypto_miner": "Crypto Miner"
+    },
+    "darkweb_items": {
+        "forged_documents": 5000,
+        "stolen_data": 3000,
+        "silencer": 1500,
+        "explosives": 5000,
+        "crypto_miner": 3500,
+    },
+    "darkweb_scam_chance": 0.5,
+    "slots_jackpot_multiplier": 10,
+    "slots_triple_multiplier": 2,
+    "blackjack_win_multiplier": 1,
+    "extracards_win_multiplier": 1,
+    "extragamble_win_chance": 0.45,
+    "extragamble_jackpot_chance": 0.10,
+    "arrest_success_chance": 0.6,
+    "arrest_seize_amount": 200,
+    "rob_success_chance": 0.5,
+    "rob_stolen_min": 100,
+    "rob_stolen_max": 300,
+    "coding_projects": {
+        "virus": {"cost": 250, "duration_seconds": 1500, "reward_min": 250, "reward_max": 763, "risk": 0.25},
+        "website": {"cost": 50, "duration_seconds": 600, "reward_min": 50, "reward_max": 150, "risk": 0},
+        "messenger": {"cost": 3500, "duration_seconds": 18000, "reward_type": "product", "viral_chance": 0.45}
+    },
+    "crypto_miner_income": 200,
+    "crypto_miner_interval": 3600,
+    "product_messenger_base_interval": 10800,
+    "product_messenger_viral_interval": 18000,
+    "product_messenger_base_payout": 10,
+    "product_messenger_viral_payout_min": 1000,
+    "product_messenger_viral_payout_max": 5000,
 }
