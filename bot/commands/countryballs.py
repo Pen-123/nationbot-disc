@@ -6,10 +6,11 @@ import logging
 import random
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Set
 
 from bot.utils import create_embed, format_number
+from bot import config
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +21,18 @@ logger = logging.getLogger(__name__)
 REGION_TO_COUNTRYBALL = {
     # Europe
     "Eastern Europe": "soviet_union",
-    "Western Europe": "reich",          # German Reich – evolves into German Empire
+    "Western Europe": "reich",
+    "Central Europe": "german_empire",
+    "Balkans": "austria-hungary",
     "Southern Europe": "italy",
     "Northern Europe": "british_empire",
 
     # Asia
-    "Central Asia": "austria-hungary",
-    "East Asia": "north_korea",
-    "Middle East": "ottoman_empire",
-    "South Asia": "taiwan",
+    "Central Asia": "soviet_union",
+    "Northeast Asia": "china",
+    "South Asia": "british_empire",
     "Southeast Asia": "japanese_empire",
+    "Middle East": "ottoman_empire",
 
     # Africa
     "North Africa": "ottoman_empire",
@@ -591,6 +594,23 @@ class CountryballCog(commands.Cog):
         if not self.territory_cog:
             logger.warning("TerritoryCog not found; countryball auto-unlock will not work.")
 
+    # ---- Cooldown helper ----
+    def _check_cooldown(self, ctx, command_name: str) -> bool:
+        minutes = config.COOLDOWNS.get(command_name, 0)
+        if minutes <= 0:
+            return True
+        user_id = str(ctx.author.id)
+        last_used = self.db.get_command_cooldown(user_id, command_name)
+        if last_used:
+            cooldown_end = last_used + timedelta(minutes=minutes)
+            if datetime.utcnow() < cooldown_end:
+                remaining = cooldown_end - datetime.utcnow()
+                mins = int(remaining.total_seconds() // 60)
+                secs = int(remaining.total_seconds() % 60)
+                return False, f"⏳ Please wait {mins}m {secs}s before using this command again!"
+        self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
+        return True, None
+
     # ---- PROGRESSIVE REVEAL ----
     async def reveal_countryball(self, ctx, ball_id: str, user_id: str):
         ball_def = COUNTRYBALLS.get(ball_id)
@@ -603,12 +623,14 @@ class CountryballCog(commands.Cog):
             await ctx.send(f"❌ Image file `{ball_def['image_file']}` not found. Path: {image_path}")
             return
 
+        # Stage 1: Continent (no name)
         embed1 = discord.Embed(
             title="🌍 **A New Power Rises!**",
             description=f"From the continent of **{ball_def['continent']}**...",
             color=discord.Color.blue()
         )
 
+        # Stage 2: Colors and rank (no name)
         colors_str = ball_def['flag_colors_human']
         rank = ball_def['power_rank']
         rank_emoji = "👑" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else "🏅"))
@@ -618,12 +640,14 @@ class CountryballCog(commands.Cog):
             color=discord.Color.gold()
         )
 
+        # Stage 3: Mystery hint (still no name)
         embed3 = discord.Embed(
             title="🔮 **A Legendary Power Emerges**",
             description="Ancient texts speak of a mighty empire...\nIts true name will be revealed shortly.",
             color=discord.Color.purple()
         )
 
+        # Stage 4: Full reveal with name and image
         embed4 = discord.Embed(
             title=f"**{ball_def['name']}** Unlocked!",
             description=f"Added to your collection! {self._format_modifiers(ball_def['modifiers'])}",
@@ -668,9 +692,15 @@ class CountryballCog(commands.Cog):
     # ---- COMMANDS ----
     @commands.command(name='openpacks')
     async def open_packs(self, ctx):
+        """Open packs for all completed subregions."""
         user_id = str(ctx.author.id)
         if not self.territory_cog:
             await ctx.send("❌ Territory system not available.")
+            return
+
+        ok, msg = self._check_cooldown(ctx, "openpacks")
+        if not ok:
+            await ctx.send(msg)
             return
 
         owned = self.territory_cog._get_owned_provinces(user_id)
@@ -708,14 +738,20 @@ class CountryballCog(commands.Cog):
 
     @commands.command(name='evolve')
     async def check_evolve(self, ctx):
+        """Manually check evolution for all your countryballs."""
         user_id = str(ctx.author.id)
+        if not self.territory_cog:
+            await ctx.send("❌ Territory system not available.")
+            return
+
+        ok, msg = self._check_cooldown(ctx, "evolve")
+        if not ok:
+            await ctx.send(msg)
+            return
+
         collection = self.ball_manager.get_collection(user_id)
         if not collection:
             await ctx.send("📦 You don't have any countryballs to evolve.")
-            return
-
-        if not self.territory_cog:
-            await ctx.send("❌ Territory system not available.")
             return
 
         evolved_any = False
@@ -736,6 +772,11 @@ class CountryballCog(commands.Cog):
     @commands.command(name='packs')
     async def packs_list(self, ctx):
         user_id = str(ctx.author.id)
+        ok, msg = self._check_cooldown(ctx, "packs")
+        if not ok:
+            await ctx.send(msg)
+            return
+
         collection = self.ball_manager.get_collection(user_id)
         if not collection:
             await ctx.send("📦 You haven't unlocked any countryballs yet. Conquer regions and use `.openpacks` to unlock them!")
@@ -758,6 +799,11 @@ class CountryballCog(commands.Cog):
     @app_commands.describe(ball_name="Name of the countryball to activate")
     async def activate_manager(self, ctx, *, ball_name: str):
         user_id = str(ctx.author.id)
+        ok, msg = self._check_cooldown(ctx, "activate")
+        if not ok:
+            await ctx.send(msg)
+            return
+
         matches = []
         for ball_id, data in COUNTRYBALLS.items():
             if ball_name.lower() in data['name'].lower():
@@ -782,6 +828,11 @@ class CountryballCog(commands.Cog):
     @app_commands.describe(ball_name="Name of the countryball to deactivate")
     async def deactivate_manager(self, ctx, *, ball_name: str):
         user_id = str(ctx.author.id)
+        ok, msg = self._check_cooldown(ctx, "deactivate")
+        if not ok:
+            await ctx.send(msg)
+            return
+
         active = self.ball_manager.get_active_managers(user_id)
         if not active:
             await ctx.send("❌ You have no active managers.")
@@ -803,6 +854,11 @@ class CountryballCog(commands.Cog):
     @commands.command(name='synergies')
     async def show_synergies(self, ctx):
         user_id = str(ctx.author.id)
+        ok, msg = self._check_cooldown(ctx, "synergies")
+        if not ok:
+            await ctx.send(msg)
+            return
+
         bonuses = self.ball_manager.get_synergy_bonuses(user_id)
         if not bonuses:
             await ctx.send("❌ No active synergies. Activate at least 2 countryballs from the same faction.")
