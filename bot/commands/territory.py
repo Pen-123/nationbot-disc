@@ -9,8 +9,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from bot.utils import create_embed, format_number
-from bot.utils import get_territory_modifier
+from bot.utils import create_embed, format_number, get_territory_modifier
+from bot import config
 
 logger = logging.getLogger(__name__)
 
@@ -245,9 +245,7 @@ for name, area in AREA_OVERRIDES.items():
     PROVINCE_AREAS[name] = area
 logger.info(f"Applied {len(AREA_OVERRIDES)} area overrides")
 
-FORBIDDEN_START_PROVINCES = {
-    "Western Sahara",
-}
+FORBIDDEN_START_PROVINCES = {"Western Sahara"}
 
 PROVINCES = {
     "Eastern Europe": [
@@ -432,7 +430,7 @@ SUBREGION_TO_CONTINENT = {
     "West Antarctica": "Antarctica",
 }
 
-# ---- COUNTRYBALL MAPPING ----
+# ---- COUNTRYBALL MAPPING (unchanged) ----
 REGION_TO_COUNTRYBALL = {
     "Eastern Europe": "soviet_union",
     "Western Europe": "reich",
@@ -500,32 +498,29 @@ class TerritoryCog(commands.Cog):
             logger.error(f"Failed to conquer province {province} for {user_id}")
             return False
 
+    # ---- Expansion cost formulas (now using config) ----
     def _calculate_base_soldier_cost(self, area: int) -> int:
         """
-        Returns the base soldier cost before any reductions.
-        For area >= 1,000,000 km²: 1 soldier per 10,000 km².
-        For area < 1,000,000 km²: 1 soldier per 595 km².
-        Then clamped to min 10, max 5000 (normal).
+        For area >= 1,000,000 km²: 1 soldier per config.EXPANSION["soldier_per_area_large"] km²
+        For area < 1,000,000 km²: 1 soldier per config.EXPANSION["soldier_per_area_small"] km²
+        Clamped to config.EXPANSION["min_soldier_cost"] and config.EXPANSION["max_soldier_cost"].
         """
         if area >= 1_000_000:
-            base = max(10, area // 10000)
+            base = max(config.EXPANSION["min_soldier_cost"], area // config.EXPANSION["soldier_per_area_large"])
         else:
-            base = max(10, area // 595)
-        return min(base, 5000)
+            base = max(config.EXPANSION["min_soldier_cost"], area // config.EXPANSION["soldier_per_area_small"])
+        return min(base, config.EXPANSION["max_soldier_cost"])
 
     def _calculate_base_rapid_soldier_cost(self, area: int) -> int:
         """
-        Rapid expansion cost: 2× the normal base, with different min/max.
-        For area >= 1,000,000 km²: 2 * (area // 10000) – but we apply the multiplier after the base.
-        We'll just double the normal base and apply the rapid min/max.
+        Rapid expansion: 2× normal base (config.EXPANSION["rapid_multiplier"]),
+        min config.EXPANSION["rapid_min_soldier_cost"], max config.EXPANSION["rapid_max_soldier_cost"].
         """
-        normal_base = self._calculate_base_soldier_cost(area)
-        # Double it, but keep within rapid bounds (min 20, max 10000)
-        rapid = max(20, normal_base * 2)
-        return min(rapid, 10000)
+        normal = self._calculate_base_soldier_cost(area)
+        rapid = max(config.EXPANSION["rapid_min_soldier_cost"], normal * config.EXPANSION["rapid_multiplier"])
+        return min(rapid, config.EXPANSION["rapid_max_soldier_cost"])
 
     def _get_navy_and_airforce(self, user_id: str):
-        """Return (has_navy, has_airforce) booleans."""
         navy = self.db.get_navy(user_id)
         air = self.db.get_airforce(user_id)
         has_navy = sum(navy.values()) > 0
@@ -533,7 +528,6 @@ class TerritoryCog(commands.Cog):
         return has_navy, has_airforce
 
     def _get_owned_continents(self, user_id: str) -> Set[str]:
-        """Return set of continents that the player owns any province in."""
         owned = self._get_owned_provinces(user_id)
         continents = set()
         for p in owned:
@@ -545,34 +539,33 @@ class TerritoryCog(commands.Cog):
         return continents
 
     def _is_overseas(self, user_id: str, target_subregion: str) -> bool:
-        """True if target subregion is on a continent not owned by the player."""
         owned_continents = self._get_owned_continents(user_id)
         if not owned_continents:
-            # Shouldn't happen if they have at least one province
             return False
         target_continent = SUBREGION_TO_CONTINENT.get(target_subregion)
         return target_continent not in owned_continents
 
     def _apply_expansion_reductions(self, user_id: str, target_subregion: str, resource_cost: dict, soldier_cost: int):
         """
-        Apply navy/airforce reductions based on continent (overseas vs land).
+        Apply navy/airforce reductions.
         Returns (new_resource_cost, new_soldier_cost, reduction_type)
         """
         has_navy, has_airforce = self._get_navy_and_airforce(user_id)
         is_overseas = self._is_overseas(user_id, target_subregion)
 
+        # Reductions: 0.75 = 25% off, 0.5 = 50% off
         if is_overseas:
             if has_navy:
-                reduction = 0.75  # 25% off
+                reduction = 0.75
                 reason = "🛳️ Navy (25% off – overseas)"
             else:
                 return resource_cost, soldier_cost, "⚠️ No navy – overseas expansion blocked"
         else:
             if has_airforce:
-                reduction = 0.5   # 50% off
+                reduction = 0.5
                 reason = "✈️ Airforce (50% off – land)"
             elif has_navy:
-                reduction = 0.75  # 25% off
+                reduction = 0.75
                 reason = "🛳️ Navy (25% off – land)"
             else:
                 reduction = 1.0
@@ -688,9 +681,9 @@ class TerritoryCog(commands.Cog):
 
             embed = discord.Embed(
                 title="🌍 Available Provinces",
-                description="Use `.expand <province>` to claim one. Each expansion costs resources + soldiers.\n\n"
-                            "**Soldier cost:** For large provinces (≥1M km²) – 1 soldier per 10,000 km².\n"
-                            "**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
+                description=f"Use `.expand <province>` to claim one. Each expansion costs resources + soldiers.\n\n"
+                            f"**Soldier cost:** For large provinces (≥1M km²) – 1 soldier per {config.EXPANSION['soldier_per_area_large']:,} km².\n"
+                            f"**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
                 color=discord.Color.blue()
             )
 
@@ -720,6 +713,7 @@ class TerritoryCog(commands.Cog):
                     province_list += '…'
                 field_lines.append(f"**{sub}** ({req}): {province_list}")
 
+            # Chunk to avoid >25 fields
             if len(field_lines) > 25:
                 chunks = [field_lines[i:i+5] for i in range(0, len(field_lines), 5)]
                 for i, chunk in enumerate(chunks, 1):
@@ -771,13 +765,11 @@ class TerritoryCog(commands.Cog):
 
         is_overseas = self._is_overseas(user_id, target_subregion)
 
-        # Navy requirement for overseas
         has_navy, has_air = self._get_navy_and_airforce(user_id)
         if is_overseas and not has_navy:
             await ctx.send(f"❌ **{province}** is overseas (different continent)! You need a navy to expand there. Build ships with `.buildship`.")
             return
 
-        # Calculate base costs
         area = self.province_areas.get(province, 1000)
         cost_multiplier = min(math.sqrt(area / 1000), 20.0)
 
@@ -785,21 +777,19 @@ class TerritoryCog(commands.Cog):
         province_count = len(PROVINCES[subregion])
 
         base_cost = {
-            "gold": 300 + (100 // max(1, province_count)),
-            "food": 100 + (50 // max(1, province_count)),
-            "wood": 20 + (10 // max(1, province_count)),
-            "stone": 20 + (10 // max(1, province_count)),
+            "gold": config.EXPANSION["base_gold_per_province"] + (100 // max(1, province_count)),
+            "food": config.EXPANSION["base_food_per_province"] + (50 // max(1, province_count)),
+            "wood": config.EXPANSION["base_wood_per_province"] + (10 // max(1, province_count)),
+            "stone": config.EXPANSION["base_stone_per_province"] + (10 // max(1, province_count)),
         }
 
-        resource_cost = {k: int(v * cost_multiplier * 0.75) for k, v in base_cost.items()}
+        resource_cost = {k: int(v * cost_multiplier * config.EXPANSION["resource_cost_multiplier"]) for k, v in base_cost.items()}
         soldier_cost = self._calculate_base_soldier_cost(area)
 
-        # Apply reductions
         resource_cost, soldier_cost, reduction_reason = self._apply_expansion_reductions(
             user_id, target_subregion, resource_cost, soldier_cost
         )
 
-        # Check affordability
         if not self.civ_manager.can_afford(user_id, resource_cost):
             cost_str = ", ".join([f"{amount} {res}" for res, amount in resource_cost.items()])
             await ctx.send(f"❌ Cannot afford to claim **{province}**. Requires: {cost_str}.")
@@ -809,7 +799,6 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to claim **{province}**! You have {civ['military']['soldiers']}.")
             return
 
-        # Deduct costs
         self.civ_manager.spend_resources(user_id, resource_cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
@@ -856,9 +845,9 @@ class TerritoryCog(commands.Cog):
 
             embed = discord.Embed(
                 title="⚡ Rapid Expansion",
-                description="Claim a province using soldiers instead of resources.\n"
-                            "Cost: **2× normal** – for large provinces (≥1M km²) 1 per 10,000 km² (min 20, max 10,000).\n\n"
-                            "**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
+                description=f"Claim a province using soldiers instead of resources.\n"
+                            f"Cost: **{config.EXPANSION['rapid_multiplier']}× normal** – for large provinces (≥1M km²) 1 per {config.EXPANSION['soldier_per_area_large']:,} km² (min {config.EXPANSION['rapid_min_soldier_cost']}, max {config.EXPANSION['rapid_max_soldier_cost']}).\n\n"
+                            f"**Legend:** 🛳️ = Navy available (25% off), ✈️ = Airforce available (50% off, land only), ⚠️ = Navy required (overseas)",
                 color=discord.Color.orange()
             )
 
@@ -888,6 +877,7 @@ class TerritoryCog(commands.Cog):
                     province_list += '…'
                 field_lines.append(f"**{sub}** ({req}): {province_list}")
 
+            # Chunk to avoid >25 fields
             if len(field_lines) > 25:
                 chunks = [field_lines[i:i+5] for i in range(0, len(field_lines), 5)]
                 for i, chunk in enumerate(chunks, 1):
@@ -944,7 +934,6 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ **{province}** is overseas (different continent)! You need a navy to expand there. Build ships with `.buildship`.")
             return
 
-        # Base soldier cost (rapid)
         area = self.province_areas.get(province, 1000)
         soldier_cost = self._calculate_base_rapid_soldier_cost(area)
 
@@ -958,7 +947,6 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to rapidly expand into **{province}**! You have {civ['military']['soldiers']}.")
             return
 
-        # Deduct soldiers
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
         if province in self._get_owned_provinces(user_id):
