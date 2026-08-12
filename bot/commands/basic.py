@@ -5,7 +5,7 @@ import aiohttp
 import asyncio
 import logging
 import json
-from typing import Literal, Optional
+from typing import List, Optional, Literal
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from discord.ext import commands
@@ -262,7 +262,7 @@ class BasicCommands(commands.Cog):
             except Exception:
                 civ_status = ""
 
-        # ----- COMPREHENSIVE SYSTEM PROMPT - UPDATED WITH ALL SYSTEMS -----
+        # ----- COMPREHENSIVE SYSTEM PROMPT ----
         system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
 Players build civilizations, manage resources, wage wars, and form alliances. 
 Your role is to help players understand game mechanics and strategies.
@@ -270,225 +270,38 @@ Your role is to help players understand game mechanics and strategies.
 {civ_status}
 
 **CURRENT BALANCE (from config.py):**
-- Economy gains use config.ECONOMY values (e.g., gather base 5-20, cap 500k).
-- Tax is nerfed: base 1 per citizen, happiness penalty -5, higher population loss.
+- Economy gains use config.ECONOMY (gather base 5-20, cap 500k; tax nerfed).
 - Soldier cost: 20 gold each.
-- Expansion: large provinces (≥1M km²) cost 1 soldier per 2,000 km² (small: 1 per 595 km²). Navy gives 25% off, airforce gives 50% off (land only).
-- Territory factor: max 3.0x.
-- Starting resources: {config.STARTING_RESOURCES}
+- Expansion: large provinces (≥1M km²) cost 1 soldier per 2000 km² (small: 1 per 595 km²). Navy gives 25% off, airforce gives 50% off (land only).
+- Territory factor: max 3.0x, coefficient 0.8.
+- Mid-game commands (harvest, drill, labor, raidcaravan) now scale with population, tech, and territory.
+- Corporations: build for 100k gold, upgrade for 200k, passive income (halved until Tech 5).
+- Megaprojects: build world-changing projects (Great Wall, Space Program, etc.) requiring millions of resources.
+- Policies: enable/upgrade/disable policies for permanent bonuses (military, agriculture, trade, education, environment, industry).
 
-**NEW SYSTEMS:**
-- **Corporations**: Build up to 5 corporations (100k each, upgrade for 200k) for passive income. Tech 5 unlocks full potential.
-- **Megaprojects**: Build world-changing projects (Great Wall, Space Program, Global Bank, AI Network, Green Energy). Requires Tech 4-8, costs millions.
-- **Policies**: Enable/upgrade policies (Military Service, Agricultural Subsidies, Trade Agreements, Public Education, Environmental Protection, Industrial Innovation). Costs gold/resources, gives permanent bonuses.
-- **Mid-game buffs**: Harvest, Drill, Labor, Raidcaravan now scale with population, tech, and territory.
-- **Buy Tech**: `.buytech` (or `.buylevel`) – 2000 gold per tech level (max 10).
-- **Cheer Up**: `.cheerup` – 2000 gold for 50% happiness boost.
-- **Cards**: Buy cards with `.buycard` (500 gold), view with `.cards view`, use with `.cards use "Card Name"`.
-- **Testing Mode**: Admins can toggle `/testmode on|off` – sets everyone's resources to 999,999,999 (restores on disable).
-
-**KEY GAME CONCEPTS:**
-- Resources: gold, food, stone, wood (capped per command)
-- Military: soldiers, spies, tech_level (max 10), navy ships, airforce planes
-- Population: citizens, happiness (0-100), hunger (0-100)
-- Territory: land_size (km²) – affects resource gains via territory factor
-- Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist, socialism, terrorism, capitalism, federalism, monarchy
-- Regions: Subregions with unique provinces (one per player)
-- Countryballs: Collectible factions unlocked by completing subregions – give passive bonuses and synergies
-- Industrial Revolution: Permanent micromanagement challenge – reach 1000 Industrial Power (once per player)
-- HyperItems: Powerful one-time items from Black Market or rare drops
-- Borders: Defensive structures that boost battle defense
-- Navy & Airforce: Used for expansion – navy required for overseas expansion (different continent). Navy gives 25% cost reduction, airforce gives 50% reduction for land expansions.
-
-**FULL COMMAND LIST (alphabetical by category):**
-
-**Basic Commands:**
-`.start <name>` – Start a new civilization with cinematic intro
-`.status` – View your civilization status
-`.ideology <type>` – Choose your government ideology (12 options)
-`.regions [subregion]` – View or select your region (e.g., `.regions western europe`)
-`.reset` – Permanently reset your civilization (requires confirmation)
-`.sv` – Start a saved chat (no timeout)
-`.svc` – Close and delete saved chat
-`.warhelp [category]` – Show command categories or list commands in a category
-`.updates` – View the roadmap and update log
-
-**Economy Commands (all resource gains use config.ECONOMY, tax is nerfed):**
-`.gather` – Gather random resources – 1min cooldown
-`.work <amount>` – Employ citizens to gain gold – 1min cooldown
-`.farm` – Farm food – 1min cooldown
-`.mine` – Mine stone and wood – 1min cooldown
-`.harvest` – Large harvest, scales with pop & happiness – no cooldown
-`.drill` – Extract rare minerals (Tech 2), scales with tech & pop – 1min cooldown
-`.fish` – Fish for food or treasure – 1min cooldown
-`.tax` – Collect taxes (nerfed) – 5min cooldown
-`.lottery <bet>` – Gamble gold – 1min cooldown
-`.invest <amount>` – Invest gold (returns after 2 hours) – 5min cooldown
-`.raidcaravan` – Raid caravans, scales with soldiers & territory – 5min cooldown
-`.labor` – Forced labor, scales with pop & tech (Tech 3) – 5min cooldown
-`.advertise` – Attract new citizens – 10min cooldown
-`.census` – Display your stats
-`.recruit <number>` – Convert citizens to soldiers
-`.buysoldiers <amount>` – Buy soldiers (20 gold each)
-`.sell <item>` – Sell hyper items
-`.burn` – Reduce all resources to 1000
-`.immigration` – Open borders (risk of riots) – 10min cooldown
-`.cheerup` – 50% happiness boost for 2000 gold – 10min cooldown
-`.buytech` – Buy one tech level for 2000 gold (max 10)
-
-**Corporations (passive income):**
-`.corporation` – View your corporations
-`.corporation build` – Build a new corp (100k gold, max 5)
-`.corporation upgrade <number>` – Upgrade a corp (200k gold)
-`.corporation list` – List all corps
-
-**Megaprojects (late-game):**
-`.megaproject` – List available projects
-`.megaproject build <name>` – Build a megaproject (costs millions, requires tech)
-`.megaproject list` – List available projects
-
-**Policies (permanent bonuses):**
-`.policy` – View your active policies
-`.policy enable <name>` – Enable a policy (costs resources)
-`.policy upgrade <name>` – Upgrade a policy to next level
-`.policy disable <name>` – Disable a policy
-`.policieshelp` – Show detailed policy help
-
-**Military & War Commands:**
-`.train <soldiers|spies> <amount>` – Train units (2min cooldown)
-`.find` – Find wandering soldiers (1min cooldown)
-`.declare <user>` – Declare war
-`.attack <user> <level>` – Direct attack (level 1-10, 3min cooldown)
-`.siege <user>` – Lay siege (10min cooldown, needs 50 soldiers)
-`.stealthbattle <user>` – Spy stealth attack (4min cooldown, needs 3 spies)
-`.peace <user>` – Offer peace
-`.accept_peace <user>` – Accept peace
-`.addborder` – Build defensive border (5min cooldown)
-`.removeborder` – Remove border (2min cooldown)
-`.rectract <percentage>` – Assign soldiers to border (1min)
-`.retrieve <percentage>` – Retrieve soldiers from border (1min)
-`.borderinfo` – Check border status (1min)
-`.buildship <type> <amount>` – Build navy ships (no cooldown)
-`.buildplane <type> <amount>` – Build airforce planes (no cooldown)
-`.tech <ground|naval|air> [amount]` – Upgrade military tech (500 gold/level)
-`.trainboost [amount]` – Increase training level (max 3, 500 gold/level)
-`.navy` – View navy fleet
-`.airforce` – View airforce fleet
-`.cards [view|use] <card_name>` – View or use purchased cards
-`.buycard` – Buy a random card for 500 gold
-
-**Diplomacy Commands:**
-`.ally <user> <alliance_name>` – Propose an alliance
-`.acceptally <alliance_id>` – Accept alliance
-`.rejectally <alliance_id>` – Reject alliance
-`.break` – Break current alliance
-`.send <user> <resource> <amount>` – Send resources to ally
-`.trade <user> <offer> <offer_amount> <request> <request_amount>` – Propose trade
-`.accepttrade <trade_id>` – Accept trade
-`.rejecttrade <trade_id>` – Reject trade
-`.mail <user> <message>` – Send diplomatic message
-`.inbox` – Check pending proposals
-`.coalition <target_alliance>` – Form coalition
-
-**Store & HyperItems:**
-`.store [item]` – View or purchase upgrades
-`.blackmarket` – Enter Black Market (1000 gold)
-`.inventory` – View HyperItems and upgrades
-`.market` – Black Market info
-`.laststand` – Use Last Stand (under 500 gold)
-`.sacrifice <user>` – Mutual destruction (24h cooldown)
-`.mirror` – Display Mirror status
-`.nuke <user>` – Nuclear strike
-`.obliterate <user>` – Obliterate civilization
-`.shield` – Display Anti-Nuke Shield status
-`.luckystrike` – Use Lucky Charm
-`.propaganda <user>` – Steal enemy soldiers
-`.hiremercs` – Hire mercenaries
-`.boosttech` – Advance technology
-`.mintgold` – Generate large gold
-`.superharvest` – Massive food
-`.superspy <user>` – Elite espionage
-`.megainvent` – Advance multiple tech levels
-`.backstab <user>` – Assassination attempt
-`.bomb <user>` – Missile strike
-
-**Territory Commands:**
-`.territories` – List owned provinces
-`.expand <province>` – Claim a province (overseas requires navy, navy 25% off, airforce 50% off land)
-`.rapidexpansion <province>` – Claim using soldiers (2× cost, cap 10000)
-`.map` – Show world map
-
-**Countryball Commands:**
-`.openpacks` – Unlock countryballs for completed subregions
-`.evolve` – Manually check evolution
-`.packs` – View collection
-`.activate <ball_name>` – Activate a countryball (max 3)
-`.deactivate <ball_name>` – Deactivate
-`.synergies` – Show active synergies
-
-**Industrial Revolution (once per player):**
-`.industrial_start` – Begin (requires `yes` confirmation)
-`.industrial_status` – View all stats
-`.industrial_build` – Build a factory
-`.industrial_tech` – Research technology
-`.industrial_workers` – Train workers
-`.industrial_cleanup` – Reduce pollution
-`.industrial_railway` – Build railways
-`.industrial_transport` – Improve transport
-`.industrial_army` – Raise military protection
-`.industrial_policy` – Enact a new policy
-`.industrial_import` – Import raw materials
-`.industrial_export` – Export goods
-`.industrial_steam` – Research steam power
-`.industrial_mine` – Build a mine
-`.industrial_hospital` – Build a hospital
-`.industrial_school` – Build a school
-`.industrial_law` – Enforce law and order
-`.industrial_trade` – Diplomatic trade
-`.industrial_aid` – Request foreign aid
-`.industrial_suppress` – Suppress revolts
-`.industrial_bribe` – Bribe workers
-`.industrial_automate` – Automate factories
-`.industrial_upgrade` – Upgrade factories
-`.industrial_relief` – Disaster relief
-`.industrial_expand` – Expand cities
-`.industrial_banking` – Invest in banking (max 5 uses)
-`.industrial_nationalize` – Nationalize industry
-`.indushelp` – Show all commands
-
-**ExtraEconomy (gambling & jobs):**
-`.extrawork` – Work for gold (job required)
-`.extrastore [buy <item>]` – Buy items
-`.extrainventory` – Show inventory
-`.extragamble <amount>` – Gamble gold
-`.extracards <amount>` – Play cards
-`.slots <amount>` – Slots
-`.blackjack <amount>` – Blackjack
-`.jobs` – List jobs
-`.job <job_type>` – Apply for job
-`.arrest <user>` – Arrest (police)
-`.rob <user>` – Rob (criminal)
-`.code <project>` – Start coding project
-`.darkweb <item>` – Dark web purchase
-`.setbalance <amount>` – Admin: set gold
-
-**Admin Commands:**
-`.sync [scope]` – Sync slash commands (owner only)
-`.exportdb` – Export database
-`.testmode <on|off>` – Toggle testing mode (admin only)
+**FULL COMMAND LIST:**
+- Basic: .start, .status, .ideology, .regions, .reset, .sv, .svc, .warhelp, .updates
+- Economy: .gather, .work, .farm, .mine, .harvest, .drill, .fish, .labor, .raidcaravan, .tax, .lottery, .invest, .advertise, .census, .recruit, .buysoldiers, .buytech, .cheerup, .cheer, .festival, .burn, .immigration, .buycard, .corporation, .megaproject, .policy, .policieshelp
+- Military: .train, .find, .declare, .attack, .siege, .stealthbattle, .peace, .accept_peace, .addborder, .removeborder, .rectract, .retrieve, .borderinfo, .buildship, .buildplane, .tech, .trainboost, .navy, .airforce, .cards
+- Diplomacy: .ally, .acceptally, .rejectally, .break, .send, .trade, .accepttrade, .rejecttrade, .mail, .inbox, .coalition
+- Store: .store, .blackmarket, .inventory, .market
+- HyperItems: .laststand, .sacrifice, .mirror, .nuke, .obliterate, .shield, .luckystrike, .propaganda, .hiremercs, .boosttech, .mintgold, .superharvest, .superspy, .megainvent, .backstab, .bomb
+- Territory: .territories, .expand, .rapidexpansion, .map
+- Countryballs: .openpacks, .evolve, .packs, .activate, .deactivate, .synergies
+- Industrial: .industrial_start, .industrial_status, .industrial_build, .industrial_tech, .industrial_workers, .industrial_cleanup, .industrial_railway, .industrial_transport, .industrial_army, .industrial_policy, .industrial_import, .industrial_export, .industrial_steam, .industrial_mine, .industrial_hospital, .industrial_school, .industrial_law, .industrial_trade, .industrial_aid, .industrial_suppress, .industrial_bribe, .industrial_automate, .industrial_upgrade, .industrial_relief, .industrial_expand, .industrial_banking, .industrial_nationalize, .indushelp
+- ExtraEconomy: .extrawork, .extrastore, .extrainventory, .extragamble, .extracards, .slots, .blackjack, .jobs, .job, .arrest, .rob, .code, .darkweb, .setbalance
 
 **STRATEGY TIPS:**
-- Build navy before overseas expansion – gives 25% off and is required.
-- Airforce gives 50% off for land expansions – build planes for cheaper land grabs.
-- Use `.buysoldiers` (20 gold each) to quickly raise armies.
-- `.cheerup` gives 50% happiness for 2000 gold – use when morale is low.
-- Buy tech levels (`.buytech`) for permanent global modifiers.
-- Corporations give passive income – build them early.
-- Megaprojects are late-game resource sinks with huge permanent bonuses.
-- Policies give stacking bonuses – enable and upgrade them over time.
+- Build a navy before expanding overseas – it gives 25% off and is required for non‑neighbour provinces.
+- Airforce gives 50% off for land expansions (neighbouring subregions) – build planes for cheaper land grabs.
+- Use .buysoldiers to quickly raise an army (20 gold each).
+- .immigration gives citizens but can trigger riots – use with care.
+- Tax is now weak – focus on active gathering and raids.
+- Buy cards for permanent bonuses – they cost 500 gold each.
 - Complete subregions to unlock countryballs for passive bonuses and synergies.
-- Industrial Revolution gives huge rewards but every command has 30% disaster chance.
+- The Industrial Revolution gives huge rewards but is risky – every command has 30% disaster chance.
 - Black Market has pity system: guaranteed Uncommon every 3, Rare every 6, Legendary every 10 purchases.
+- Always declare war before attacking.
 
 You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay.
 If asked about non-game topics, politely decline. Use brief Discord-style formatting.
@@ -636,7 +449,7 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- WARHELP (UPDATED with chunking to avoid 1024 char limit) ----------
+    # ---------- UPDATED WARHELP ----------
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
         """
@@ -656,8 +469,7 @@ Remember to keep responses engaging but focused on the game.
                     "status": "View your civilization status",
                     "sv": "Start a saved chat with the AI (no timeout)",
                     "svc": "Close and delete your saved chat",
-                    "warhelp": "Show this help menu",
-                    "updates": "View the roadmap and update log"
+                    "warhelp": "Show this help menu"
                 }
             },
             "diplomacy": {
@@ -699,62 +511,36 @@ Remember to keep responses engaging but focused on the game.
             },
             "economy": {
                 "name": "💰 Economy",
-                "description": "Resource gathering, taxes, immigration, and soldier buying",
+                "description": "Resource gathering, taxes, immigration, soldier buying, mid-game buffs, corps, megaprojects, policies",
                 "commands": {
                     "advertise": "Run promotional campaigns to attract new citizens",
                     "burn": "Burn excess resources down to 1000 each",
                     "buysoldiers": "Buy soldiers with gold at 20 gold each",
+                    "buytech": "Purchase a tech level for 2000 gold (max 10)",
                     "census": "Display current gold and population status",
-                    "cheer": "Spread cheer to boost citizen happiness",
-                    "cheerup": "50% happiness boost for 2000 gold",
-                    "drill": "Extract rare minerals with advanced drilling (Tech 2)",
+                    "cheer": "Spread cheer to boost citizen happiness (costs 50 gold)",
+                    "cheerup": "Boost happiness by 50% towards 100 for 2000 gold",
+                    "corporation": "Manage corporations (build/upgrade/list)",
+                    "drill": "Extract rare minerals – buffed, scales with tech and pop (Tech 2+)",
                     "drive": "Unemploy citizens, freeing them from work",
                     "farm": "Farm food for your civilization",
                     "festival": "Hold a grand festival to boost happiness",
                     "fish": "Fish for food or occasionally find treasure",
                     "gather": "Gather random resources from your territory",
-                    "harvest": "Large harvest that scales with population and happiness",
+                    "harvest": "Large harvest – buffed, scales with pop and happiness",
                     "immigration": "Open borders to gain citizens (risk of protests/riots)",
                     "invest": "Invest gold for delayed profit",
-                    "labor": "Forced labor for wood/stone (Tech 3, scales with pop)",
+                    "labor": "Forced labor for wood/stone – buffed, gives all resources (Tech 3+)",
                     "lottery": "Gamble gold for a chance at the jackpot",
+                    "megaproject": "Build world-changing megaprojects",
                     "mine": "Mine stone and wood from your territory",
-                    "raidcaravan": "Raid NPC merchant caravans for loot",
+                    "policieshelp": "Show all available policies",
+                    "policy": "Enable/upgrade/disable policies",
+                    "raidcaravan": "Raid NPC merchant caravans – buffed, scales with military",
                     "recruit": "Convert citizens into soldiers",
                     "sell": "Sell hyper items to wandering merchants",
                     "tax": "Collect taxes from your citizens (now nerfed)",
-                    "work": "Employ citizens to work and gain immediate gold",
-                    "buytech": "Purchase one tech level for 2000 gold (max 10)"
-                }
-            },
-            "corporations": {
-                "name": "🏢 Corporations",
-                "description": "Build and manage corporations for passive income",
-                "commands": {
-                    "corporation": "View your corporations",
-                    "corporation build": "Build a new corporation (100k gold, max 5)",
-                    "corporation upgrade <number>": "Upgrade a corporation (200k gold)",
-                    "corporation list": "List all your corporations"
-                }
-            },
-            "megaprojects": {
-                "name": "🏗️ Megaprojects",
-                "description": "Build world-changing projects with permanent bonuses",
-                "commands": {
-                    "megaproject": "List available megaprojects",
-                    "megaproject build <name>": "Build a megaproject (costs millions, requires tech)",
-                    "megaproject list": "List available projects"
-                }
-            },
-            "policies": {
-                "name": "📜 Policies",
-                "description": "Enable and upgrade policies for permanent bonuses",
-                "commands": {
-                    "policy": "View your active policies",
-                    "policy enable <name>": "Enable a policy at level 1",
-                    "policy upgrade <name>": "Upgrade a policy to the next level",
-                    "policy disable <name>": "Disable an active policy",
-                    "policieshelp": "Show detailed policy information"
+                    "work": "Employ citizens to work and gain immediate gold"
                 }
             },
             "hyperitems": {
@@ -852,12 +638,12 @@ Remember to keep responses engaging but focused on the game.
             },
             "territory": {
                 "name": "🗺️ Territory & Countryballs",
-                "description": "Expansion, maps, and countryball collection (config-driven costs)",
+                "description": "Expansion, maps, and countryball collection",
                 "commands": {
                     "activate": "Activate a countryball as a manager",
                     "deactivate": "Deactivate a countryball manager",
                     "evolve": "Manually check evolution for countryballs",
-                    "expand": "Claim a province. Overseas expansion requires navy. Navy: 25% off, Airforce: 50% off (land only). Cost uses config.EXPANSION.",
+                    "expand": "Claim a province. Overseas expansion requires navy. Navy: 25% off, Airforce: 50% off (land only).",
                     "map": "Show the world map",
                     "openpacks": "Unlock countryballs for completed subregions",
                     "packs": "View your countryball collection",
@@ -871,29 +657,10 @@ Remember to keep responses engaging but focused on the game.
                 "description": "Miscellaneous commands",
                 "commands": {
                     "help": "Shows this message",
-                    "updates": "View the roadmap and update log"
+                    "updates": "Show the roadmap and update log"
                 }
             }
         }
-
-        def chunk_value(text: str, max_len: int = 1000) -> List[str]:
-            """Split a string into chunks of max_len characters."""
-            if len(text) <= max_len:
-                return [text]
-            chunks = []
-            while text:
-                if len(text) <= max_len:
-                    chunks.append(text)
-                    break
-                # Try to break at a newline or comma
-                split_pos = text[:max_len].rfind('\n')
-                if split_pos == -1:
-                    split_pos = text[:max_len].rfind(',')
-                if split_pos == -1:
-                    split_pos = max_len
-                chunks.append(text[:split_pos])
-                text = text[split_pos:].lstrip()
-            return chunks
 
         if category is None:
             embed = discord.Embed(
@@ -901,12 +668,29 @@ Remember to keep responses engaging but focused on the game.
                 description="Use `.warhelp <category>` to see commands in that category.\nAvailable categories:",
                 color=discord.Color.blue()
             )
+            # Build category list safely
+            category_text = []
             for key, data in categories.items():
-                embed.add_field(
-                    name=data["name"],
-                    value=f"*{data['description']}*",
-                    inline=False
-                )
+                category_text.append(f"**{data['name']}** – *{data['description']}*")
+            full_text = "\n".join(category_text)
+            if len(full_text) > 1024:
+                parts = []
+                current = ""
+                for line in category_text:
+                    if len(current) + len(line) + 1 > 1024:
+                        parts.append(current)
+                        current = line
+                    else:
+                        if current:
+                            current += "\n" + line
+                        else:
+                            current = line
+                if current:
+                    parts.append(current)
+                for i, part in enumerate(parts, 1):
+                    embed.add_field(name=f"Categories (Part {i})", value=part, inline=False)
+            else:
+                embed.add_field(name="Categories", value=full_text, inline=False)
             embed.set_footer(text="Example: .warhelp military")
             await ctx.send(embed=embed)
             return
@@ -921,97 +705,131 @@ Remember to keep responses engaging but focused on the game.
         for cmd, desc in cat["commands"].items():
             cmd_list.append(f"`{cmd}` – {desc}")
 
-        full_text = "\n".join(cmd_list)
+        if len(cmd_list) > 25:
+            chunks = [cmd_list[i:i+25] for i in range(0, len(cmd_list), 25)]
+            for i, chunk in enumerate(chunks, 1):
+                embed = discord.Embed(
+                    title=f"{cat['name']} (Part {i})",
+                    description=f"*{cat['description']}*",
+                    color=discord.Color.green()
+                )
+                value = "\n".join(chunk)
+                if len(value) > 1024:
+                    sub_chunks = []
+                    current = ""
+                    for line in chunk:
+                        if len(current) + len(line) + 1 > 1024:
+                            sub_chunks.append(current)
+                            current = line
+                        else:
+                            if current:
+                                current += "\n" + line
+                            else:
+                                current = line
+                    if current:
+                        sub_chunks.append(current)
+                    for j, sub in enumerate(sub_chunks, 1):
+                        embed.add_field(name=f"Commands (Part {j})", value=sub, inline=False)
+                else:
+                    embed.add_field(name="Commands", value=value, inline=False)
+                embed.set_footer(text=f"Page {i}/{len(chunks)} – Use .warhelp for categories")
+                await ctx.send(embed=embed)
+            return
 
-        # Chunk the text to avoid exceeding 1024 characters per field
-        chunks = chunk_value(full_text, 1000)
         embed = discord.Embed(
             title=f"{cat['name']}",
             description=f"*{cat['description']}*",
             color=discord.Color.green()
         )
-
-        if len(chunks) == 1:
-            embed.add_field(name="Commands", value=chunks[0], inline=False)
+        value = "\n".join(cmd_list)
+        if len(value) > 1024:
+            parts = []
+            current = ""
+            for line in cmd_list:
+                if len(current) + len(line) + 1 > 1024:
+                    parts.append(current)
+                    current = line
+                else:
+                    if current:
+                        current += "\n" + line
+                    else:
+                        current = line
+            if current:
+                parts.append(current)
+            for i, part in enumerate(parts, 1):
+                embed.add_field(name=f"Commands (Part {i})", value=part, inline=False)
         else:
-            for i, chunk in enumerate(chunks, 1):
-                embed.add_field(name=f"Commands (Part {i})", value=chunk, inline=False)
-
+            embed.add_field(name="Commands", value=value, inline=False)
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- UPDATES COMMAND (Roadmap & Update Log) ----------
+    # ---------- UPDATES COMMAND ----------
     @commands.command(name='updates')
     async def show_updates(self, ctx):
-        """View the NationBot roadmap and update log."""
+        """Show the roadmap and update log."""
         embed = discord.Embed(
-            title="📋 NationBot – Roadmap & Update Log",
-            description="Here's what's been added and what's coming next.",
-            color=discord.Color.gold()
+            title="📅 NationBot Roadmap & Updates",
+            color=discord.Color.blue()
         )
 
-        # ---- Roadmap ----
         roadmap = (
-            "**🟢 Recent Additions (v1.5):**\n"
-            "• Mid-game buffs: Harvest, Drill, Labor, Raidcaravan now scale with progress\n"
-            "• Corporation system: Build & upgrade for passive income\n"
-            "• Megaprojects: World-changing projects with permanent bonuses\n"
-            "• Policies: Enable/upgrade policies for stacking buffs\n"
-            "• Cheer Up: 50% happiness boost for 2000 gold\n"
-            "• Buy Tech: Purchase tech levels for 2000 gold each\n"
-            "• Buy Cards: Purchase random cards for 500 gold\n"
-            "• Testing mode for admins\n\n"
-            "**🟡 Upcoming Features (v2.0):**\n"
-            "• State-level expansion (instead of whole countries)\n"
-            "• AI nations that expand, form alliances, and defend\n"
-            "• Full-scale war system with troop movement and state capture\n"
-            "• More megaprojects and policies\n"
-            "• Advanced diplomacy (treaties, trade routes)\n"
-            "• Economy rework: more late-game sinks\n"
-            "• Performance optimisations"
+            "**Phase 1: Core Stabilisation** (✅ Done)\n"
+            "• Complete Firestore migration\n"
+            "• Centralised config.py\n"
+            "• Fix economy balance (nerf tax, buff mid-game)\n"
+            "• Add corporation, megaproject, policy systems\n\n"
+            "**Phase 2: Expansion & War Rework** (🔄 In Progress)\n"
+            "• Replace `.expand` with state‑level conquest\n"
+            "• AI nations that expand and defend\n"
+            "• Full‑scale wars with troop movement\n\n"
+            "**Phase 3: Diplomacy & Espionage** (📋 Planned)\n"
+            "• Spy networks, sabotage, assassinations\n"
+            "• Coalition wars and peace treaties\n\n"
+            "**Phase 4: Endgame Content** (📋 Planned)\n"
+            "• Global events (world wars, plagues)\n"
+            "• Victory conditions (domination, economic, diplomatic)"
         )
-        embed.add_field(name="🚀 Roadmap", value=roadmap, inline=False)
+        embed.add_field(name="🗺️ Roadmap", value=roadmap, inline=False)
 
-        # ---- Update Log ----
-        update_log = (
-            "**v1.5 (Current) – 2026-08-12**\n"
-            "• Mid-game commands now scale with population, tech, and territory\n"
-            "• Corporation system with passive income (build/upgrade/list)\n"
-            "• Megaprojects (Great Wall, Space Program, Global Bank, AI Network, Green Energy)\n"
-            "• Policies system (Military Service, Agricultural Subsidies, Trade Agreements, Public Education, Environmental Protection, Industrial Innovation)\n"
-            "• `.cheerup` command (50% happiness for 2000 gold)\n"
-            "• `.buytech` command (buy tech levels for 2000 gold)\n"
-            "• `.buycard` command (buy random cards for 500 gold)\n"
-            "• Testing mode for admins (`/testmode on|off`)\n"
-            "• `.warhelp` now splits long fields to avoid Discord limits\n"
-            "• All balance parameters moved to `config.py`\n"
-            "• Navy and airforce now persist correctly\n"
-            "• Cooldowns removed from build commands\n\n"
-            "**v1.4 – 2026-08-10**\n"
-            "• Fixed expansion costs (1 per 2000 km² for large provinces)\n"
-            "• Buffed economy (tax nerfed, mid-game buffed)\n"
-            "• Added `.immigration`, `.labor`, `.buysoldiers`\n"
-            "• Improved AI system prompt\n\n"
-            "**v1.3 – 2026-08-08**\n"
-            "• Countryball system added\n"
-            "• Industrial Revolution rework\n"
-            "• Territory expansion rework\n"
-            "• Map generation fixed"
+        updates = (
+            "**v2.5.0 – 2026-08-12**\n"
+            "• Added corporation system (build/upgrade/list, passive income)\n"
+            "• Added megaprojects (Great Wall, Space Program, etc.)\n"
+            "• Added policies (enable/upgrade/disable)\n"
+            "• Buffed mid-game commands: harvest, drill, labor, raidcaravan\n"
+            "• Added `.cheerup` (50% happiness boost) and `.buytech` (purchase tech levels)\n"
+            "• Fixed navy/airforce persistence (singular keys)\n"
+            "• Removed cooldowns from buildship/buildplane\n"
+            "• Added testing mode (`/testmode on|off`)\n\n"
+            "**v2.4.0 – 2026-08-10**\n"
+            "• Complete Firestore migration\n"
+            "• Centralised config.py\n"
+            "• Reworked expansion costs (1 soldier per 2000 km² for large provinces)\n"
+            "• Fixed `.map` and countryball evolution\n\n"
+            "**v2.3.0 – 2026-08-05**\n"
+            "• Added Anti‑Nuke Shield to starting items\n"
+            "• Added Black Market pity system\n"
+            "• Buffed card system with `.buycard`\n"
+            "• Added `.immigration` and `.labor` commands"
         )
-        embed.add_field(name="📜 Update Log", value=update_log, inline=False)
+        embed.add_field(name="📝 Update Log", value=updates, inline=False)
 
-        embed.set_footer(text="Check back often for new features! | Use .warhelp for commands")
+        # If combined content too long, split into two messages
+        if len(roadmap) + len(updates) > 3500:
+            embed1 = discord.Embed(title="📅 NationBot Roadmap", color=discord.Color.blue())
+            embed1.add_field(name="🗺️ Roadmap", value=roadmap, inline=False)
+            await ctx.send(embed=embed1)
+            embed2 = discord.Embed(title="📝 Update Log", color=discord.Color.blue())
+            embed2.add_field(name="📝 Update Log", value=updates, inline=False)
+            await ctx.send(embed=embed2)
+            return
+
         await ctx.send(embed=embed)
 
     # ---------- REGIONS COMMAND ----------
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
-        """
-        Choose a subregion for your civilization.
-        Usage: .regions <subregion_name>
-        Examples: .regions western europe, .regions east asia, .regions brazil
-        """
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
@@ -1139,7 +957,6 @@ Remember to keep responses engaging but focused on the game.
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, *, civ_name: str = None):
-        """Start a new civilization with a cinematic intro."""
         if not civ_name:
             await ctx.send("❌ Please provide a civilization name: `.start <civilization_name>`")
             return
@@ -1262,7 +1079,6 @@ Remember to keep responses engaging but focused on the game.
         hyper_items = civ.get('hyper_items', [])
         embed.add_field(name="🗺️ Territory & Items", value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n🎁 HyperItems: {len(hyper_items)}\n" + ("\n".join(f"• {item}" for item in hyper_items[:5]) + ("..." if len(hyper_items) > 5 else "")), inline=True)
         await ctx.send(embed=embed)
-
 
 async def setup(bot):
     await bot.add_cog(BasicCommands(bot))
