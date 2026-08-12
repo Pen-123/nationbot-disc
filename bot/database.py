@@ -168,6 +168,10 @@ class Database:
             return False
 
     def delete_civilization(self, user_id: str) -> bool:
+        """
+        Delete a civilization and all related data (territories, alliances, messages, wars, etc.)
+        Also deletes the industrial revolution document.
+        """
         try:
             batch = self.client.batch()
             civ_ref = self.client.collection("civilizations").document(user_id)
@@ -212,9 +216,14 @@ class Database:
             for e in self.client.collection("events").where("user_id", "==", user_id).stream():
                 batch.update(e.reference, {"user_id": None})
 
+            # Delete industrial revolution document
+            ind_ref = self.client.collection("industrial_revolutions").document(user_id)
+            batch.delete(ind_ref)
+
+            # Delete the civilization itself
             batch.delete(civ_ref)
             batch.commit()
-            logger.info(f"Deleted civilization and all related data for {user_id}")
+            logger.info(f"Deleted civilization and all related data (including industrial revolution) for {user_id}")
             return True
         except Exception as e:
             logger.error(f"delete_civilization error: {e}")
@@ -338,7 +347,7 @@ class Database:
             result[doc.id] = doc.to_dict()
         return result
 
-    # -------------------- NAVY (fixed with singular keys) --------------------
+    # -------------------- NAVY --------------------
     def get_navy(self, user_id: str) -> Dict[str, int]:
         doc = self.client.collection("navy").document(user_id).get()
         if doc.exists:
@@ -369,7 +378,7 @@ class Database:
             logger.error(f"update_navy error for {user_id}: {e}")
             return False
 
-    # -------------------- AIRFORCE (fixed with singular keys) --------------------
+    # -------------------- AIRFORCE --------------------
     def get_airforce(self, user_id: str) -> Dict[str, int]:
         doc = self.client.collection("airforce").document(user_id).get()
         if doc.exists:
@@ -503,23 +512,8 @@ class Database:
     # -------------------- CARDS --------------------
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         try:
-            card_pool = [
-                {"name": "Resource Boost", "type": "bonus", "effect": {"resource_production": 10}, "description": "+10% resource production"},
-                {"name": "Military Training", "type": "bonus", "effect": {"soldier_training_speed": 15}, "description": "+15% soldier training speed"},
-                {"name": "Trade Advantage", "type": "bonus", "effect": {"trade_profit": 10}, "description": "+10% trade profit"},
-                {"name": "Population Surge", "type": "bonus", "effect": {"population_growth": 10}, "description": "+10% population growth"},
-                {"name": "Tech Breakthrough", "type": "one_time", "effect": {"tech_level": 1}, "description": "+1 tech level (max 10)"},
-                {"name": "Gold Cache", "type": "one_time", "effect": {"gold": 500}, "description": "Gain 500 gold"},
-                {"name": "Food Reserves", "type": "one_time", "effect": {"food": 300}, "description": "Gain 300 food"},
-                {"name": "Mercenary Band", "type": "one_time", "effect": {"soldiers": 20}, "description": "Recruit 20 soldiers"},
-                {"name": "Spy Network", "type": "one_time", "effect": {"spies": 5}, "description": "Recruit 5 spies"},
-                {"name": "Fortification", "type": "bonus", "effect": {"defense_strength": 15}, "description": "+15% defense strength"},
-                {"name": "Stone Quarry", "type": "one_time", "effect": {"stone": 200}, "description": "Gain 200 stone"},
-                {"name": "Lumber Mill", "type": "one_time", "effect": {"wood": 200}, "description": "Gain 200 wood"},
-                {"name": "Intelligence Agency", "type": "bonus", "effect": {"spy_effectiveness": 20}, "description": "+20% spy effectiveness"},
-                {"name": "Economic Boom", "type": "one_time", "effect": {"gold": 800, "happiness": 10}, "description": "Gain 800 gold and +10 happiness"},
-                {"name": "Military Academy", "type": "bonus", "effect": {"soldier_training_speed": 25}, "description": "+25% soldier training speed"},
-            ]
+            from bot import config
+            card_pool = config.CARD_POOL
             available = random.sample(card_pool, min(5, len(card_pool)))
             self.client.collection("civilizations").document(user_id) \
                 .collection("cards").document(str(tech_level)) \
@@ -1176,3 +1170,59 @@ class Database:
         except Exception as e:
             logger.error(f"get_database_info error: {e}")
             return {}
+
+    # -------------------- TESTING MODE --------------------
+    def get_all_resources_snapshot(self) -> Dict[str, Dict[str, int]]:
+        """Return dict of user_id -> resources for all civilizations."""
+        civs = self.get_all_civilizations()
+        snapshot = {}
+        for civ in civs:
+            uid = civ['user_id']
+            snapshot[uid] = civ['resources'].copy()
+        return snapshot
+
+    def set_all_resources(self, resources_dict: Dict[str, Dict[str, int]]) -> bool:
+        """Set resources for all civilizations to the given dict (user_id -> resources)."""
+        try:
+            batch = self.client.batch()
+            for uid, resources in resources_dict.items():
+                ref = self.client.collection("civilizations").document(uid)
+                batch.update(ref, {"resources": resources, "last_active": _utc_now_iso()})
+            batch.commit()
+            return True
+        except Exception as e:
+            logger.error(f"set_all_resources error: {e}")
+            return False
+
+    def get_testing_backup(self) -> Optional[Dict[str, Dict[str, int]]]:
+        doc = self.client.collection("config").document("testing_backup").get()
+        if doc.exists:
+            return doc.to_dict().get("backup")
+        return None
+
+    def set_testing_backup(self, backup: Dict[str, Dict[str, int]]) -> bool:
+        self.client.collection("config").document("testing_backup").set({"backup": backup})
+        return True
+
+    def delete_testing_backup(self) -> bool:
+        self.client.collection("config").document("testing_backup").delete()
+        return True
+
+    def set_testing_mode(self, enabled: bool) -> bool:
+        try:
+            self.client.collection("config").document("testing_mode").set({"enabled": enabled})
+            logger.info(f"Testing mode set to {enabled}")
+            return True
+        except Exception as e:
+            logger.error(f"set_testing_mode error: {e}")
+            return False
+
+    def get_testing_mode(self) -> bool:
+        try:
+            doc = self.client.collection("config").document("testing_mode").get()
+            if doc.exists:
+                return doc.to_dict().get("enabled", False)
+            return False
+        except Exception as e:
+            logger.error(f"get_testing_mode error: {e}")
+            return False
