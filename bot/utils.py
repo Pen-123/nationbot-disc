@@ -514,4 +514,4 @@ def get_territory_modifier(land_size: int) -> float:
         return 1.0
     # Use log10 with a higher coefficient: 0.8 * log10(land_size / 1000 + 1)
     factor = 0.8 * math.log10(land_size / 1000 + 1)
-    return min(1.0 + factor, 5.0)   # cap at 5x
+    return min(1.0 + factor, 3.0)   # cap at 2.5x
