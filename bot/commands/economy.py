@@ -93,17 +93,16 @@ class EconomyCommands(commands.Cog):
         
         # ---- EMPLOYMENT and TERRITORY ----
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100  # 0.0 to 1.0
-        employment_factor = 1 + employment_rate * 0.8  # 1.0 to 1.8 (high employment matters)
+        employment_factor = 1 + employment_rate * 0.8  # 1.0 to 1.8
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])  # 1.0 to 2.0
-        # Reduce territory im
+        # FULL territory factor (no damping) – now up to 6x
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])  # <--- FIX: defined here
         
         for resource in possible_resources:
             if random.random() < 0.7:  # 70% chance for each resource
                 base_amount = random.randint(10, 50)
                 amount = int(base_amount * employment_factor * territory_factor)
-                # Cap to prevent overflow
-                amount = min(amount, 1000000)  # 1 million max per resource
+                amount = min(amount, 1000000)  # cap to prevent overflow
                 gathered[resource] = amount
         
         if not gathered:
@@ -203,10 +202,9 @@ class EconomyCommands(commands.Cog):
         citizen_bonus = civ['population']['citizens'] // 10
         
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
+        employment_factor = 1 + employment_rate * 0.6
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         total_food = int((base_food + citizen_bonus) * employment_factor * territory_factor)
         
@@ -223,7 +221,6 @@ class EconomyCommands(commands.Cog):
             else:
                 event_text = "🌈 Perfect weather blessed your harvest!"
         
-        # Cap
         total_food = min(total_food, 1000000)
         
         self.civ_manager.update_resources(user_id, {"food": total_food})
@@ -259,10 +256,9 @@ class EconomyCommands(commands.Cog):
         wood_yield = random.randint(10, 40)
         
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
+        employment_factor = 1 + employment_rate * 0.6
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         stone_yield = int(stone_yield * employment_factor * territory_factor)
         wood_yield = int(wood_yield * employment_factor * territory_factor)
@@ -324,10 +320,9 @@ class EconomyCommands(commands.Cog):
         happiness_bonus = civ['population']['happiness'] // 2
         
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
+        employment_factor = 1 + employment_rate * 0.6
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         total_harvest = int((base_harvest + population_bonus + happiness_bonus) * employment_factor * territory_factor)
         
@@ -371,10 +366,9 @@ class EconomyCommands(commands.Cog):
         gold_value = rare_minerals * 2
         
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.6  # 1.0 to 1.6
+        employment_factor = 1 + employment_rate * 0.6
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.3  # 1.0 to 1.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         gold_value = int(gold_value * employment_factor * territory_factor)
         stone_value = int((rare_minerals // 2) * employment_factor * territory_factor)
@@ -421,8 +415,7 @@ class EconomyCommands(commands.Cog):
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
         employment_factor = 1 + employment_rate * 0.6
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         if random.random() < 0.8:
             food_caught = int(random.randint(15, 45) * employment_factor * territory_factor)
@@ -462,15 +455,13 @@ class EconomyCommands(commands.Cog):
             
         population = civ['population']
         
-        # ---- TAX BASED ON EMPLOYMENT AND TERRITORY ----
         base_tax = population['citizens'] * 2
         happiness_modifier = population['happiness'] / 100
         
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.5  # up to 1.5
+        employment_factor = 1 + employment_rate * 0.5
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.3  # up to 1.3
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         total_tax = int(base_tax * happiness_modifier * employment_factor * territory_factor)
         
@@ -669,12 +660,10 @@ class EconomyCommands(commands.Cog):
             success_chance += 0.1
             
         if random.random() < success_chance:
-            # ---- LOOT SCALES WITH EMPLOYMENT AND TERRITORY ----
             employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-            employment_factor = 1 + employment_rate * 0.5  # up to 1.5
+            employment_factor = 1 + employment_rate * 0.5
             
-            territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-            territory_factor = 1 + (territory_modifier - 1) * 0.3  # up to 1.3
+            territory_factor = get_territory_modifier(civ['territory']['land_size'])
             
             loot = {
                 "gold": int(random.randint(100, 400) * employment_factor * territory_factor),
@@ -713,6 +702,69 @@ class EconomyCommands(commands.Cog):
                 guilded.Color.red()
             )
             
+        await ctx.send(embed=embed)
+
+    # ---- NEW COMMAND: .labor ----
+    @commands.command(name='labor')
+    @check_cooldown_decorator(minutes=5)
+    async def forced_labor(self, ctx):
+        """Force citizens into labor for resources – more wood and stone, but costs happiness."""
+        user_id = str(ctx.author.id)
+        
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        military = civ['military']
+        
+        if military['soldiers'] < 5:
+            await ctx.send("❌ You need at least 5 soldiers to enforce labor!")
+            return
+            
+        # Always succeeds (no chance of failure)
+        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+        employment_factor = 1 + employment_rate * 0.5
+        
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
+        
+        # Rewards: similar to raidcaravan, but wood and stone are doubled
+        loot = {
+            "gold": int(random.randint(100, 400) * employment_factor * territory_factor),
+            "food": int(random.randint(50, 150) * employment_factor * territory_factor),
+            "wood": int(random.randint(40, 160) * employment_factor * territory_factor),   # doubled
+            "stone": int(random.randint(30, 120) * employment_factor * territory_factor)   # doubled
+        }
+        
+        # Small chance for bonus gold
+        if random.random() < 0.1:
+            bonus_gold = random.randint(200, 500)
+            loot["gold"] += bonus_gold
+        
+        # Cap each
+        for key in loot:
+            loot[key] = min(loot[key], 500000)
+            
+        self.civ_manager.update_resources(user_id, loot)
+        
+        # Apply happiness penalty (-15)
+        self.civ_manager.update_population(user_id, {"happiness": -15})
+        
+        embed = create_embed(
+            "⛏️ Forced Labor",
+            "Your citizens have been forced to work extra shifts!",
+            guilded.Color.orange()
+        )
+        
+        loot_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪵' if res == 'wood' else '🪨'} {format_number(amt)} {res.capitalize()}" 
+                              for res, amt in loot.items() if amt > 0])
+        embed.add_field(name="Resources Extracted", value=loot_text, inline=False)
+        embed.add_field(name="😠 Morale Cost", value="Citizens are unhappy! (-15 happiness)", inline=False)
+        
         await ctx.send(embed=embed)
 
     @commands.command(name='drive')
@@ -914,10 +966,9 @@ class EconomyCommands(commands.Cog):
         happiness_bonus = civ['population']['happiness'] // 10
         
         employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.5  # up to 1.5
+        employment_factor = 1 + employment_rate * 0.5
         
-        territory_modifier = get_territory_modifier(civ['territory']['land_size'])
-        territory_factor = 1 + (territory_modifier - 1) * 0.2  # up to 1.2
+        territory_factor = get_territory_modifier(civ['territory']['land_size'])
         
         total_new_citizens = int((base_new_citizens + happiness_bonus) * employment_factor * territory_factor)
         
