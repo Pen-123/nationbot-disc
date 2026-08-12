@@ -1677,7 +1677,7 @@ class MilitaryCommands(commands.Cog):
     async def naval_attack(self, ctx, target: Optional[guilded.Member] = None):
         try:
             user_id = str(ctx.author.id)
-            cooldown_seconds = config.COOLDOWNS.get("navalattack", 10) * 60
+            cooldown_seconds = config.COOLDOWNS.get("navalattack", 3) * 60
             if not self._check_cooldown(user_id, 'navalattack', cooldown_seconds):
                 remaining = self._get_cooldown_remaining(user_id, 'navalattack')
                 mins = remaining // 60
@@ -1797,7 +1797,7 @@ class MilitaryCommands(commands.Cog):
     async def air_attack(self, ctx, target: Optional[guilded.Member] = None):
         try:
             user_id = str(ctx.author.id)
-            cooldown_seconds = config.COOLDOWNS.get("airattack", 10) * 60
+            cooldown_seconds = config.COOLDOWNS.get("airattack", 3) * 60
             if not self._check_cooldown(user_id, 'airattack', cooldown_seconds):
                 remaining = self._get_cooldown_remaining(user_id, 'airattack')
                 mins = remaining // 60
