@@ -74,59 +74,99 @@ class EconomyCommands(commands.Cog):
             logger.error(f"Error checking civil war for {user_id}: {e}")
             return True
 
-    @commands.command(name='gather')
-    @check_cooldown_decorator(minutes=1)
-    async def gather_resources(self, ctx):
+ @commands.command(name='gather')
+@check_cooldown_decorator(minutes=1)
+async def gather_resources(self, ctx):
+    user_id = str(ctx.author.id)
+    if not await self.check_civil_war_and_proceed(ctx, user_id):
+        return
+        
+    civ = self.civ_manager.get_civilization(user_id)
+    if not civ:
+        await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+        return
+        
+    possible_resources = ['gold', 'wood', 'stone', 'food']
+    gathered = {}
+    
+    # Reduced employment factor (was 1 + rate*0.8, now 1 + rate*0.4)
+    employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
+    employment_factor = 1 + employment_rate * 0.4  # max 1.4
+    
+    territory_factor = get_territory_modifier(civ['territory']['land_size'])  # max 3.0
+    
+    for resource in possible_resources:
+        if random.random() < 0.6:  # 60% chance (was 70%)
+            base_amount = random.randint(5, 20)  # was 10-50
+            amount = int(base_amount * employment_factor * territory_factor)
+            amount = int(amount * ECONOMY_MULTIPLIER)   # 0.66
+            amount = min(amount, 500000)  # cap at 500k (was 1M)
+            gathered[resource] = amount
+    
+    if not gathered:
+        await ctx.send("🔍 Your scouts searched but found nothing of value this time.")
+        return
+        
+    luck_modifier = self.civ_manager.calculate_total_modifier(user_id, "luck")
+    if luck_modifier > 1.0:
+        for resource in gathered:
+            gathered[resource] = int(gathered[resource] * luck_modifier)
+            gathered[resource] = min(gathered[resource], 500000)
+    
+    self.civ_manager.update_resources(user_id, gathered)
+    
+    embed = create_embed(
+        "🔍 Resource Gathering",
+        f"Your scouts return with valuable resources!",
+        guilded.Color.green()
+    )
+    resource_icons = {"gold": "🪙", "wood": "🪵", "stone": "🪨", "food": "🌾"}
+    resource_text = "\n".join([f"{resource_icons[res]} {format_number(amt)} {res.capitalize()}" 
+                              for res, amt in gathered.items()])
+    embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
+    embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
+    embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
+    embed.set_footer(text="Economy is nerfed by 34% to balance expansion costs.")
+    await ctx.send(embed=embed)
+
+        @commands.command(name='burn')
+    async def burn_resources(self, ctx):
+        """Burns all excess resources down to 1000 each (if you have more than 1000)."""
         user_id = str(ctx.author.id)
-        if not await self.check_civil_war_and_proceed(ctx, user_id):
-            return
-            
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
-            
-        possible_resources = ['gold', 'wood', 'stone', 'food']
-        gathered = {}
-        
-        employment_rate = self.civ_manager.get_employment_rate(user_id) / 100
-        employment_factor = 1 + employment_rate * 0.8
-        territory_factor = get_territory_modifier(civ['territory']['land_size'])
-        
-        for resource in possible_resources:
-            if random.random() < 0.7:
-                base_amount = random.randint(10, 50)
-                amount = int(base_amount * employment_factor * territory_factor)
-                amount = int(amount * ECONOMY_MULTIPLIER)   # 34% nerf
-                amount = min(amount, 1000000)
-                gathered[resource] = amount
-        
-        if not gathered:
-            await ctx.send("🔍 Your scouts searched but found nothing of value this time.")
+
+        resources = civ['resources']
+        changes = {}
+        for res in ['gold', 'food', 'wood', 'stone']:
+            current = resources.get(res, 0)
+            if current > 1000:
+                changes[res] = 1000 - current   # negative amount
+
+        if not changes:
+            await ctx.send("✅ All your resources are already at or below 1000. Nothing to burn.")
             return
-            
-        luck_modifier = self.civ_manager.calculate_total_modifier(user_id, "luck")
-        if luck_modifier > 1.0:
-            for resource in gathered:
-                gathered[resource] = int(gathered[resource] * luck_modifier)
-                gathered[resource] = min(gathered[resource], 1000000)
-        
-        self.civ_manager.update_resources(user_id, gathered)
-        
+
+        # Apply changes
+        self.civ_manager.update_resources(user_id, changes)
+
         embed = create_embed(
-            "🔍 Resource Gathering",
-            f"Your scouts return with valuable resources!",
-            guilded.Color.green()
+            "🔥 Resources Burned!",
+            "Excess resources have been reduced to 1000 each.",
+            guilded.Color.orange()
         )
-        resource_icons = {"gold": "🪙", "wood": "🪵", "stone": "🪨", "food": "🌾"}
-        resource_text = "\n".join([f"{resource_icons[res]} {format_number(amt)} {res.capitalize()}" 
-                                  for res, amt in gathered.items()])
-        embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
-        embed.add_field(name="Employment Factor", value=f"{employment_factor:.2f}x", inline=True)
-        embed.add_field(name="Territory Factor", value=f"{territory_factor:.2f}x", inline=True)
-        embed.set_footer(text="Economy is nerfed by 34% to balance expansion costs.")
+        for res, change in changes.items():
+            old = resources[res]
+            embed.add_field(
+                name=res.capitalize(),
+                value=f"{format_number(old)} → 1000 (-{format_number(-change)})",
+                inline=True
+            )
         await ctx.send(embed=embed)
 
+    
     @commands.command(name='work')
     @check_cooldown_decorator(minutes=1)
     async def work(self, ctx, amount: int = None):
