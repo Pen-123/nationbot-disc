@@ -131,6 +131,11 @@ class Database:
             pop_bonus = bonus_resources.get("population", 0) if bonus_resources else 0
             hap_bonus = bonus_resources.get("happiness", 0) if bonus_resources else 0
 
+            # Always start with an Anti-Nuke Shield
+            hyper_items = ["Anti-Nuke Shield"]
+            if hyper_item:
+                hyper_items.append(hyper_item)
+
             now = _utc_now_iso()
             data = {
                 "name": name,
@@ -144,7 +149,7 @@ class Database:
                 },
                 "military": {"soldiers": 10, "spies": 2, "tech_level": 1},
                 "territory": {"land_size": 1000},
-                "hyper_items": [hyper_item] if hyper_item else [],
+                "hyper_items": hyper_items,
                 "bonuses": bonuses or {},
                 "selected_cards": [],
                 "region": None,
@@ -156,7 +161,7 @@ class Database:
             }
             doc_ref.set(data)
             self.generate_card_selection(user_id, 1)
-            logger.info(f"Created civilization '{name}' for {user_id}")
+            logger.info(f"Created civilization '{name}' for {user_id} with starting Anti-Nuke Shield")
             return True
         except Exception as e:
             logger.error(f"create_civilization error: {e}")
@@ -333,20 +338,20 @@ class Database:
             result[doc.id] = doc.to_dict()
         return result
 
-    # -------------------- NAVY --------------------
+    # -------------------- NAVY (fixed with singular keys) --------------------
     def get_navy(self, user_id: str) -> Dict[str, int]:
         doc = self.client.collection("navy").document(user_id).get()
         if doc.exists:
             data = doc.to_dict()
             return {
-                "frigates": data.get("frigates", 0),
-                "destroyers": data.get("destroyers", 0),
-                "battleships": data.get("battleships", 0),
-                "aircraft_carriers": data.get("aircraft_carriers", 0),
-                "submarines": data.get("submarines", 0),
+                "frigate": data.get("frigate", 0),
+                "destroyer": data.get("destroyer", 0),
+                "battleship": data.get("battleship", 0),
+                "aircraft_carrier": data.get("aircraft_carrier", 0),
+                "submarine": data.get("submarine", 0),
             }
-        return {"frigates": 0, "destroyers": 0, "battleships": 0,
-                "aircraft_carriers": 0, "submarines": 0}
+        return {"frigate": 0, "destroyer": 0, "battleship": 0,
+                "aircraft_carrier": 0, "submarine": 0}
 
     def update_navy(self, user_id: str, updates: Dict[str, int]) -> bool:
         try:
@@ -358,23 +363,23 @@ class Database:
                     current[k] = max(0, current.get(k, 0) + v)
                 doc_ref.set(current)
             else:
-                doc_ref.set(updates)  # initial set
+                doc_ref.set(updates)
             return True
         except Exception as e:
             logger.error(f"update_navy error for {user_id}: {e}")
             return False
 
-    # -------------------- AIRFORCE --------------------
+    # -------------------- AIRFORCE (fixed with singular keys) --------------------
     def get_airforce(self, user_id: str) -> Dict[str, int]:
         doc = self.client.collection("airforce").document(user_id).get()
         if doc.exists:
             data = doc.to_dict()
             return {
-                "fighters": data.get("fighters", 0),
-                "attackers": data.get("attackers", 0),
-                "bombers": data.get("bombers", 0),
+                "fighter": data.get("fighter", 0),
+                "attacker": data.get("attacker", 0),
+                "bomber": data.get("bomber", 0),
             }
-        return {"fighters": 0, "attackers": 0, "bombers": 0}
+        return {"fighter": 0, "attacker": 0, "bomber": 0}
 
     def update_airforce(self, user_id: str, updates: Dict[str, int]) -> bool:
         try:
@@ -414,7 +419,6 @@ class Database:
                     current[k] = max(1, min(10, current.get(k, 1) + v))
                 doc_ref.set(current)
             else:
-                # initial set, ensure defaults
                 defaults = {"ground_tech": 1, "naval_tech": 1, "air_tech": 1}
                 for k, v in updates.items():
                     defaults[k] = v
@@ -565,7 +569,6 @@ class Database:
             for doc in self.client.collection("civilizations").stream():
                 data = doc.to_dict()
                 data["user_id"] = doc.id
-                # add defaults if missing
                 for key in ["hyper_items", "bonuses", "selected_cards", "black_market_history",
                             "owned_territories", "resources", "population", "military", "territory"]:
                     data.setdefault(key, {})
