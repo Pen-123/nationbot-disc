@@ -5,6 +5,7 @@ import logging
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,6 @@ class AdminCommands(commands.Cog):
         except Exception as e:
             await _send(f"❌ Sync failed: {e}")
 
-    # .forcesync has been removed – no Dropbox sync.
-
     @commands.hybrid_command(name='exportdb')
     async def export_database(self, ctx):
         """
@@ -119,6 +118,61 @@ class AdminCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error exporting database: {e}")
             await ctx.send(f"❌ Error exporting database: {e}")
+
+    @commands.hybrid_command(name='testmode')
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(state="on or off")
+    async def testmode(self, ctx, state: Literal['on', 'off']):
+        """
+        Toggle testing mode – sets everyone's resources to 999,999,999 and saves a backup.
+        Admin only.
+        """
+        # Double-check admin permissions (for safety)
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ You need administrator permissions to use this command.")
+            return
+
+        state = state.lower()
+        if state == 'on':
+            if self.bot.db.get_testing_mode():
+                await ctx.send("⚠️ Testing mode is already enabled.")
+                return
+
+            # Snapshot current resources
+            snapshot = self.bot.db.get_all_resources_snapshot()
+            if not snapshot:
+                await ctx.send("❌ No civilizations found to snapshot.")
+                return
+
+            self.bot.db.set_testing_backup(snapshot)
+
+            # Set all resources to 999,999,999
+            huge = 999999999
+            for uid in snapshot:
+                self.bot.db.update_civilization(uid, {
+                    "resources": {"gold": huge, "food": huge, "wood": huge, "stone": huge}
+                })
+
+            self.bot.db.set_testing_mode(True)
+            await ctx.send("🧪 Testing mode **ENABLED**! All resources set to **999,999,999**.\n"
+                           "Use `/testmode off` to restore original resources.")
+        else:  # off
+            if not self.bot.db.get_testing_mode():
+                await ctx.send("⚠️ Testing mode is not enabled.")
+                return
+
+            backup = self.bot.db.get_testing_backup()
+            if backup:
+                # Restore each user's resources
+                for uid, resources in backup.items():
+                    self.bot.db.update_civilization(uid, {"resources": resources})
+                self.bot.db.delete_testing_backup()
+            else:
+                await ctx.send("⚠️ No backup found – resources may not be restored correctly.")
+
+            self.bot.db.set_testing_mode(False)
+            await ctx.send("🧪 Testing mode **DISABLED**. Original resources restored.")
+
 
 async def setup(bot):
     await bot.add_cog(AdminCommands(bot))
