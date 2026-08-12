@@ -424,7 +424,63 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in train command: {e}", exc_info=True)
+# Inside MilitaryCommands class
 
+@commands.command(name='buycard')
+@check_cooldown_decorator(minutes=1)   # optional cooldown
+async def buy_card(self, ctx):
+    """Purchase a random card for 500 gold."""
+    user_id = str(ctx.author.id)
+    civ = self.civ_manager.get_civilization(user_id)
+
+    if not civ:
+        await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+        return
+
+    # Check if user has enough gold
+    if civ['resources']['gold'] < 500:
+        await ctx.send("❌ You need 500 gold to buy a card!")
+        return
+
+    # Deduct gold
+    self.civ_manager.spend_resources(user_id, {"gold": 500})
+
+    # --- Card pool (same as in database.py) ---
+    card_pool = [
+        {"name": "Resource Boost", "type": "bonus", "effect": {"resource_production": 10}, "description": "+10% resource production"},
+        {"name": "Military Training", "type": "bonus", "effect": {"soldier_training_speed": 15}, "description": "+15% soldier training speed"},
+        {"name": "Trade Advantage", "type": "bonus", "effect": {"trade_profit": 10}, "description": "+10% trade profit"},
+        {"name": "Population Surge", "type": "bonus", "effect": {"population_growth": 10}, "description": "+10% population growth"},
+        {"name": "Tech Breakthrough", "type": "one_time", "effect": {"tech_level": 1}, "description": "+1 tech level (max 10)"},
+        {"name": "Gold Cache", "type": "one_time", "effect": {"gold": 500}, "description": "Gain 500 gold"},
+        {"name": "Food Reserves", "type": "one_time", "effect": {"food": 300}, "description": "Gain 300 food"},
+        {"name": "Mercenary Band", "type": "one_time", "effect": {"soldiers": 20}, "description": "Recruit 20 soldiers"},
+        {"name": "Spy Network", "type": "one_time", "effect": {"spies": 5}, "description": "Recruit 5 spies"},
+        {"name": "Fortification", "type": "bonus", "effect": {"defense_strength": 15}, "description": "+15% defense strength"},
+        {"name": "Stone Quarry", "type": "one_time", "effect": {"stone": 200}, "description": "Gain 200 stone"},
+        {"name": "Lumber Mill", "type": "one_time", "effect": {"wood": 200}, "description": "Gain 200 wood"},
+        {"name": "Intelligence Agency", "type": "bonus", "effect": {"spy_effectiveness": 20}, "description": "+20% spy effectiveness"},
+        {"name": "Economic Boom", "type": "one_time", "effect": {"gold": 800, "happiness": 10}, "description": "Gain 800 gold and +10 happiness"},
+        {"name": "Military Academy", "type": "bonus", "effect": {"soldier_training_speed": 25}, "description": "+25% soldier training speed"},
+    ]
+
+    # Pick a random card
+    card = random.choice(card_pool)
+
+    # Store the purchased card in the civilization document (list of purchased cards)
+    purchased_cards = civ.get('purchased_cards', [])
+    purchased_cards.append(card)
+    self.db.update_civilization(user_id, {"purchased_cards": purchased_cards})
+
+    # Show the card to the user
+    embed = discord.Embed(
+        title="🎴 Card Purchased!",
+        description=f"You spent 500 gold and received:\n**{card['name']}** – {card['description']}",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name="How to use", value="Use `.cards use <card_name>` to activate it.", inline=False)
+    await ctx.send(embed=embed)
+    
     @commands.command(name='declare')
     @app_commands.describe(target="Civilization leader to declare war on")
     async def declare_war(self, ctx, target: Optional[guilded.Member] = None):
@@ -1020,57 +1076,65 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in accept_peace command: {e}", exc_info=True)
 
-    @commands.command(name='cards')
-    @app_commands.describe(
-        action="Choose whether to view or use cards",
-        card_name="Card name (required when action=use)",
-        target="Optional target for cards that affect other players"
-    )
-    @app_commands.choices(
-        action=[
-            app_commands.Choice(name="view", value="view"),
-            app_commands.Choice(name="use", value="use"),
-        ],
-        card_name=[
-            app_commands.Choice(name="Gamble Card", value="Gamble Card"),
-            app_commands.Choice(name="Resource Heist", value="Resource Heist"),
-            app_commands.Choice(name="Military Coup", value="Military Coup"),
-            app_commands.Choice(name="Territory Gambit", value="Territory Gambit"),
-            app_commands.Choice(name="Population Swap", value="Population Swap"),
-        ]
-    )
-    async def manage_cards(self, ctx, action: Optional[Literal["view", "use"]] = None,
-                           card_name: str = None, target: Optional[guilded.Member] = None):
-        try:
-            user_id = str(ctx.author.id)
-            if not await self.check_civil_war_and_proceed(ctx, user_id):
-                return
-            civ = self.civ_manager.get_civilization(user_id)
-            if not civ:
-                await ctx.send("❌ You need to start a civilization first! Use `.start`")
-                return
+  @commands.command(name='cards')
+async def manage_cards(self, ctx, action: str = None, card_name: str = None, target: Optional[discord.Member] = None):
+    user_id = str(ctx.author.id)
+    civ = self.civ_manager.get_civilization(user_id)
+    if not civ:
+        await ctx.send("❌ You need to start a civilization first!")
+        return
 
-            if action is None or action.lower() == 'view':
-                # We need to fetch unlocked cards from Firestore (stored under civilization/cards subcollection)
-                # For simplicity, we'll use the existing method to get card selection? Actually, unlocked_cards is a separate collection in old SQLite.
-                # We'll adapt: we store unlocked cards in a subcollection "unlocked_cards" under civilization.
-                # But to keep it simple, we'll just show a placeholder for now.
-                # We'll implement a simple method to fetch cards (to be added in database.py if needed)
-                # For now, we'll just say "Use the card system soon"
-                await ctx.send("🎴 Card system is being migrated to Firestore. Please use `.cards view` later.")
-                return
+    if action is None or action.lower() == 'view':
+        purchased = civ.get('purchased_cards', [])
+        if not purchased:
+            await ctx.send("📭 You have no cards. Buy one with `.buycard` or earn them from military commands!")
+            return
 
-            elif action.lower() == 'use':
-                if not card_name:
-                    await ctx.send("❌ Please specify a card name! Usage: `/cards use <card_name> [target]`")
-                    return
-                # Placeholder
-                await ctx.send(f"❌ Card '{card_name}' usage is not yet implemented in Firestore migration.")
-            else:
-                await ctx.send("❌ Invalid action! Use `/cards view` or `/cards use <card_name> [target]`.")
+        embed = discord.Embed(title="🎴 Your Cards", color=discord.Color.blue())
+        for i, card in enumerate(purchased, 1):
+            embed.add_field(
+                name=f"{i}. {card['name']}",
+                value=f"Type: {card['type']}\n{card['description']}\nUse: `.cards use \"{card['name']}\"`",
+                inline=False
+            )
+        await ctx.send(embed=embed)
 
-        except Exception as e:
-            logger.error(f"Error in cards command: {e}", exc_info=True)
+    elif action.lower() == 'use':
+        if not card_name:
+            await ctx.send("❌ Please specify a card name: `.cards use \"Card Name\"`")
+            return
+
+        purchased = civ.get('purchased_cards', [])
+        card = next((c for c in purchased if c['name'].lower() == card_name.lower()), None)
+        if not card:
+            await ctx.send(f"❌ You don't have a card named '{card_name}'.")
+            return
+
+        # Apply the card effect
+        effect = card['effect']
+        if card['type'] == 'bonus':
+            # Permanent bonus
+            bonuses = civ.get('bonuses', {})
+            for key, value in effect.items():
+                bonuses[key] = bonuses.get(key, 0) + value
+            self.db.update_civilization(user_id, {"bonuses": bonuses})
+        else:
+            # One-time effect
+            if "gold" in effect: self.civ_manager.update_resources(user_id, {"gold": effect["gold"]})
+            if "food" in effect: self.civ_manager.update_resources(user_id, {"food": effect["food"]})
+            if "stone" in effect: self.civ_manager.update_resources(user_id, {"stone": effect["stone"]})
+            if "wood" in effect: self.civ_manager.update_resources(user_id, {"wood": effect["wood"]})
+            if "soldiers" in effect: self.civ_manager.update_military(user_id, {"soldiers": effect["soldiers"]})
+            if "spies" in effect: self.civ_manager.update_military(user_id, {"spies": effect["spies"]})
+            if "tech_level" in effect: self.civ_manager.update_military(user_id, {"tech_level": effect["tech_level"]})
+            if "citizens" in effect: self.civ_manager.update_population(user_id, {"citizens": effect["citizens"]})
+            if "happiness" in effect: self.civ_manager.update_population(user_id, {"happiness": effect["happiness"]})
+
+        # Remove the card after use
+        purchased.remove(card)
+        self.db.update_civilization(user_id, {"purchased_cards": purchased})
+
+        await ctx.send(f"✅ Used **{card['name']}**! Effect applied.")
 
     # ---------- BORDER COMMANDS ----------
 
