@@ -95,9 +95,53 @@ class CivilizationManager:
             "Antarctica": {"research_speed": 1.25, "unique_discoveries": 1.30}
         }
 
+    # ---- Easter egg detection ----
+    def _get_easter_egg_bonuses(self, civ_name: str) -> Dict[str, Any]:
+        """
+        Returns a dict with optional 'bonus_resources', 'bonuses', 'hyper_item'
+        for special civilization names.
+        """
+        result = {}
+        name_lower = civ_name.lower()
+
+        if "ncsw" in name_lower:
+            # New Confederate States of Whatever – military bonus
+            result["bonuses"] = {"soldier_training_speed": 20, "happiness_boost": -5}
+            result["hyper_item"] = "Confederate Battle Flag"  # could be a new HyperItem, or just use an existing one
+            result["message"] = "⚔️ The spirit of the Confederacy lives on! (+20% soldier training, -5% happiness)"
+
+        elif "confederate democracy" in name_lower:
+            # Confederate Democracy – diplomacy & happiness
+            result["bonuses"] = {"diplomacy_success": 10, "happiness_boost": 10}
+            result["message"] = "📜 A unique blend of Southern charm and democratic ideals! (+10% diplomacy, +10% happiness)"
+
+        elif "uspr" in name_lower:
+            # United Socialist People's Republic – production & trade penalty
+            result["bonuses"] = {"resource_production": 15, "trade_profit": -10}
+            result["hyper_item"] = "Red Banner"  # maybe a new HyperItem
+            result["message"] = "☭ The people's republic rises! (+15% resource production, -10% trade profit)"
+
+        # We don't override existing "ink" and "pen" bonuses; they are handled in basic.py
+        return result
+
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
-        """Create a new civilization"""
+        """Create a new civilization with easter egg bonuses."""
         try:
+            # Check for easter eggs
+            egg = self._get_easter_egg_bonuses(name)
+            if egg:
+                # Merge bonuses
+                if egg.get("bonuses"):
+                    if bonuses is None:
+                        bonuses = {}
+                    bonuses.update(egg["bonuses"])
+                # Use egg's hyper_item if present and no hyper_item passed
+                if egg.get("hyper_item") and hyper_item is None:
+                    hyper_item = egg["hyper_item"]
+                # Store the message for later use (optional)
+                # We could store it in the civilization document, but we'll just log it.
+                logger.info(f"Easter egg activated for {user_id}: {egg.get('message', '')}")
+
             return self.db.create_civilization(user_id, name, bonus_resources, bonuses, hyper_item)
         except Exception as e:
             logger.error(f"Error creating civilization for {user_id}: {e}")
@@ -634,20 +678,24 @@ class CivilizationManager:
             return 1.0
 
     def get_name_bonus(self, user_id: str, bonus_type: str) -> float:
-        """Get name-based bonus"""
+        """Get name-based bonus with safe conversion to float"""
         try:
             civ = self.get_civilization(user_id)
             if not civ:
                 return 0.0
                 
             bonuses = civ.get('bonuses', {})
-            return bonuses.get(f"{bonus_type}_bonus", 0.0) / 100.0
+            val = bonuses.get(f"{bonus_type}_bonus", 0.0)
+            # Ensure it's a number
+            if isinstance(val, str):
+                val = float(val)
+            return val / 100.0
         except Exception as e:
             logger.error(f"Error getting name bonus for {user_id}: {e}")
             return 0.0
 
     def calculate_total_modifier(self, user_id: str, action_type: str) -> float:
-        """Calculate total modifier for an action including region effects"""
+        """Calculate total modifier for an action including region effects and name bonus"""
         try:
             base_modifier = 1.0
             ideology_modifier = self.get_ideology_modifier(user_id, action_type)
@@ -658,6 +706,10 @@ class CivilizationManager:
                 name_bonus = self.get_name_bonus(user_id, "luck")
             elif action_type == "diplomacy":
                 name_bonus = self.get_name_bonus(user_id, "diplomacy")
+            
+            # Ensure name_bonus is a float
+            if isinstance(name_bonus, str):
+                name_bonus = float(name_bonus)
                 
             return base_modifier * ideology_modifier * region_modifier + name_bonus
         except Exception as e:
