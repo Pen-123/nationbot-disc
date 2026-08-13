@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Any, Tuple
 import firebase_admin
 from firebase_admin import credentials, firestore
 
+from bot import config
+
 logger = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────
@@ -158,6 +160,8 @@ class Database:
                 "owned_territories": [],
                 "created_at": now,
                 "last_active": now,
+                "purchased_cards": [],
+                "victory_achieved": False,
             }
             doc_ref.set(data)
             self.generate_card_selection(user_id, 1)
@@ -168,10 +172,6 @@ class Database:
             return False
 
     def delete_civilization(self, user_id: str) -> bool:
-        """
-        Delete a civilization and all related data (territories, alliances, messages, wars, etc.)
-        Also deletes the industrial revolution document.
-        """
         try:
             batch = self.client.batch()
             civ_ref = self.client.collection("civilizations").document(user_id)
@@ -240,7 +240,8 @@ class Database:
                 "hyper_items": [], "bonuses": {}, "selected_cards": [],
                 "black_market_history": {}, "owned_territories": [],
                 "region": None, "ideology": None, "job": "Unemployed",
-                "resources": {}, "population": {}, "military": {}, "territory": {}
+                "resources": {}, "population": {}, "military": {}, "territory": {},
+                "purchased_cards": [], "victory_achieved": False,
             }
             for k, v in defaults.items():
                 data.setdefault(k, v)
@@ -512,7 +513,6 @@ class Database:
     # -------------------- CARDS --------------------
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         try:
-            from bot import config
             card_pool = config.CARD_POOL
             available = random.sample(card_pool, min(5, len(card_pool)))
             self.client.collection("civilizations").document(user_id) \
@@ -564,7 +564,8 @@ class Database:
                 data = doc.to_dict()
                 data["user_id"] = doc.id
                 for key in ["hyper_items", "bonuses", "selected_cards", "black_market_history",
-                            "owned_territories", "resources", "population", "military", "territory"]:
+                            "owned_territories", "resources", "population", "military", "territory",
+                            "purchased_cards", "victory_achieved"]:
                     data.setdefault(key, {})
                 civs.append(data)
             civs.sort(key=lambda x: x.get("last_active", ""), reverse=True)
@@ -1226,3 +1227,115 @@ class Database:
         except Exception as e:
             logger.error(f"get_testing_mode error: {e}")
             return False
+
+    # -------------------- VICTORY CONDITIONS --------------------
+    def get_victory_progress(self, user_id: str) -> Dict[str, Any]:
+        """Get progress toward each victory condition."""
+        civ = self.get_civilization(user_id)
+        if not civ:
+            return {}
+
+        # Get all provinces
+        all_provinces = set(self.get_all_territories().keys())
+        total_provinces = len(all_provinces) if all_provinces else 1
+        owned = set(self.get_player_territories(user_id))
+
+        # --- Domination ---
+        domination_progress = len(owned) / total_provinces if total_provinces > 0 else 0
+
+        # --- Economic ---
+        resources = civ.get('resources', {})
+        gold = resources.get('gold', 0)
+        citizens = civ.get('population', {}).get('citizens', 1)
+        gdp_per_citizen = gold / citizens if citizens > 0 else 0
+
+        # --- Diplomatic ---
+        alliances = self.client.collection("alliances").where("members", "array_contains", user_id).stream()
+        alliance_count = sum(1 for _ in alliances)
+        alliance_score = 0
+        for doc in self.client.collection("alliances").where("members", "array_contains", user_id).stream():
+            data = doc.to_dict()
+            members = data.get("members", [])
+            alliance_score += len(members)
+
+        # --- Industrial ---
+        megaprojects = civ.get('megaprojects', [])
+        policies = civ.get('policies', {})
+
+        return {
+            "domination": {
+                "progress": domination_progress,
+                "target": config.VICTORY["domination_percentage"],
+                "owned": len(owned),
+                "total": total_provinces,
+                "threshold": int(total_provinces * config.VICTORY["domination_percentage"]),
+            },
+            "economic": {
+                "gold": gold,
+                "target_gold": config.VICTORY["economic_gold"],
+                "gdp": gdp_per_citizen,
+                "target_gdp": config.VICTORY["economic_gdp_per_citizen"],
+            },
+            "diplomatic": {
+                "alliances": alliance_count,
+                "target_alliances": config.VICTORY["diplomatic_alliances"],
+                "score": alliance_score,
+                "target_score": config.VICTORY["diplomatic_score"],
+            },
+            "industrial": {
+                "megaprojects": len(megaprojects),
+                "target_megaprojects": config.VICTORY["industrial_megaprojects"],
+                "policies": len(policies),
+                "target_policies": config.VICTORY["industrial_policies"],
+            },
+            "conquest": {
+                "completed": len(owned) == total_provinces,
+                "owned": len(owned),
+                "total": total_provinces,
+            },
+            "united_nations": {
+                "members": alliance_count,
+                "target": config.VICTORY["united_nations_members"],
+                "in_alliance": alliance_count > 0,
+            }
+        }
+
+    def check_victory(self, user_id: str) -> Optional[Dict[str, bool]]:
+        """Check if a player has achieved any victory condition."""
+        progress = self.get_victory_progress(user_id)
+        if not progress:
+            return None
+
+        results = {}
+
+        # Domination
+        d = progress["domination"]
+        if d["progress"] >= d["target"] and d["owned"] >= config.VICTORY["domination_min_territories"]:
+            results["domination"] = True
+
+        # Economic
+        e = progress["economic"]
+        if e["gold"] >= e["target_gold"] and e["gdp"] >= e["target_gdp"]:
+            results["economic"] = True
+
+        # Diplomatic
+        di = progress["diplomatic"]
+        if di["alliances"] >= di["target_alliances"] and di["score"] >= di["target_score"]:
+            results["diplomatic"] = True
+
+        # Industrial
+        ind = progress["industrial"]
+        if ind["megaprojects"] >= ind["target_megaprojects"] and ind["policies"] >= ind["target_policies"]:
+            results["industrial"] = True
+
+        # Conquest
+        c = progress["conquest"]
+        if config.VICTORY["conquest_required"] and c["completed"]:
+            results["conquest"] = True
+
+        # United Nations
+        un = progress["united_nations"]
+        if un["members"] >= un["target"] and un["in_alliance"]:
+            results["united_nations"] = True
+
+        return results if results else None
