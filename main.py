@@ -26,8 +26,9 @@ from bot.commands.admin import AdminCommands
 from bot.commands.industrial import IndustrialCog
 from bot.commands.territory import TerritoryCog
 from bot.commands.map_cog import MapCog
-from bot.commands.countryballs import CountryballCog   # <-- NEW
+from bot.commands.countryballs import CountryballCog
 from bot.events import EventManager
+from bot import config
 
 # Configure logging
 logging.basicConfig(
@@ -64,7 +65,6 @@ class WarBot(commands.Bot):
         self.events_task = None
 
     async def _auto_sync_commands(self):
-        """Auto-sync app commands on startup/deploy (disabled by env)."""
         do_sync = os.getenv("AUTO_SYNC_COMMANDS", "false").lower() in {"1", "true", "yes", "on"}
         if not do_sync:
             logger.info("AUTO_SYNC_COMMANDS disabled; skipping startup command sync")
@@ -87,7 +87,6 @@ class WarBot(commands.Bot):
             logger.error(f"Failed global auto-sync: {e}", exc_info=True)
 
     async def setup_hook(self):
-        # ---- AUTOMATIC GeoJSON GENERATION ----
         if not os.path.exists("regions.geojson"):
             logger.info("🌍 regions.geojson not found – generating it now...")
             try:
@@ -112,10 +111,8 @@ class WarBot(commands.Bot):
         else:
             logger.info("✅ regions.geojson already exists.")
 
-        # ---- LOAD COGS ----
         try:
             await self.add_cog(BasicCommands(self))
-
             try:
                 await self.add_cog(EconomyCommands(self))
                 logger.info("Legacy EconomyCommands cog loaded successfully")
@@ -133,17 +130,12 @@ class WarBot(commands.Bot):
             await self.add_cog(StoreCommands(self))
             await self.add_cog(HyperItemCommands(self))
             await self.add_cog(AdminCommands(self))
-
             await self.add_cog(IndustrialCog(self))
             logger.info("IndustrialCog loaded successfully")
-
             await self.add_cog(TerritoryCog(self))
             logger.info("TerritoryCog loaded successfully")
-
             await self.add_cog(MapCog(self))
             logger.info("MapCog loaded successfully")
-
-            # ---------- NEW: Countryball Cog ----------
             await self.add_cog(CountryballCog(self))
             logger.info("CountryballCog loaded successfully")
 
@@ -164,8 +156,11 @@ class WarBot(commands.Bot):
             return
         await self.process_commands(message)
 
+        # ---- VICTORY CHECK AFTER ANY COMMAND ----
+        if not message.author.bot:
+            await self.check_victory(str(message.author.id), message)
+
     def _get_command_suggestions(self, attempted: str, limit: int = 5):
-        """Return closest command names for mistyped prefix commands."""
         if not attempted:
             return []
         attempted = attempted.lower().strip()
@@ -177,7 +172,6 @@ class WarBot(commands.Bot):
         return difflib.get_close_matches(attempted, sorted(all_names), n=limit, cutoff=0.45)
 
     async def on_command_error(self, ctx, error):
-        """Friendly command errors for prefix command usage."""
         if hasattr(ctx.command, "on_error"):
             return
 
@@ -226,7 +220,6 @@ class WarBot(commands.Bot):
         await ctx.send("❌ Something went wrong while running that command. Please try again.")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        """Friendly slash-command error handling."""
         message = "❌ Something went wrong while running that slash command."
 
         if isinstance(error, app_commands.CommandOnCooldown):
@@ -246,6 +239,66 @@ class WarBot(commands.Bot):
                 await interaction.response.send_message(message, ephemeral=True)
         except Exception:
             logger.exception("Failed to deliver app command error message")
+
+    # ---- VICTORY CHECKING ----
+    async def check_victory(self, user_id: str, ctx_or_message=None):
+        """Check if a player has achieved any victory condition."""
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            return
+
+        # Skip if already won
+        if civ.get("victory_achieved", False):
+            return
+
+        result = self.db.check_victory(user_id)
+        if not result:
+            return
+
+        # Mark as achieved
+        self.db.update_civilization(user_id, {"victory_achieved": True})
+
+        victory_type = next(iter(result.keys()))
+        victory_names = {
+            "domination": "⚔️ Domination",
+            "economic": "💰 Economic",
+            "diplomatic": "🤝 Diplomatic",
+            "industrial": "🏭 Industrial",
+            "conquest": "🌍 Conquest",
+            "united_nations": "🕊️ United Nations"
+        }
+
+        embed = discord.Embed(
+            title="🏆 VICTORY!",
+            description=f"**{civ['name']}** has achieved **{victory_names.get(victory_type, victory_type)}** Victory!",
+            color=discord.Color.gold()
+        )
+
+        # Add victory details
+        details = {
+            "domination": f"Controlled {civ['territory']['land_size']:,} km² of territory",
+            "economic": f"Wealth of {format_number(civ['resources']['gold'])} gold",
+            "diplomatic": "Formed a powerful alliance network",
+            "industrial": "Completed multiple megaprojects and policies",
+            "conquest": "Owned all provinces in the world",
+            "united_nations": "Formed a global alliance"
+        }
+        embed.add_field(name="Victory Details", value=details.get(victory_type, "Unknown"), inline=False)
+
+        embed.add_field(name="🎉 Congratulations!", value=f"<@{user_id}> has won the game!", inline=False)
+
+        # Announce to configured channels
+        for channel_id in config.VICTORY.get("announcement_channels", []):
+            channel = self.get_channel(channel_id)
+            if channel:
+                await channel.send(embed=embed)
+
+        # Also send DM to winner
+        try:
+            user = await self.fetch_user(int(user_id))
+            await user.send(f"🏆 **YOU WON!** You achieved **{victory_names.get(victory_type, victory_type)}** Victory!")
+        except:
+            pass
 
 
 def start_flask_server():
@@ -293,14 +346,12 @@ async def main():
     """Main function to start the bot"""
     load_dotenv()
 
-    # Start Flask server in background thread
     flask_thread = threading.Thread(target=start_flask_server, daemon=False)
     flask_thread.start()
     logger.info("Startup complete: Flask thread launched")
 
     await run_discord_bot()
 
-    # Keep process alive in dashboard-only mode.
     if flask_thread.is_alive():
         await asyncio.to_thread(flask_thread.join)
 
