@@ -642,3 +642,33 @@ POLICIES = {
 
 # ---- TESTING MODE ----
 TESTING_GAIN = 999999999
+
+# ================================================================
+#                     VICTORY CONDITIONS
+# ================================================================
+VICTORY = {
+    # Domination: own at least 80% of all provinces and at least 10 territories
+    "domination_percentage": 0.80,
+    "domination_min_territories": 10,
+
+    # Economic: accumulate 500 million gold and have GDP per citizen ≥ 100,000
+    "economic_gold": 500_000_000,
+    "economic_gdp_per_citizen": 100_000,
+
+    # Diplomatic: be in at least 3 alliances and have a total alliance membership score ≥ 5
+    "diplomatic_alliances": 3,
+    "diplomatic_score": 5,
+
+    # Industrial: build at least 3 megaprojects and enact 6 policies
+    "industrial_megaprojects": 3,
+    "industrial_policies": 6,
+
+    # Conquest: own every province in the world
+    "conquest_required": True,
+
+    # United Nations: have a single alliance with at least 5 members
+    "united_nations_members": 5,
+
+    # Channel IDs where victory announcements will be sent (set as list of integers)
+    "announcement_channels": [],
+}
