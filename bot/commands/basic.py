@@ -231,8 +231,9 @@ class BasicCommands(commands.Cog):
                         "- Starting your civilization (`.start`)\n"
                         "- Managing resources (`.status`)\n"
                         "- Military commands (`.warhelp`)\n"
+                        "- Victory conditions (`.victory`)\n"
                         "- Ideologies and strategies\n\n"
-                        "Try asking: 'How do I declare war?' or 'What does fascism do?'",
+                        "Try asking: 'How do I declare war?' or 'What are the victory conditions?'",
                         discord.Color.blue()
                     ), mention_author=False)
                     self._update_conversation(user_id, False, "Hello! How can I assist with NationBot today?")
@@ -262,7 +263,7 @@ class BasicCommands(commands.Cog):
             except Exception:
                 civ_status = ""
 
-        # ----- COMPREHENSIVE SYSTEM PROMPT ----
+        # ----- COMPREHENSIVE SYSTEM PROMPT (updated with victory) -----
         system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
 Players build civilizations, manage resources, wage wars, and form alliances. 
 Your role is to help players understand game mechanics and strategies.
@@ -278,22 +279,23 @@ Your role is to help players understand game mechanics and strategies.
 - Corporations: build for 100k gold, upgrade for 200k, passive income (halved until Tech 5).
 - Megaprojects: build world-changing projects (Great Wall, Space Program, etc.) requiring millions of resources.
 - Policies: enable/upgrade/disable policies for permanent bonuses (military, agriculture, trade, education, environment, industry).
+- Victory conditions: Domination (60% of territories), Economic (500M gold & 100k GDP/citizen), Industrial (3 megaprojects & 6 policies), Conquest (all provinces), United Nations (alliance with 5 members). Use `.victory` to track your progress.
 
 **FULL COMMAND LIST:**
-- Basic: .start, .status, .ideology, .regions, .reset, .sv, .svc, .warhelp, .updates
+- Basic: .start, .status, .ideology, .regions, .reset, .sv, .svc, .warhelp, .updates, .victory
 - Economy: .gather, .work, .farm, .mine, .harvest, .drill, .fish, .labor, .raidcaravan, .tax, .lottery, .invest, .advertise, .census, .recruit, .buysoldiers, .buytech, .cheerup, .cheer, .festival, .burn, .immigration, .buycard, .corporation, .megaproject, .policy, .policieshelp
 - Military: .train, .find, .declare, .attack, .siege, .stealthbattle, .peace, .accept_peace, .addborder, .removeborder, .rectract, .retrieve, .borderinfo, .buildship, .buildplane, .tech, .trainboost, .navy, .airforce, .cards
 - Diplomacy: .ally, .acceptally, .rejectally, .break, .send, .trade, .accepttrade, .rejecttrade, .mail, .inbox, .coalition
 - Store: .store, .blackmarket, .inventory, .market
 - HyperItems: .laststand, .sacrifice, .mirror, .nuke, .obliterate, .shield, .luckystrike, .propaganda, .hiremercs, .boosttech, .mintgold, .superharvest, .superspy, .megainvent, .backstab, .bomb
-- Territory: .territories, .expand, .rapidexpansion, .map
+- Territory: .territories, .expand, .rapidexpansion, .states
 - Countryballs: .openpacks, .evolve, .packs, .activate, .deactivate, .synergies
 - Industrial: .industrial_start, .industrial_status, .industrial_build, .industrial_tech, .industrial_workers, .industrial_cleanup, .industrial_railway, .industrial_transport, .industrial_army, .industrial_policy, .industrial_import, .industrial_export, .industrial_steam, .industrial_mine, .industrial_hospital, .industrial_school, .industrial_law, .industrial_trade, .industrial_aid, .industrial_suppress, .industrial_bribe, .industrial_automate, .industrial_upgrade, .industrial_relief, .industrial_expand, .industrial_banking, .industrial_nationalize, .indushelp
 - ExtraEconomy: .extrawork, .extrastore, .extrainventory, .extragamble, .extracards, .slots, .blackjack, .jobs, .job, .arrest, .rob, .code, .darkweb, .setbalance
 
 **STRATEGY TIPS:**
 - Build a navy before expanding overseas – it gives 25% off and is required for non‑neighbour provinces.
-- Airforce gives 50% off for land expansions (neighbouring subregions) – build planes for cheaper land grabs.
+- Airforce gives 50% off for land expansions – build planes for cheaper land grabs.
 - Use .buysoldiers to quickly raise an army (20 gold each).
 - .immigration gives citizens but can trigger riots – use with care.
 - Tax is now weak – focus on active gathering and raids.
@@ -302,6 +304,7 @@ Your role is to help players understand game mechanics and strategies.
 - The Industrial Revolution gives huge rewards but is risky – every command has 30% disaster chance.
 - Black Market has pity system: guaranteed Uncommon every 3, Rare every 6, Legendary every 10 purchases.
 - Always declare war before attacking.
+- Victory conditions: track your progress with `.victory` – complete any one condition to win the game!
 
 You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay.
 If asked about non-game topics, politely decline. Use brief Discord-style formatting.
@@ -469,7 +472,9 @@ Remember to keep responses engaging but focused on the game.
                     "status": "View your civilization status",
                     "sv": "Start a saved chat with the AI (no timeout)",
                     "svc": "Close and delete your saved chat",
-                    "warhelp": "Show this help menu"
+                    "victory": "Check your progress toward victory conditions",
+                    "warhelp": "Show this help menu",
+                    "updates": "Show the roadmap and update log"
                 }
             },
             "diplomacy": {
@@ -648,6 +653,7 @@ Remember to keep responses engaging but focused on the game.
                     "openpacks": "Unlock countryballs for completed subregions",
                     "packs": "View your countryball collection",
                     "rapidexpansion": "Claim a province using only soldiers (2× cost, cap 10000, reductions apply)",
+                    "states": "Show global state ownership",
                     "synergies": "Show active synergy bonuses",
                     "territories": "List your owned provinces"
                 }
@@ -668,7 +674,6 @@ Remember to keep responses engaging but focused on the game.
                 description="Use `.warhelp <category>` to see commands in that category.\nAvailable categories:",
                 color=discord.Color.blue()
             )
-            # Build category list safely
             category_text = []
             for key, data in categories.items():
                 category_text.append(f"**{data['name']}** – *{data['description']}*")
@@ -766,65 +771,129 @@ Remember to keep responses engaging but focused on the game.
     # ---------- UPDATES COMMAND ----------
     @commands.command(name='updates')
     async def show_updates(self, ctx):
-        """Show the roadmap and update log."""
         embed = discord.Embed(
             title="📅 NationBot Roadmap & Updates",
             color=discord.Color.blue()
         )
-
         roadmap = (
             "**Phase 1: Core Stabilisation** (✅ Done)\n"
             "• Complete Firestore migration\n"
             "• Centralised config.py\n"
             "• Fix economy balance (nerf tax, buff mid-game)\n"
             "• Add corporation, megaproject, policy systems\n\n"
-            "**Phase 2: Expansion & War Rework** (🔄 In Progress)\n"
-            "• Replace `.expand` with state‑level conquest\n"
-            "• AI nations that expand and defend\n"
-            "• Full‑scale wars with troop movement\n\n"
-            "**Phase 3: Diplomacy & Espionage** (📋 Planned)\n"
-            "• Spy networks, sabotage, assassinations\n"
-            "• Coalition wars and peace treaties\n\n"
+            "**Phase 2: Expansion & War Rework** (✅ Done)\n"
+            "• State‑based expansion with repel chance\n"
+            "• Navy/airforce integration\n"
+            "• `.states` global ownership map\n\n"
+            "**Phase 3: Victory Conditions** (🔄 In Progress)\n"
+            "• Domination, Economic, Industrial, Conquest, United Nations\n"
+            "• `.victory` command to track progress\n\n"
             "**Phase 4: Endgame Content** (📋 Planned)\n"
             "• Global events (world wars, plagues)\n"
-            "• Victory conditions (domination, economic, diplomatic)"
+            "• Post‑victory New Game+ mode"
         )
         embed.add_field(name="🗺️ Roadmap", value=roadmap, inline=False)
 
         updates = (
-            "**v2.5.0 – 2026-08-12**\n"
-            "• Added corporation system (build/upgrade/list, passive income)\n"
-            "• Added megaprojects (Great Wall, Space Program, etc.)\n"
-            "• Added policies (enable/upgrade/disable)\n"
-            "• Buffed mid-game commands: harvest, drill, labor, raidcaravan\n"
-            "• Added `.cheerup` (50% happiness boost) and `.buytech` (purchase tech levels)\n"
-            "• Fixed navy/airforce persistence (singular keys)\n"
+            "**v2.5.0 – 2026-08-13**\n"
+            "• Added Victory Conditions system\n"
+            "• Added `.victory` command\n"
+            "• Added `.states` global map\n"
+            "• Expansion now has 25% repel chance\n"
+            "• Added `.rapidexpansion` with 2x soldier cost\n"
+            "• Updated warhelp with all new commands\n\n"
+            "**v2.4.0 – 2026-08-12**\n"
+            "• Added corporation system\n"
+            "• Added megaprojects\n"
+            "• Added policies\n"
+            "• Buffed mid-game commands\n"
+            "• Added `.cheerup` and `.buytech`\n"
             "• Removed cooldowns from buildship/buildplane\n"
-            "• Added testing mode (`/testmode on|off`)\n\n"
-            "**v2.4.0 – 2026-08-10**\n"
-            "• Complete Firestore migration\n"
-            "• Centralised config.py\n"
-            "• Reworked expansion costs (1 soldier per 2000 km² for large provinces)\n"
-            "• Fixed `.map` and countryball evolution\n\n"
-            "**v2.3.0 – 2026-08-05**\n"
-            "• Added Anti‑Nuke Shield to starting items\n"
-            "• Added Black Market pity system\n"
-            "• Buffed card system with `.buycard`\n"
-            "• Added `.immigration` and `.labor` commands"
+            "• Added testing mode (`/testmode on|off`)"
         )
         embed.add_field(name="📝 Update Log", value=updates, inline=False)
+        await ctx.send(embed=embed)
 
-        # If combined content too long, split into two messages
-        if len(roadmap) + len(updates) > 3500:
-            embed1 = discord.Embed(title="📅 NationBot Roadmap", color=discord.Color.blue())
-            embed1.add_field(name="🗺️ Roadmap", value=roadmap, inline=False)
-            await ctx.send(embed=embed1)
-            embed2 = discord.Embed(title="📝 Update Log", color=discord.Color.blue())
-            embed2.add_field(name="📝 Update Log", value=updates, inline=False)
-            await ctx.send(embed=embed2)
+    # ---------- VICTORY COMMAND ----------
+    @commands.command(name='victory')
+    async def show_victory_progress(self, ctx):
+        """Show your progress toward victory conditions."""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`.")
             return
 
+        progress = self.db.get_victory_progress(user_id)
+        if not progress:
+            await ctx.send("❌ Victory conditions not available. Please try again later.")
+            return
+
+        embed = discord.Embed(
+            title="🏆 Victory Progress",
+            description=f"Progress toward victory for **{civ['name']}**\nComplete any one condition to win!",
+            color=discord.Color.gold()
+        )
+
+        # Domination
+        d = progress["domination"]
+        bar = self._create_bar(d["progress"], d["target"])
+        embed.add_field(
+            name="⚔️ Domination",
+            value=f"{bar} {d['owned']}/{d['threshold']} provinces ({d['progress']*100:.1f}%)",
+            inline=False
+        )
+
+        # Economic
+        e = progress["economic"]
+        gold_bar = self._create_bar(e["gold"], e["target_gold"])
+        gdp_bar = self._create_bar(e["gdp"], e["target_gdp"])
+        embed.add_field(
+            name="💰 Economic",
+            value=f"{gold_bar} Gold: {format_number(e['gold'])}/{format_number(e['target_gold'])}\n"
+                  f"{gdp_bar} GDP/citizen: {format_number(e['gdp'])}/{format_number(e['target_gdp'])}",
+            inline=False
+        )
+
+        # Industrial
+        ind = progress["industrial"]
+        mega_bar = self._create_bar(ind["megaprojects"], ind["target_megaprojects"])
+        policy_bar = self._create_bar(ind["policies"], ind["target_policies"])
+        embed.add_field(
+            name="🏭 Industrial",
+            value=f"{mega_bar} Megaprojects: {ind['megaprojects']}/{ind['target_megaprojects']}\n"
+                  f"{policy_bar} Policies: {ind['policies']}/{ind['target_policies']}",
+            inline=False
+        )
+
+        # Conquest
+        c = progress["conquest"]
+        status = "✅ Complete" if c["completed"] else f"❌ {c['owned']}/{c['total']} provinces"
+        embed.add_field(
+            name="🌍 Conquest",
+            value=f"Own all provinces: {status}",
+            inline=False
+        )
+
+        # United Nations
+        un = progress["united_nations"]
+        un_status = "✅ In alliance" if un["in_alliance"] else "❌ No alliance"
+        embed.add_field(
+            name="🕊️ United Nations",
+            value=f"{un_status}\nMembers in your alliance: {un['members']}/{un['target']}",
+            inline=False
+        )
+
+        embed.set_footer(text="Complete any one of these conditions to achieve victory!")
         await ctx.send(embed=embed)
+
+    def _create_bar(self, current: float, target: float, length: int = 10) -> str:
+        if target <= 0:
+            return "▓" * length
+        progress = min(1.0, current / target)
+        filled = int(progress * length)
+        bar = "▓" * filled + "░" * (length - filled)
+        return bar
 
     # ---------- REGIONS COMMAND ----------
     @commands.command(name='regions')
@@ -989,7 +1058,7 @@ Remember to keep responses engaging but focused on the game.
         embed = discord.Embed(title=f"🏛️ The Founding of {civ_name}", description=f"{intro_art}\n\n{event_text}\n{special_message}", color=0x00ff00)
         if hyper_item:
             embed.add_field(name="🎁 Rare Discovery!", value=f"Your scouts found a **{hyper_item}**! This powerful item unlocks special abilities.", inline=False)
-        embed.add_field(name="📋 Next Steps", value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`", inline=False)
+        embed.add_field(name="📋 Next Steps", value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`\nTrack your victory progress with `.victory`", inline=False)
         await ctx.send(embed=embed)
 
     @commands.command(name='ideology')
