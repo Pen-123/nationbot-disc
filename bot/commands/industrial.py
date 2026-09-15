@@ -1,8 +1,9 @@
+import functools          # <-- add this
 import random
 import json
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta   # <-- also add timedelta, it's used below
 from typing import Optional, Dict, Any
 
 import discord
