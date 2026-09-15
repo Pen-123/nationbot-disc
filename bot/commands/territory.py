@@ -607,24 +607,8 @@ class TerritoryCog(commands.Cog):
             return
 
         embed = discord.Embed(title="🗺️ Your Provinces (States)", color=discord.Color.green())
-        by_country = {}
-        for province in owned:
-            by_country.setdefault(province, []).append(province)
-
-        # Group by country (we just list states)
-        # But we want to show progress per country
-        # So we'll compute which countries are fully owned
-        country_progress = {}
-        for country in ALL_PROVINCES:
-            if country in owned:
-                country_progress[country] = "✅ Owned"
-            else:
-                country_progress[country] = "❌ Not owned"
-
-        # Show owned states
         total_states = len(owned)
         embed.add_field(name="Total States", value=f"{total_states}", inline=True)
-        # Show list of owned states
         embed.add_field(name="Owned States", value=", ".join(owned[:20]) + ("..." if len(owned) > 20 else ""), inline=False)
 
         await ctx.send(embed=embed)
@@ -635,10 +619,7 @@ class TerritoryCog(commands.Cog):
         territories = self.db.get_all_territories()
 
         if country:
-            # Find all states in this country (country = province name)
-            # Actually, country == province in this context
             if country not in ALL_PROVINCES:
-                # Try fuzzy match
                 matches = [p for p in ALL_PROVINCES if country.lower() in p.lower()]
                 if not matches:
                     await ctx.send(f"❌ No country/state named `{country}` found.")
@@ -665,7 +646,6 @@ class TerritoryCog(commands.Cog):
                 owner_name = "Unowned"
             by_country.setdefault(owner_name, []).append(province)
 
-        # Show owned states by player
         for owner, states in by_country.items():
             if owner == "Unowned":
                 embed.add_field(name="🌍 Unowned", value=", ".join(states[:10]) + ("..." if len(states) > 10 else ""), inline=False)
@@ -683,45 +663,44 @@ class TerritoryCog(commands.Cog):
             await ctx.send("❌ You need a civilization first! Use `.start`.")
             return
 
-       if not country:
-    available = self._get_countries_available(user_id)
-    if not available:
-        await ctx.send("❌ No available countries to expand into.")
-        return
+        if not country:
+            available = self._get_countries_available(user_id)
+            if not available:
+                await ctx.send("❌ No available countries to expand into.")
+                return
 
-    # Group available countries by subregion, listing every nation
-    subregion_map = {}
-    for subregion, provinces in PROVINCES.items():
-        avail = sorted([p for p in provinces if p in available])
-        if avail:
-            subregion_map[subregion] = avail
+            # Group available countries by subregion, listing every nation
+            subregion_map = {}
+            for subregion, provinces in PROVINCES.items():
+                avail = sorted([p for p in provinces if p in available])
+                if avail:
+                    subregion_map[subregion] = avail
 
-    # Paginate: max 20 subregions per embed (Discord limit is 25 fields)
-    items = list(subregion_map.items())
-    page_size = 20
-    pages = [items[i:i + page_size] for i in range(0, len(items), page_size)] or [[]]
+            items = list(subregion_map.items())
+            page_size = 20
+            pages = [items[i:i + page_size] for i in range(0, len(items), page_size)] or [[]]
 
-    for idx, page in enumerate(pages, 1):
-        embed = discord.Embed(
-            title=f"🌍 Available Countries (Page {idx}/{len(pages)})",
-            description=(
-                "Use `.expand <country_name>` to claim a country.\n"
-                "Every nation in every subregion is listed below."
-            ),
-            color=discord.Color.blue()
-        )
-        for subregion, countries in page:
-            value = ", ".join(countries)
-            if len(value) > 1024:
-                value = value[:1021] + "..."
-            embed.add_field(
-                name=f"📍 {subregion} ({len(countries)})",
-                value=value,
-                inline=False
-            )
-        embed.set_footer(text="Tip: .rapidexpansion <country> uses soldiers only (2× cost)")
-        await ctx.send(embed=embed)
-    return
+            for idx, page in enumerate(pages, 1):
+                embed = discord.Embed(
+                    title=f"🌍 Available Countries (Page {idx}/{len(pages)})",
+                    description=(
+                        "Use `.expand <country_name>` to claim a country.\n"
+                        "Every nation in every subregion is listed below."
+                    ),
+                    color=discord.Color.blue()
+                )
+                for subregion, countries in page:
+                    value = ", ".join(countries)
+                    if len(value) > 1024:
+                        value = value[:1021] + "..."
+                    embed.add_field(
+                        name=f"📍 {subregion} ({len(countries)})",
+                        value=value,
+                        inline=False
+                    )
+                embed.set_footer(text="Tip: .rapidexpansion <country> uses soldiers only (2× cost)")
+                await ctx.send(embed=embed)
+            return
 
         # Find country match
         country_match = None
@@ -740,7 +719,6 @@ class TerritoryCog(commands.Cog):
 
         country = country_match
 
-        # Check if country is available
         available = self._get_countries_available(user_id)
         if country not in available:
             await ctx.send(f"❌ **{country}** is not currently available for expansion.")
@@ -748,14 +726,10 @@ class TerritoryCog(commands.Cog):
 
         owned = self._get_owned_provinces(user_id)
 
-        # Check if already fully owns this country
         if country in owned:
-            # Check if all states of this country are owned? Actually country is a state itself.
-            # So we just check if this specific state is owned.
             await ctx.send(f"❌ You already own **{country}**.")
             return
 
-        # ---- Pick a random state within the country (country is the state) ----
         target_state = country
 
         target_subregion = PROVINCE_TO_SUBREGION.get(target_state)
@@ -789,17 +763,14 @@ class TerritoryCog(commands.Cog):
             user_id, target_subregion, resource_cost, soldier_cost
         )
 
-        # ---- Scaling cost based on number of owned provinces ----
         owned_count = len(owned)
         if owned_count > 0:
             scale_factor = 1 + owned_count * 0.05
             resource_cost = {k: max(1, int(v * scale_factor)) for k, v in resource_cost.items()}
             soldier_cost = max(1, int(soldier_cost * scale_factor))
 
-        # ---- 25% chance to be repelled ----
         repel_chance = 0.25
         if random.random() < repel_chance:
-            # Failed expansion – lose some resources and soldiers
             lost_resources = {k: int(v * 0.3) for k, v in resource_cost.items()}
             lost_soldiers = max(1, int(soldier_cost * 0.3))
             self.civ_manager.spend_resources(user_id, lost_resources)
@@ -816,7 +787,6 @@ class TerritoryCog(commands.Cog):
             self.db.log_event(user_id, "expansion_repelled", "Expansion Repelled", f"Repelled from {target_state}")
             return
 
-        # ---- Affordability check ----
         if not self.civ_manager.can_afford(user_id, resource_cost):
             cost_str = ", ".join([f"{amt} {res}" for res, amt in resource_cost.items()])
             await ctx.send(f"❌ Cannot afford to claim **{target_state}**. Requires: {cost_str}.")
@@ -826,7 +796,6 @@ class TerritoryCog(commands.Cog):
             await ctx.send(f"❌ You need at least {soldier_cost} soldiers to claim **{target_state}**! You have {civ['military']['soldiers']}.")
             return
 
-        # ---- Deduct costs ----
         self.civ_manager.spend_resources(user_id, resource_cost)
         self.civ_manager.update_military(user_id, {"soldiers": -soldier_cost})
 
@@ -846,7 +815,6 @@ class TerritoryCog(commands.Cog):
             embed.add_field(name="Reduction Applied", value=reduction_reason, inline=False)
             embed.add_field(name="Overseas", value="✅" if is_overseas else "❌", inline=True)
 
-            # Check if country is now fully owned
             if target_state in ALL_PROVINCES:
                 embed.add_field(name="State Progress", value=f"You now own **{target_state}**!", inline=False)
 
@@ -879,7 +847,6 @@ class TerritoryCog(commands.Cog):
             await ctx.send(embed=embed)
             return
 
-        # Find country match
         country_match = None
         for p in ALL_PROVINCES:
             if p.lower() == country.lower():
@@ -919,16 +886,14 @@ class TerritoryCog(commands.Cog):
             return
 
         area = self.province_areas.get(target_state, 1000)
-        soldier_cost = self._calculate_base_soldier_cost(area) * 2  # 2x for rapid
+        soldier_cost = self._calculate_base_soldier_cost(area) * 2
         soldier_cost = min(soldier_cost, config.EXPANSION["rapid_max_soldier_cost"])
 
-        # ---- Scaling cost ----
         owned_count = len(owned)
         if owned_count > 0:
             scale_factor = 1 + owned_count * 0.05
             soldier_cost = max(1, int(soldier_cost * scale_factor))
 
-        # ---- 25% repel chance ----
         repel_chance = 0.25
         if random.random() < repel_chance:
             lost_soldiers = max(1, int(soldier_cost * 0.3))
