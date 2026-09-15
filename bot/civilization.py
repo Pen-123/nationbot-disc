@@ -107,39 +107,31 @@ class CivilizationManager:
         if "ncsw" in name_lower:
             # New Confederate States of Whatever – military bonus
             result["bonuses"] = {"soldier_training_speed": 20, "happiness_boost": -5}
-            result["hyper_item"] = "Confederate Battle Flag"  # could be a new HyperItem, or just use an existing one
+            result["hyper_item"] = "Confederate Battle Flag"
             result["message"] = "⚔️ The spirit of the Confederacy lives on! (+20% soldier training, -5% happiness)"
 
         elif "confederate democracy" in name_lower:
-            # Confederate Democracy – diplomacy & happiness
             result["bonuses"] = {"diplomacy_success": 10, "happiness_boost": 10}
             result["message"] = "📜 A unique blend of Southern charm and democratic ideals! (+10% diplomacy, +10% happiness)"
 
         elif "uspr" in name_lower:
-            # United Socialist People's Republic – production & trade penalty
             result["bonuses"] = {"resource_production": 15, "trade_profit": -10}
-            result["hyper_item"] = "Red Banner"  # maybe a new HyperItem
+            result["hyper_item"] = "Red Banner"
             result["message"] = "☭ The people's republic rises! (+15% resource production, -10% trade profit)"
 
-        # We don't override existing "ink" and "pen" bonuses; they are handled in basic.py
         return result
 
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         """Create a new civilization with easter egg bonuses."""
         try:
-            # Check for easter eggs
             egg = self._get_easter_egg_bonuses(name)
             if egg:
-                # Merge bonuses
                 if egg.get("bonuses"):
                     if bonuses is None:
                         bonuses = {}
                     bonuses.update(egg["bonuses"])
-                # Use egg's hyper_item if present and no hyper_item passed
                 if egg.get("hyper_item") and hyper_item is None:
                     hyper_item = egg["hyper_item"]
-                # Store the message for later use (optional)
-                # We could store it in the civilization document, but we'll just log it.
                 logger.info(f"Easter egg activated for {user_id}: {egg.get('message', '')}")
 
             return self.db.create_civilization(user_id, name, bonus_resources, bonuses, hyper_item)
@@ -165,14 +157,14 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             if self.db.delete_civilization(user_id):
                 logger.info(f"Civilization reset for user {user_id}")
                 return True
             else:
                 logger.error(f"Failed to reset civilization for user {user_id}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Error resetting civilization for {user_id}: {e}")
             return False
@@ -183,7 +175,7 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             population = civ['population'].copy()
             population['employed'] = employed
             return self.db.update_civilization(user_id, {"population": population})
@@ -197,28 +189,25 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-            
+
             happiness = civ['population']['happiness']
-            
+
             # Only check if happiness is below 50%
             if happiness >= 50:
                 return False
-            
-            # Calculate civil war chance: higher risk the lower the happiness
-            # At 0 happiness: 40% chance, at 49 happiness: 1% chance
-            civil_war_chance = (50 - happiness) * 0.8  # 0.8% per happiness point below 50
-            
-            # Add additional risk factors
+
+            # At 0: 40% chance, at 49: 1% chance, at -100: 120% (guaranteed)
+            civil_war_chance = (50 - happiness) * 0.8
+
             if civ.get('ideology') == 'terrorism':
-                civil_war_chance *= 1.5  # Terrorism has higher unrest
+                civil_war_chance *= 1.5
             elif civ.get('ideology') == 'anarchy':
-                civil_war_chance *= 1.3  # Anarchy is unstable
-            
-            # Check if civil war occurs
+                civil_war_chance *= 1.3
+
             if random.random() * 100 < civil_war_chance:
                 self.trigger_civil_war(user_id)
                 return True
-            
+
             return False
         except Exception as e:
             logger.error(f"Error checking civil war risk for {user_id}: {e}")
@@ -230,36 +219,32 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return
-            
-            # Calculate losses: 50% of resources
+
             resources = civ['resources']
             resource_losses = {}
             for resource, amount in resources.items():
                 if amount > 0:
-                    loss = amount // 2  # 50% loss
+                    loss = amount // 2
                     resource_losses[resource] = -loss
-            
-            # Apply resource losses
+
             if resource_losses:
                 self.update_resources(user_id, resource_losses)
-            
-            # Additional population and military losses
-            population_loss = max(1, civ['population']['citizens'] // 20)  # 5% population loss
-            soldier_loss = max(1, civ['military']['soldiers'] // 10)  # 10% soldier loss
-            
+
+            population_loss = max(1, civ['population']['citizens'] // 20)
+            soldier_loss = max(1, civ['military']['soldiers'] // 10)
+
             self.update_population(user_id, {"citizens": -population_loss, "happiness": -15})
             self.update_military(user_id, {"soldiers": -soldier_loss})
-            
-            # Log the civil war event
+
             self.db.log_event(
-                user_id, 
-                "civil_war", 
-                "Civil War Erupts!", 
+                user_id,
+                "civil_war",
+                "Civil War Erupts!",
                 f"A devastating civil war has broken out! Lost 50% of resources, {population_loss} citizens, and {soldier_loss} soldiers due to internal conflict."
             )
-            
+
             logger.info(f"Civil war triggered for {user_id}. Lost 50% of resources.")
-            
+
         except Exception as e:
             logger.error(f"Error triggering civil war for {user_id}: {e}")
 
@@ -285,35 +270,42 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             resources = civ['resources']
             for resource, change in resource_changes.items():
                 if resource in resources:
                     resources[resource] = max(0, resources[resource] + change)
-            
+
             return self.db.update_civilization(user_id, {"resources": resources})
         except Exception as e:
             logger.error(f"Error updating resources for {user_id}: {e}")
             return False
 
     def update_population(self, user_id: str, population_changes: Dict[str, int]) -> bool:
-        """Update civilization population stats"""
+        """Update civilization population stats.
+
+        IMPORTANT: happiness can go NEGATIVE (down to -100).
+        'hunger' is still clamped 0..100.
+        """
         try:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             population = civ['population']
             for stat, change in population_changes.items():
                 if stat in population:
-                    if stat in ['happiness', 'hunger']:
+                    if stat == 'happiness':
+                        # Happiness can go into the negative — floor at -100
+                        population[stat] = max(-100, min(100, population[stat] + change))
+                    elif stat == 'hunger':
                         population[stat] = max(0, min(100, population[stat] + change))
                     elif stat == 'citizens':
                         population['citizens'] = max(0, population['citizens'] + change)
                         population['employed'] = min(population.get('employed', 0), population['citizens'])
                     else:
                         population[stat] = max(0, population[stat] + change)
-            
+
             return self.db.update_civilization(user_id, {"population": population})
         except Exception as e:
             logger.error(f"Error updating population for {user_id}: {e}")
@@ -325,25 +317,25 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             military = civ['military']
             old_tech_level = military['tech_level']
-            
+
             for stat, change in military_changes.items():
                 if stat in military:
                     if stat == 'tech_level':
-                        military[stat] = min(10, max(1, military[stat] + change))  # Cap at 10
+                        military[stat] = min(10, max(1, military[stat] + change))
                     else:
                         military[stat] = max(0, military[stat] + change)
-            
+
             new_tech_level = military['tech_level']
             result = self.db.update_civilization(user_id, {"military": military})
-            
+
             if result and new_tech_level > old_tech_level and new_tech_level <= 10:
                 self.db.generate_card_selection(user_id, new_tech_level)
                 self.db.log_event(user_id, "tech_advance", "Tech Level Increased",
                                 f"Reached tech level {new_tech_level}. New card selection available!")
-            
+
             return result
         except Exception as e:
             logger.error(f"Error updating military for {user_id}: {e}")
@@ -355,11 +347,11 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-            
+
             population = civ['population']
             employed = population.get('employed', 0) + change
             employed = max(0, min(population['citizens'], employed))
-            
+
             population['employed'] = employed
             return self.db.update_civilization(user_id, {"population": population})
         except Exception as e:
@@ -372,12 +364,12 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             territory = civ['territory']
             for stat, change in territory_changes.items():
                 if stat in territory:
                     territory[stat] = max(0, territory[stat] + change)
-            
+
             return self.db.update_civilization(user_id, {"territory": territory})
         except Exception as e:
             logger.error(f"Error updating territory for {user_id}: {e}")
@@ -389,7 +381,7 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return 0.0
-            
+
             population = civ['population']
             citizens = population['citizens']
             employed = population.get('employed', 0)
@@ -404,10 +396,10 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             hyper_items = civ['hyper_items']
             hyper_items.append(item)
-            
+
             return self.db.update_civilization(user_id, {"hyper_items": hyper_items})
         except Exception as e:
             logger.error(f"Error adding hyper item for {user_id}: {e}")
@@ -419,11 +411,11 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             hyper_items = civ['hyper_items']
             if item not in hyper_items:
                 return False
-                
+
             hyper_items.remove(item)
             return self.db.update_civilization(user_id, {"hyper_items": hyper_items})
         except Exception as e:
@@ -436,16 +428,16 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             effect = card['effect']
             card_type = card['type']
-            
+
             if card_type == "bonus":
                 bonuses = civ['bonuses']
                 for key, value in effect.items():
                     bonuses[key] = bonuses.get(key, 0) + value
                 self.db.update_civilization(user_id, {"bonuses": bonuses})
-            
+
             elif card_type == "one_time":
                 if "gold" in effect or "food" in effect or "stone" in effect or "wood" in effect:
                     self.update_resources(user_id, effect)
@@ -453,11 +445,11 @@ class CivilizationManager:
                     self.update_military(user_id, effect)
                 elif "citizens" in effect or "happiness" in effect or "hunger" in effect:
                     self.update_population(user_id, effect)
-            
+
             selected_cards = civ['selected_cards']
             selected_cards.append(card['name'])
             self.db.update_civilization(user_id, {"selected_cards": selected_cards})
-            
+
             self.db.log_event(user_id, "card_selected", f"Card Selected: {card['name']}",
                              card['description'], effect)
             return True
@@ -471,7 +463,7 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return {}
-                
+
             population = civ['population']
             territory = civ['territory']
             military = civ['military']
@@ -479,8 +471,7 @@ class CivilizationManager:
             bonuses = civ['bonuses']
             employment_rate = self.get_employment_rate(user_id)
             employment_modifier = employment_rate / 100
-            
-            # Get region modifier if region is set
+
             region_modifier = 1.0
             region = civ.get('region')
             if region and region in self.region_modifiers:
@@ -494,18 +485,15 @@ class CivilizationManager:
                 if region_bonus.get('balanced_production'):
                     region_modifier *= region_bonus['balanced_production']
 
-            # Use nerfed territory modifier for passive income
             territory_modifier = get_territory_modifier(territory['land_size'])
             base_gold = int(population['citizens'] * 0.1 * territory_modifier * employment_modifier)
             base_food = int(population['citizens'] * 0.2 * employment_modifier)
-            
-            # Apply tech level gold multiplier: 0.5x per tech level
+
             tech_level = military['tech_level']
             tech_gold_multiplier = 0.5 * tech_level
             base_gold = int(base_gold * (1 + tech_gold_multiplier))
-            
+
             resource_modifier = 1.0
-            # Existing ideology adjustments
             if ideology == 'communism':
                 resource_modifier *= self.ideology_modifiers['communism']['citizen_productivity']
             elif ideology == 'democracy':
@@ -525,10 +513,16 @@ class CivilizationManager:
                 resource_modifier *= 1.0
             elif ideology == 'terrorism':
                 resource_modifier *= self.ideology_modifiers['terrorism']['resource_production']
-            
+
             resource_modifier *= (1 + bonuses.get('resource_production', 0) / 100)
             resource_modifier *= region_modifier
-            
+
+            # Negative happiness cripples income — scale from 1.0 (at 0) down to 0.0 (at -100)
+            happiness = population.get('happiness', 50)
+            if happiness < 0:
+                misery_modifier = max(0.0, 1 + (happiness / 100.0))  # -100 -> 0.0, -50 -> 0.5, 0 -> 1.0
+                resource_modifier *= misery_modifier
+
             return {
                 "gold": int(base_gold * resource_modifier),
                 "food": int(base_food * resource_modifier),
@@ -545,20 +539,20 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return {}
-                
+
             population = civ['population']
             military = civ['military']
             ideology = civ.get('ideology', '')
-            
+
             food_consumption = int(population['citizens'] * 0.3)
             soldier_upkeep = military['soldiers'] * 2
             spy_upkeep = military['spies'] * 5
-            
+
             if ideology == 'anarchy':
                 soldier_upkeep = 0
             if ideology == 'terrorism':
                 spy_upkeep = int(spy_upkeep * 1.3)
-            
+
             return {
                 "food": food_consumption,
                 "gold": soldier_upkeep + spy_upkeep
@@ -568,22 +562,28 @@ class CivilizationManager:
             return {}
 
     def apply_happiness_effects(self, user_id: str):
-        """Apply effects based on civilization happiness"""
+        """Apply effects based on civilization happiness.
+
+        Happiness tiers:
+          < 0    -> CATASTROPHIC: mass exodus, desertion, looting (scaled by severity)
+          < 20   -> revolt risk
+          > 80   -> population boom
+        """
         try:
             civ = self.get_civilization(user_id)
             if not civ:
                 return
-                
+
             population = civ['population']
             happiness = population['happiness']
             bonuses = civ['bonuses']
             ideology = civ.get('ideology', '')
-            
-            # Apply region happiness bonus if applicable
+
+            # Region happiness bonus
             region = civ.get('region')
             if region and region in self.region_modifiers and self.region_modifiers[region].get('happiness'):
                 happiness = int(happiness * self.region_modifiers[region]['happiness'])
-            
+
             happiness_modifier = 1 + bonuses.get('happiness_boost', 0) / 100
             if ideology in self.ideology_modifiers and 'happiness_boost' in self.ideology_modifiers[ideology]:
                 ide_happy = self.ideology_modifiers[ideology]['happiness_boost']
@@ -591,16 +591,61 @@ class CivilizationManager:
                     happiness_modifier *= ide_happy
                 else:
                     happiness_modifier += ide_happy
-            
+
             happiness = int(happiness * happiness_modifier)
-            
-            if happiness < 20:
+
+            # ================================================================
+            # CATASTROPHIC NEGATIVE HAPPINESS
+            # ================================================================
+            if happiness < 0:
+                severity = abs(happiness)  # 1..100
+
+                # --- Citizens flee the miserable nation ---
+                if random.random() < 0.30 + (severity / 200):
+                    flee_loss = max(1, int(population['citizens'] * (0.02 + severity / 1000)))
+                    self.update_population(user_id, {"citizens": -flee_loss})
+                    self.db.log_event(
+                        user_id, "mass_exodus", "Mass Exodus",
+                        f"{flee_loss} citizens fled your miserable nation! (happiness {happiness})"
+                    )
+
+                # --- Soldiers desert ---
+                military = civ.get('military', {})
+                if random.random() < 0.25 + (severity / 250):
+                    desertion = max(1, int(military.get('soldiers', 0) * (0.03 + severity / 800)))
+                    if desertion > 0:
+                        self.update_military(user_id, {"soldiers": -desertion})
+                        self.db.log_event(
+                            user_id, "desertion", "Military Desertion",
+                            f"{desertion} soldiers abandoned your cause! (happiness {happiness})"
+                        )
+
+                # --- Riots loot resources ---
+                if random.random() < 0.20 + (severity / 300):
+                    resources = civ.get('resources', {})
+                    loot = {res: -int(amt * 0.05) for res, amt in resources.items() if amt > 0}
+                    if loot:
+                        self.update_resources(user_id, loot)
+                        self.db.log_event(
+                            user_id, "riots", "Riots and Looting",
+                            f"Angry mobs looted resources! (happiness {happiness})"
+                        )
+
+            # ================================================================
+            # LOW HAPPINESS – REVOLT RISK
+            # ================================================================
+            elif happiness < 20:
                 if random.random() < 0.1:
                     revolt_loss = int(population['citizens'] * 0.05)
                     self.update_population(user_id, {"citizens": -revolt_loss})
-                    self.db.log_event(user_id, "revolt", "Population Revolt",
-                                    f"Low happiness caused {revolt_loss} citizens to leave!")
-            
+                    self.db.log_event(
+                        user_id, "revolt", "Population Revolt",
+                        f"Low happiness caused {revolt_loss} citizens to leave!"
+                    )
+
+            # ================================================================
+            # HIGH HAPPINESS – POPULATION BOOM
+            # ================================================================
             elif happiness > 80:
                 growth_rate = bonuses.get('population_growth', 0) / 100
                 if ideology == 'pacifist':
@@ -612,8 +657,10 @@ class CivilizationManager:
                 if random.random() < (0.15 + growth_rate):
                     growth = int(population['citizens'] * (0.03 + growth_rate))
                     self.update_population(user_id, {"citizens": growth})
-                    self.db.log_event(user_id, "growth", "Population Boom",
-                                    f"High happiness attracted {growth} new citizens!")
+                    self.db.log_event(
+                        user_id, "growth", "Population Boom",
+                        f"High happiness attracted {growth} new citizens!"
+                    )
         except Exception as e:
             logger.error(f"Error applying happiness effects for {user_id}: {e}")
 
@@ -623,16 +670,16 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return
-                
+
             population = civ['population']
             resources = civ['resources']
-            
+
             food_needed = int(population['citizens'] * 0.2)
-            
+
             if resources['food'] < food_needed:
                 hunger_increase = min(20, food_needed - resources['food'])
                 self.update_population(user_id, {"hunger": hunger_increase})
-                
+
                 if population['hunger'] > 80:
                     starvation_loss = int(population['citizens'] * 0.02)
                     self.update_population(user_id, {"citizens": -starvation_loss, "happiness": -10})
@@ -651,11 +698,11 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ or not civ.get('ideology'):
                 return 1.0
-                
+
             ideology = civ['ideology']
             modifiers = self.ideology_modifiers.get(ideology, {})
             base_modifier = modifiers.get(modifier_type, 1.0)
-            
+
             if modifier_type in ['soldier_training_speed', 'combat_strength', 'trade_profit', 'population_growth', 'citizen_productivity']:
                 return base_modifier + (civ['bonuses'].get(modifier_type, 0) / 100)
             return base_modifier
@@ -669,7 +716,7 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ or not civ.get('region'):
                 return 1.0
-                
+
             region = civ['region']
             modifiers = self.region_modifiers.get(region, {})
             return modifiers.get(modifier_type, 1.0)
@@ -683,10 +730,9 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return 0.0
-                
+
             bonuses = civ.get('bonuses', {})
             val = bonuses.get(f"{bonus_type}_bonus", 0.0)
-            # Ensure it's a number
             if isinstance(val, str):
                 val = float(val)
             return val / 100.0
@@ -701,16 +747,15 @@ class CivilizationManager:
             ideology_modifier = self.get_ideology_modifier(user_id, action_type)
             region_modifier = self.get_region_modifier(user_id, action_type)
             name_bonus = 0.0
-            
+
             if action_type == "luck":
                 name_bonus = self.get_name_bonus(user_id, "luck")
             elif action_type == "diplomacy":
                 name_bonus = self.get_name_bonus(user_id, "diplomacy")
-            
-            # Ensure name_bonus is a float
+
             if isinstance(name_bonus, str):
                 name_bonus = float(name_bonus)
-                
+
             return base_modifier * ideology_modifier * region_modifier + name_bonus
         except Exception as e:
             logger.error(f"Error calculating total modifier for {user_id}: {e}")
@@ -722,12 +767,12 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return False
-                
+
             resources = civ['resources']
             for resource, cost in costs.items():
                 if resource in resources and resources[resource] < cost:
                     return False
-                    
+
             return True
         except Exception as e:
             logger.error(f"Error checking affordability for {user_id}: {e}")
@@ -738,7 +783,7 @@ class CivilizationManager:
         try:
             if not self.can_afford(user_id, costs):
                 return False
-                
+
             negative_costs = {resource: -cost for resource, cost in costs.items()}
             return self.update_resources(user_id, negative_costs)
         except Exception as e:
@@ -751,24 +796,24 @@ class CivilizationManager:
             civ = self.get_civilization(user_id)
             if not civ:
                 return 0
-                
+
             resources = civ['resources']
             population = civ['population']
             military = civ['military']
             territory = civ['territory']
             bonuses = civ['bonuses']
-            
+
             resource_power = sum(resources.values()) // 10
             population_power = population['citizens'] * 2
             military_power = military['soldiers'] * 5 + military['spies'] * 10
             tech_power = military['tech_level'] * 100
             territory_power = territory['land_size'] // 100
             happiness_power = population['happiness']
-            
+
             defense_bonus = bonuses.get('defense_strength', 0)
             total_power = (resource_power + population_power + military_power +
                           tech_power + territory_power + happiness_power)
-            
+
             total_power = int(total_power * (1 + defense_bonus / 100))
             return total_power
         except Exception as e:
