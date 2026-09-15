@@ -22,6 +22,17 @@ class HyperItemCommands(commands.Cog):
             return False
         return item_name in civ.get('hyper_items', [])
 
+    def _is_allied(self, user_id: str, target_id: str) -> bool:
+        """True if the two users share an alliance."""
+        try:
+            for doc in self.db.client.collection("alliances").stream():
+                members = doc.to_dict().get("members", [])
+                if user_id in members and target_id in members:
+                    return True
+        except Exception as e:
+            logger.error(f"_is_allied error: {e}")
+        return False
+
     async def _block_with_shield(self, ctx, target_id: str, target_civ, attacker_civ, attack_type: str):
         self.civ_manager.use_hyper_item(target_id, "Anti-Nuke Shield")
         embed = create_embed(
@@ -164,10 +175,10 @@ class HyperItemCommands(commands.Cog):
                 logger.error(f"Error in reflected sacrifice: {e}")
                 await ctx.send("❌ Error processing reflected sacrifice.")
             return
-            
+
         def check(m):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id and m.content.lower() == 'confirm'
-        
+
         embed = create_embed(
             "💀 FINAL WARNING: MUTUAL DESTRUCTION",
             f"**This will COMPLETELY DESTROY both {civ['name']} and {target_civ['name']}!**",
@@ -338,7 +349,7 @@ class HyperItemCommands(commands.Cog):
         )
         damage_text = f"💀 Population Lost: {format_number(population_loss)}\n⚔️ Soldiers Lost: {format_number(military_loss)}\n🏞️ Territory Lost: {format_number(territory_loss)} km²"
         embed.add_field(name="Casualties", value=damage_text, inline=True)
-        destruction_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}" 
+        destruction_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}"
                                      for res, amt in resource_destruction.items() if amt > 0])
         embed.add_field(name="Resources Destroyed", value=destruction_text, inline=True)
         embed.add_field(name="☢️ Fallout Effects", value="Massive happiness loss, increased hunger, civilization in ruins", inline=False)
@@ -363,7 +374,7 @@ class HyperItemCommands(commands.Cog):
             return
         civ = self.civ_manager.get_civilization(user_id)
 
-        # ---- NEW OBLITERATE REQUIREMENT: target must have at least one stat at 0 ----
+        # ---- Target must have at least one stat at 0 ----
         target_stats = {
             "gold": target_civ['resources']['gold'],
             "stone": target_civ['resources']['stone'],
@@ -771,27 +782,59 @@ class HyperItemCommands(commands.Cog):
             return
         self.civ_manager.use_hyper_item(user_id, "Dagger")
         if random.random() < 0.6:
-            leadership_crisis = {
-                "happiness": -30,
-                "citizens": -int(target_civ['population']['citizens'] * 0.1)
-            }
-            military_chaos = {
-                "soldiers": -int(target_civ['military']['soldiers'] * 0.2),
-                "spies": -int(target_civ['military']['spies'] * 0.3)
-            }
-            self.civ_manager.update_population(target_id, leadership_crisis)
-            self.civ_manager.update_military(target_id, military_chaos)
+            # ---- NEW DAGGER EFFECT: happiness -> 0, gold -30% (60% if allied) ----
+            is_allied = self._is_allied(user_id, target_id)
+            gold_pct = 0.60 if is_allied else 0.30
+            gold_lost = int(target_civ['resources']['gold'] * gold_pct)
+
+            # Force happiness to 0 (delta = -current), even if already negative it lifts to 0
+            current_happiness = target_civ['population']['happiness']
+            happiness_delta = -current_happiness
+
+            citizen_loss = int(target_civ['population']['citizens'] * 0.1)
+            soldier_loss = int(target_civ['military']['soldiers'] * 0.2)
+            spy_loss = int(target_civ['military']['spies'] * 0.3)
+
+            self.civ_manager.update_population(target_id, {
+                "happiness": happiness_delta,
+                "citizens": -citizen_loss,
+            })
+            self.civ_manager.update_military(target_id, {
+                "soldiers": -soldier_loss,
+                "spies": -spy_loss,
+            })
+            self.civ_manager.update_resources(target_id, {"gold": -gold_lost})
+
+            betrayal = "\n🗡️ **BETRAYAL!** The victim was your ally — the wound cuts deeper." if is_allied else ""
+
             embed = create_embed(
                 "🗡️ Assassination Successful!",
-                f"**{civ['name']}**'s assassin has eliminated key leaders in **{target_civ['name']}**!",
+                f"**{civ['name']}**'s assassin has eliminated key leaders in **{target_civ['name']}**!{betrayal}",
                 guilded.Color.dark_red()
             )
             embed.add_field(
                 name="Chaos Ensues",
-                value="• Leadership crisis causes massive unrest\n• Military command structure disrupted\n• Population flees in panic",
+                value=(
+                    f"• 😡 Happiness **set to 0**\n"
+                    f"• 💀 {format_number(citizen_loss)} citizens killed\n"
+                    f"• ⚔️ {format_number(soldier_loss)} soldiers lost\n"
+                    f"• 🕵️ {format_number(spy_loss)} spies lost\n"
+                    f"• 🪙 {format_number(gold_lost)} gold stolen "
+                    f"(**{int(gold_pct * 100)}%** of their reserves)"
+                ),
                 inline=False
             )
             await ctx.send(embed=embed)
+
+            try:
+                target_user = await self.bot.fetch_user(int(target_id))
+                await target_user.send(
+                    f"🗡️ **Assassination!** {civ['name']} tried to assassinate your leaders — and succeeded. "
+                    f"Your happiness has been crushed to 0 and you lost {format_number(gold_lost)} gold."
+                    + (" **They were your ally.**" if is_allied else "")
+                )
+            except:
+                pass
         else:
             self.civ_manager.update_population(user_id, {"happiness": -15})
             embed = create_embed(
@@ -867,7 +910,7 @@ class HyperItemCommands(commands.Cog):
         )
         damage_text = f"💀 {format_number(population_loss)} citizens\n⚔️ {format_number(military_loss)} soldiers"
         embed.add_field(name="Casualties", value=damage_text, inline=True)
-        destruction_text = "\n".join([f"{'🪙' if res == 'gold' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}" 
+        destruction_text = "\n".join([f"{'🪙' if res == 'gold' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}"
                                      for res, amt in resource_damage.items() if amt > 0])
         embed.add_field(name="Infrastructure Destroyed", value=destruction_text, inline=True)
         await ctx.send(embed=embed)
