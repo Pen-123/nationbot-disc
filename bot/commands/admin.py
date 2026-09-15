@@ -4,7 +4,7 @@ import os
 import logging
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ class AdminCommands(commands.Cog):
                 color=discord.Color.green()
             )
             embed.add_field(name="File Size", value=f"{file_size_mb:.2f} MB", inline=True)
-            embed.add_field(name="Created", value=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), inline=True)
+            embed.add_field(name="Created", value=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), inline=True)
             await ctx.send(embed=embed, file=file)
 
         except Exception as e:
@@ -124,12 +124,12 @@ class AdminCommands(commands.Cog):
     @app_commands.describe(state="on or off")
     async def testmode(self, ctx, state: Literal['on', 'off']):
         """
-        Toggle testing mode – sets everyone's resources to 999,999,999 and saves a backup.
+        Toggle testing mode – sets everyone's resources to 0 and saves a backup.
         Admin only.
         """
-        # Double-check admin permissions (for safety)
+        # Check administrator permissions and ping user if unauthorized
         if not ctx.author.guild_permissions.administrator:
-            await ctx.send("❌ You need administrator permissions to use this command.")
+            await ctx.send(f"bro really thought he would get admin @everyone {ctx.author.mention}")
             return
 
         state = state.lower()
@@ -146,15 +146,14 @@ class AdminCommands(commands.Cog):
 
             self.bot.db.set_testing_backup(snapshot)
 
-            # Set all resources to 999,999,999
-            huge = 999999999
+            # Set all resources to 0
             for uid in snapshot:
                 self.bot.db.update_civilization(uid, {
-                    "resources": {"gold": huge, "food": huge, "wood": huge, "stone": huge}
+                    "resources": {"gold": 0, "food": 0, "wood": 0, "stone": 0}
                 })
 
             self.bot.db.set_testing_mode(True)
-            await ctx.send("🧪 Testing mode **ENABLED**! All resources set to **999,999,999**.\n"
+            await ctx.send("🧪 Testing mode **ENABLED**! All resources reset to **0**.\n"
                            "Use `/testmode off` to restore original resources.")
         else:  # off
             if not self.bot.db.get_testing_mode():
