@@ -683,19 +683,45 @@ class TerritoryCog(commands.Cog):
             await ctx.send("❌ You need a civilization first! Use `.start`.")
             return
 
-        if not country:
-            available = self._get_countries_available(user_id)
-            if not available:
-                await ctx.send("❌ No available countries to expand into.")
-                return
-            embed = discord.Embed(
-                title="🌍 Available Countries",
-                description="Use `.expand <country_name>` to expand into a random state of that country.",
-                color=discord.Color.blue()
+       if not country:
+    available = self._get_countries_available(user_id)
+    if not available:
+        await ctx.send("❌ No available countries to expand into.")
+        return
+
+    # Group available countries by subregion, listing every nation
+    subregion_map = {}
+    for subregion, provinces in PROVINCES.items():
+        avail = sorted([p for p in provinces if p in available])
+        if avail:
+            subregion_map[subregion] = avail
+
+    # Paginate: max 20 subregions per embed (Discord limit is 25 fields)
+    items = list(subregion_map.items())
+    page_size = 20
+    pages = [items[i:i + page_size] for i in range(0, len(items), page_size)] or [[]]
+
+    for idx, page in enumerate(pages, 1):
+        embed = discord.Embed(
+            title=f"🌍 Available Countries (Page {idx}/{len(pages)})",
+            description=(
+                "Use `.expand <country_name>` to claim a country.\n"
+                "Every nation in every subregion is listed below."
+            ),
+            color=discord.Color.blue()
+        )
+        for subregion, countries in page:
+            value = ", ".join(countries)
+            if len(value) > 1024:
+                value = value[:1021] + "..."
+            embed.add_field(
+                name=f"📍 {subregion} ({len(countries)})",
+                value=value,
+                inline=False
             )
-            embed.add_field(name="Countries", value=", ".join(sorted(available)[:25]) + ("..." if len(available) > 25 else ""), inline=False)
-            await ctx.send(embed=embed)
-            return
+        embed.set_footer(text="Tip: .rapidexpansion <country> uses soldiers only (2× cost)")
+        await ctx.send(embed=embed)
+    return
 
         # Find country match
         country_match = None
