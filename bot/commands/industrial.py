@@ -48,13 +48,12 @@ DEFAULT_STATS = {
 # ---- Cooldown decorator using config ----
 def industrial_cooldown(command_name: str):
     def decorator(func):
+        @functools.wraps(func)                       # <-- THE FIX
         async def wrapper(self, ctx, *args, **kwargs):
             user_id = str(ctx.author.id)
-            # Check if command has cooldown in config
             minutes = config.COOLDOWNS.get(command_name, 0)
             if minutes <= 0:
                 return await func(self, ctx, *args, **kwargs)
-            # Use existing cooldown system (db based)
             last_used = self.db.get_command_cooldown(user_id, command_name)
             if last_used:
                 cooldown_end = last_used + timedelta(minutes=minutes)
@@ -64,12 +63,10 @@ def industrial_cooldown(command_name: str):
                     secs = int(remaining.total_seconds() % 60)
                     await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
                     return
-            # Update cooldown
             self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
             return await func(self, ctx, *args, **kwargs)
         return wrapper
     return decorator
-
 
 class IndustrialCog(commands.Cog):
     """Industrial Revolution – permanent micromanagement challenge (once per player)."""
