@@ -5,9 +5,9 @@ import logging
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
-from typing import Literal
 
 logger = logging.getLogger(__name__)
+
 
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
@@ -25,9 +25,7 @@ class AdminCommands(commands.Cog):
         app_commands.Choice(name="copy_global_to_guild", value="copy_global_to_guild"),
     ])
     async def sync_commands(self, ctx, scope: str = "global", guild_id: int = None):
-        """
-        Owner-only command to sync slash commands.
-        """
+        """Owner-only command to sync slash commands."""
         scope = (scope or "global").lower().strip()
 
         async def _send(message: str, **kwargs):
@@ -46,9 +44,7 @@ class AdminCommands(commands.Cog):
                 await ctx.send(message, **kwargs)
 
         if scope not in {"global", "current_guild", "copy_global_to_guild"}:
-            await _send(
-                "❌ Invalid scope. Use one of: `global`, `current_guild`, `copy_global_to_guild`."
-            )
+            await _send("❌ Invalid scope. Use one of: `global`, `current_guild`, `copy_global_to_guild`.")
             return
 
         target_guild = None
@@ -71,18 +67,13 @@ class AdminCommands(commands.Cog):
                 self.bot.tree.copy_global_to(guild=target_guild)
 
             synced = await self.bot.tree.sync(guild=target_guild)
-            await _send(
-                f"✅ Synced {len(synced)} slash commands to guild `{target_guild.id}` "
-                f"(scope: `{scope}`)."
-            )
+            await _send(f"✅ Synced {len(synced)} slash commands to guild `{target_guild.id}` (scope: `{scope}`).")
         except Exception as e:
             await _send(f"❌ Sync failed: {e}")
 
     @commands.hybrid_command(name='exportdb')
     async def export_database(self, ctx):
-        """
-        Export the current database file (.db) with instructions.
-        """
+        """Export the current database file (.db) with instructions."""
         try:
             db_path = self.bot.db.db_path
             if not os.path.exists(db_path):
@@ -94,7 +85,7 @@ class AdminCommands(commands.Cog):
 
             file_size_mb = len(file_data) / (1024 * 1024)
             if file_size_mb > 8:
-                await ctx.send(f"⚠️ Database file is **{file_size_mb:.1f} MB** – larger than Discord's 8MB limit. Please use a different method to retrieve it (e.g., direct download from Dropbox).")
+                await ctx.send(f"⚠️ Database file is **{file_size_mb:.1f} MB** – larger than Discord's 8MB limit. Please use a different method to retrieve it.")
                 return
 
             file = discord.File(io.BytesIO(file_data), filename="warbot.db")
@@ -119,58 +110,23 @@ class AdminCommands(commands.Cog):
             logger.error(f"Error exporting database: {e}")
             await ctx.send(f"❌ Error exporting database: {e}")
 
-    @commands.hybrid_command(name='testmode')
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(state="on or off")
-    async def testmode(self, ctx, state: Literal['on', 'off']):
-        """
-        Toggle testing mode – sets everyone's resources to 0 and saves a backup.
-        Admin only.
-        """
-        # Check administrator permissions and ping user if unauthorized
-        if not ctx.author.guild_permissions.administrator:
-            await ctx.send(f"bro really thought he would get admin @everyone {ctx.author.mention}")
+    @commands.command(name='alliancecheck')
+    @commands.is_owner()
+    async def alliance_check(self, ctx, user1: discord.Member = None, user2: discord.Member = None):
+        """Owner diagnostic: check if two users share an alliance."""
+        if not user1 or not user2:
+            await ctx.send("Usage: `.alliancecheck @user1 @user2`")
             return
-
-        state = state.lower()
-        if state == 'on':
-            if self.bot.db.get_testing_mode():
-                await ctx.send("⚠️ Testing mode is already enabled.")
-                return
-
-            # Snapshot current resources
-            snapshot = self.bot.db.get_all_resources_snapshot()
-            if not snapshot:
-                await ctx.send("❌ No civilizations found to snapshot.")
-                return
-
-            self.bot.db.set_testing_backup(snapshot)
-
-            # Set all resources to 0
-            for uid in snapshot:
-                self.bot.db.update_civilization(uid, {
-                    "resources": {"gold": 0, "food": 0, "wood": 0, "stone": 0}
-                })
-
-            self.bot.db.set_testing_mode(True)
-            await ctx.send("🧪 Testing mode **ENABLED**! All resources reset to **0**.\n"
-                           "Use `/testmode off` to restore original resources.")
-        else:  # off
-            if not self.bot.db.get_testing_mode():
-                await ctx.send("⚠️ Testing mode is not enabled.")
-                return
-
-            backup = self.bot.db.get_testing_backup()
-            if backup:
-                # Restore each user's resources
-                for uid, resources in backup.items():
-                    self.bot.db.update_civilization(uid, {"resources": resources})
-                self.bot.db.delete_testing_backup()
-            else:
-                await ctx.send("⚠️ No backup found – resources may not be restored correctly.")
-
-            self.bot.db.set_testing_mode(False)
-            await ctx.send("🧪 Testing mode **DISABLED**. Original resources restored.")
+        try:
+            matches = self.bot.db.find_alliances_containing_both(str(user1.id), str(user2.id))
+        except Exception as e:
+            await ctx.send(f"❌ Error: {e}")
+            return
+        if not matches:
+            await ctx.send(f"❌ No shared alliance between {user1.mention} and {user2.mention}.")
+            return
+        lines = [f"• **{m['name']}** (`{m['id']}`) — {len(m.get('members', []))} members" for m in matches]
+        await ctx.send("✅ Shared alliances:\n" + "\n".join(lines))
 
 
 async def setup(bot):
