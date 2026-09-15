@@ -641,7 +641,7 @@ POLICIES = {
 }
 
 # ---- TESTING MODE ----
-TESTING_GAIN = 999999999
+TESTING_GAIN = 0 # set on purpose since the season is starting
 
 # ================================================================
 #                     VICTORY CONDITIONS
