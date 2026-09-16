@@ -4,7 +4,7 @@ import logging
 import math
 import os
 import asyncio
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -14,126 +14,401 @@ from bot import config
 
 logger = logging.getLogger(__name__)
 
-# ---- HARDCODED AREA OVERRIDES ----
-AREA_OVERRIDES = {
-    "Afghanistan": 652230, "Albania": 28748, "Algeria": 2381741, "Andorra": 468,
-    "Angola": 1246700, "Antigua and Barbuda": 442, "Argentina": 2780400, "Armenia": 29743,
-    "Australia": 7741220, "Austria": 83871, "Azerbaijan": 86600, "Bahamas": 13880,
-    "Bahrain": 765, "Bangladesh": 147570, "Barbados": 430, "Belarus": 207600,
-    "Belgium": 30528, "Belize": 22966, "Benin": 112622, "Bhutan": 38394,
-    "Bolivia": 1098581, "Bosnia and Herzegovina": 51197, "Botswana": 581730,
-    "Brazil": 8515767, "Brunei": 5765, "Bulgaria": 110879, "Burkina Faso": 274200,
-    "Burundi": 27834, "Cabo Verde": 4033, "Cambodia": 181035, "Cameroon": 475442,
-    "Canada": 9984670, "Central African Republic": 622984, "Chad": 1284000,
-    "Chile": 756102, "China": 9596961, "Colombia": 1141748, "Comoros": 2235,
-    "DR Congo": 2344858, "Republic of the Congo": 342000, "Costa Rica": 51100,
-    "Croatia": 56594, "Cuba": 109884, "Cyprus": 9251, "Czechia": 78867,
-    "Denmark": 43094, "Djibouti": 23200, "Dominica": 751, "Dominican Republic": 48671,
-    "Ecuador": 283561, "Egypt": 1002450, "El Salvador": 21041, "Equatorial Guinea": 28051,
-    "Eritrea": 117600, "Estonia": 45228, "Eswatini": 17364, "Ethiopia": 1104300,
-    "Fiji": 18274, "Finland": 338424, "France": 551695, "Gabon": 267668,
-    "Gambia": 11295, "Georgia": 69700, "Germany": 357022, "Ghana": 238533,
-    "Greece": 131957, "Grenada": 344, "Guatemala": 108889, "Guinea": 245857,
-    "Guinea-Bissau": 36125, "Guyana": 214969, "Haiti": 27750, "Honduras": 112492,
-    "Hungary": 93028, "Iceland": 103000, "India": 3287263, "Indonesia": 1904569,
-    "Iran": 1648195, "Iraq": 438317, "Ireland": 70273, "Israel": 20770,
-    "Italy": 301340, "Jamaica": 10991, "Japan": 377930, "Jordan": 89342,
-    "Kazakhstan": 2724900, "Kenya": 580367, "Kiribati": 811, "North Korea": 120538,
-    "South Korea": 100210, "Kosovo": 10908, "Kuwait": 17818, "Kyrgyzstan": 199951,
-    "Laos": 236800, "Latvia": 64589, "Lebanon": 10452, "Lesotho": 30355,
-    "Liberia": 111369, "Libya": 1759540, "Liechtenstein": 160, "Lithuania": 65300,
-    "Luxembourg": 2586, "Madagascar": 587041, "Malawi": 118484, "Malaysia": 329847,
-    "Maldives": 298, "Mali": 1240192, "Malta": 316, "Marshall Islands": 181,
-    "Mauritania": 1030700, "Mauritius": 2040, "Mexico": 1964375, "Micronesia": 702,
-    "Moldova": 33851, "Monaco": 2, "Mongolia": 1564116, "Montenegro": 13812,
-    "Morocco": 446550, "Mozambique": 801590, "Myanmar": 676578, "Namibia": 824292,
-    "Nauru": 21, "Nepal": 147181, "Netherlands": 41850, "New Zealand": 268838,
-    "Nicaragua": 130373, "Niger": 1267000, "Nigeria": 923768, "North Macedonia": 25713,
-    "Norway": 323802, "Oman": 309500, "Pakistan": 881913, "Palau": 459,
-    "Palestine": 6020, "Panama": 75417, "Papua New Guinea": 462840, "Paraguay": 406752,
-    "Peru": 1285216, "Philippines": 300000, "Poland": 312696, "Portugal": 92090,
-    "Qatar": 11586, "Romania": 238397, "Russia": 17098242, "Rwanda": 26338,
-    "Saint Kitts and Nevis": 261, "Saint Lucia": 616, "Saint Vincent and the Grenadines": 389,
-    "Samoa": 2842, "San Marino": 61, "Sao Tome and Principe": 964, "Saudi Arabia": 2149690,
-    "Senegal": 196722, "Serbia": 77474, "Seychelles": 455, "Sierra Leone": 71740,
-    "Singapore": 728, "Slovakia": 49035, "Slovenia": 20273, "Solomon Islands": 28896,
-    "Somalia": 637657, "South Africa": 1221037, "South Sudan": 644329, "Spain": 505990,
-    "Sri Lanka": 65610, "Sudan": 1861484, "Suriname": 163820, "Sweden": 450295,
-    "Switzerland": 41284, "Syria": 185180, "Taiwan": 36193, "Tajikistan": 143100,
-    "Tanzania": 947300, "Thailand": 513120, "Timor-Leste": 14874, "Togo": 56785,
-    "Tonga": 747, "Trinidad and Tobago": 5130, "Tunisia": 163610, "Turkey": 783562,
-    "Turkmenistan": 488100, "Tuvalu": 26, "Uganda": 241038, "Ukraine": 603500,
-    "United Arab Emirates": 83600, "United Kingdom": 242495, "United States": 9833517,
-    "United States of America": 9833517, "USA": 9833517, "Uruguay": 176215,
-    "Uzbekistan": 447400, "Vanuatu": 12189, "Vatican City": 0.44, "Venezuela": 912050,
-    "Vietnam": 331212, "Yemen": 527968, "Zambia": 752612, "Zimbabwe": 390757,
-    "Czech Republic": 78867, "Bosnia and Herz.": 51197, "Dem. Rep. Korea": 120538,
-    "Congo (Kinshasa)": 2344858, "Congo (Brazzaville)": 342000, "Côte d'Ivoire": 322463,
-    "Ivory Coast": 322463, "Swaziland": 17364, "Greenland": 2166086,
-    "Western Sahara": 266000, "W. Sahara": 266000, "S. Sudan": 644329,
-    "Eq. Guinea": 28051, "C.A.R.": 622984, "Central African Rep.": 622984,
+# =====================================================================
+# HARDCODED COUNTRY AREAS (km²)
+# Includes all Natural Earth variants + modern country names.
+# These are used as fallbacks if province_areas.json is missing.
+# =====================================================================
+AREA_OVERRIDES: Dict[str, float] = {
+    # ----- Africa -----
+    "Algeria": 2381741,
+    "Angola": 1246700,
+    "Benin": 112622,
+    "Botswana": 581730,
+    "Burkina Faso": 274200,
+    "Burundi": 27834,
+    "Cabo Verde": 4033,
+    "Cape Verde": 4033,
+    "Cameroon": 475442,
+    "Central African Republic": 622984,
+    "Central African Rep.": 622984,
+    "C.A.R.": 622984,
+    "Chad": 1284000,
+    "Comoros": 2235,
+    "Congo": 342000,
+    "Republic of the Congo": 342000,
+    "Republic of Congo": 342000,
+    "Congo (Brazzaville)": 342000,
+    "DR Congo": 2344858,
+    "Democratic Republic of the Congo": 2344858,
+    "Dem. Rep. Congo": 2344858,
+    "Congo (Kinshasa)": 2344858,
+    "Djibouti": 23200,
+    "Egypt": 1002450,
+    "Equatorial Guinea": 28051,
+    "Eq. Guinea": 28051,
+    "Eritrea": 117600,
+    "Eswatini": 17364,
+    "eSwatini": 17364,
+    "Swaziland": 17364,
+    "Ethiopia": 1104300,
+    "Gabon": 267668,
+    "Gambia": 11295,
+    "Ghana": 238533,
+    "Guinea": 245857,
+    "Guinea-Bissau": 36125,
+    "Ivory Coast": 322463,
+    "Côte d'Ivoire": 322463,
+    "Kenya": 580367,
+    "Lesotho": 30355,
+    "Liberia": 111369,
+    "Libya": 1759540,
+    "Madagascar": 587041,
+    "Malawi": 118484,
+    "Mali": 1240192,
+    "Mauritania": 1030700,
+    "Mauritius": 2040,
+    "Morocco": 446550,
+    "Mozambique": 801590,
+    "Namibia": 824292,
+    "Niger": 1267000,
+    "Nigeria": 923768,
+    "Rwanda": 26338,
+    "Sao Tome and Principe": 964,
+    "Senegal": 196722,
+    "Seychelles": 455,
+    "Sierra Leone": 71740,
+    "Somalia": 637657,
+    "Somaliland": 137600,
+    "South Africa": 1221037,
+    "South Sudan": 644329,
+    "S. Sudan": 644329,
+    "Sudan": 1861484,
+    "Tanzania": 947300,
+    "United Republic of Tanzania": 947300,
+    "Togo": 56785,
+    "Tunisia": 163610,
+    "Uganda": 241038,
+    "Western Sahara": 266000,
+    "W. Sahara": 266000,
+    "Zambia": 752612,
+    "Zimbabwe": 390757,
+
+    # ----- Asia -----
+    "Afghanistan": 652230,
+    "Armenia": 29743,
+    "Azerbaijan": 86600,
+    "Bahrain": 765,
+    "Bangladesh": 147570,
+    "Bhutan": 38394,
+    "Brunei": 5765,
+    "Cambodia": 181035,
+    "China": 9596961,
+    "Cyprus": 9251,
+    "N. Cyprus": 3355,
+    "Georgia": 69700,
+    "India": 3287263,
+    "Indonesia": 1904569,
+    "Iran": 1648195,
+    "Iraq": 438317,
+    "Israel": 20770,
+    "Japan": 377930,
+    "Jordan": 89342,
+    "Kazakhstan": 2724900,
+    "Kuwait": 17818,
+    "Kyrgyzstan": 199951,
+    "Laos": 236800,
+    "Lebanon": 10452,
+    "Malaysia": 329847,
+    "Maldives": 298,
+    "Mongolia": 1564116,
+    "Myanmar": 676578,
+    "Nepal": 147181,
+    "North Korea": 120538,
+    "Dem. Rep. Korea": 120538,
+    "Korea": 100210,
+    "South Korea": 100210,
+    "Oman": 309500,
+    "Pakistan": 881913,
+    "Palestine": 6020,
+    "Philippines": 300000,
+    "Qatar": 11586,
+    "Saudi Arabia": 2149690,
+    "Singapore": 728,
+    "Sri Lanka": 65610,
+    "Syria": 185180,
+    "Taiwan": 36193,
+    "Tajikistan": 143100,
+    "Thailand": 513120,
+    "Timor-Leste": 14874,
+    "Turkey": 783562,
+    "Turkmenistan": 488100,
+    "United Arab Emirates": 83600,
+    "UAE": 83600,
+    "Uzbekistan": 447400,
+    "Vietnam": 331212,
+    "Yemen": 527968,
+
+    # ----- Europe -----
+    "Albania": 28748,
+    "Andorra": 468,
+    "Austria": 83871,
+    "Belarus": 207600,
+    "Belgium": 30528,
+    "Bosnia and Herzegovina": 51197,
+    "Bosnia and Herz.": 51197,
+    "Bulgaria": 110879,
+    "Croatia": 56594,
+    "Czechia": 78867,
+    "Czech Republic": 78867,
+    "Denmark": 43094,
+    "Estonia": 45228,
+    "Faroe Is.": 1393,
+    "Finland": 338424,
+    "France": 551695,
+    "Germany": 357022,
+    "Greece": 131957,
+    "Greenland": 2166086,
+    "Hungary": 93028,
+    "Iceland": 103000,
+    "Ireland": 70273,
+    "Italy": 301340,
+    "Kosovo": 10908,
+    "Latvia": 64589,
+    "Liechtenstein": 160,
+    "Lithuania": 65300,
+    "Luxembourg": 2586,
+    "Malta": 316,
+    "Moldova": 33851,
+    "Monaco": 2,
+    "Montenegro": 13812,
+    "Netherlands": 41850,
+    "North Macedonia": 25713,
+    "Macedonia": 25713,
+    "Norway": 323802,
+    "Poland": 312696,
+    "Portugal": 92090,
+    "Romania": 238397,
+    "Russia": 17098242,
+    "San Marino": 61,
+    "Serbia": 77474,
+    "Slovakia": 49035,
+    "Slovenia": 20273,
+    "Spain": 505990,
+    "Sweden": 450295,
+    "Switzerland": 41284,
+    "Ukraine": 603500,
+    "United Kingdom": 242495,
+    "Vatican": 0.44,
+    "Vatican City": 0.44,
+
+    # ----- North America -----
+    "Bahamas": 13880,
+    "Barbados": 430,
+    "Belize": 22966,
+    "Canada": 9984670,
+    "Costa Rica": 51100,
+    "Cuba": 109884,
+    "Dominica": 751,
+    "Dominican Republic": 48671,
+    "Dominican Rep.": 48671,
+    "El Salvador": 21041,
+    "Grenada": 344,
+    "Guatemala": 108889,
+    "Haiti": 27750,
+    "Honduras": 112492,
+    "Jamaica": 10991,
+    "Mexico": 1964375,
+    "Nicaragua": 130373,
+    "Panama": 75417,
+    "Saint Kitts and Nevis": 261,
+    "Saint Lucia": 616,
+    "St. Lucia": 616,
+    "Saint Vincent and the Grenadines": 389,
+    "St. Vincent": 389,
+    "Trinidad and Tobago": 5130,
+    "United States": 9833517,
+    "United States of America": 9833517,
+    "USA": 9833517,
+    "US": 9833517,
+
+    # ----- South America -----
+    "Argentina": 2780400,
+    "Bolivia": 1098581,
+    "Brazil": 8515767,
+    "Chile": 756102,
+    "Colombia": 1141748,
+    "Ecuador": 283561,
+    "Falkland Is.": 12173,
+    "French Guiana": 83534,
+    "Guyana": 214969,
+    "Paraguay": 406752,
+    "Peru": 1285216,
+    "Suriname": 163820,
+    "Uruguay": 176215,
+    "Venezuela": 912050,
+
+    # ----- Oceania -----
+    "Australia": 7741220,
+    "Fiji": 18274,
+    "Kiribati": 811,
+    "Marshall Islands": 181,
+    "Marshall Is.": 181,
+    "Micronesia": 702,
+    "Nauru": 21,
+    "New Zealand": 268838,
+    "Palau": 459,
+    "Papua New Guinea": 462840,
+    "Samoa": 2842,
+    "Solomon Islands": 28896,
+    "Solomon Is.": 28896,
+    "Tonga": 747,
+    "Tuvalu": 26,
+    "Vanuatu": 12189,
+
+    # ----- Caribbean + misc small states -----
+    "Antigua and Barbuda": 442,
+    "St. Kitts and Nevis": 261,
+
+    # ----- Antarctica (no fixed owner) -----
+    "Antarctica": 14000000,
 }
 
-PROVINCE_AREAS = {}
+# Load province_areas.json for any overrides it provides (usually the
+# geojson generator writes more accurate values). Otherwise fall back to
+# the hardcoded dict above.
+PROVINCE_AREAS: Dict[str, float] = dict(AREA_OVERRIDES)
 try:
     with open('province_areas.json', 'r') as f:
-        PROVINCE_AREAS = json.load(f)
-    logger.info("Loaded province areas from province_areas.json")
+        loaded = json.load(f)
+        PROVINCE_AREAS.update(loaded)
+        logger.info(f"Loaded {len(loaded)} areas from province_areas.json (merged with {len(AREA_OVERRIDES)} hardcoded)")
 except FileNotFoundError:
-    logger.warning("province_areas.json not found; using default area of 1000 km².")
-    PROVINCE_AREAS = {}
-
-for name, area in AREA_OVERRIDES.items():
-    PROVINCE_AREAS[name] = area
-logger.info(f"Applied {len(AREA_OVERRIDES)} area overrides")
+    logger.info(f"province_areas.json not found; using {len(AREA_OVERRIDES)} hardcoded area overrides.")
+except Exception as e:
+    logger.error(f"Failed to load province_areas.json: {e}; using hardcoded overrides.")
 
 FORBIDDEN_START_PROVINCES = {"Western Sahara"}
 
-# ---- PROVINCES grouped by subregions ----
-PROVINCES = {
-    "Eastern Europe": ["Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Belarus", "Moldova", "Russia"],
-    "Western Europe": ["France", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Luxembourg", "Monaco", "Andorra", "San Marino"],
-    "Central Europe": ["Germany", "Austria", "Switzerland", "Liechtenstein"],
-    "Balkans": ["Kosovo", "Serbia", "Bosnia and Herzegovina", "Montenegro", "Albania", "North Macedonia", "Slovenia", "Croatia"],
-    "Southern Europe": ["Portugal", "Spain", "Italy", "Greece", "Malta", "Cyprus"],
-    "Northern Europe": ["Norway", "Sweden", "Finland", "Denmark", "Iceland", "Estonia", "Latvia", "Lithuania", "Greenland"],
-    "Central Asia": ["Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Afghanistan"],
-    "Northeast Asia": ["China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan"],
-    "South Asia": ["India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan"],
-    "Southeast Asia": ["Thailand", "Vietnam", "Indonesia", "Philippines", "Malaysia", "Singapore", "Cambodia", "Laos", "Timor-Leste", "Brunei", "Myanmar"],
-    "Middle East": ["Turkey", "Iran", "Iraq", "Syria", "Lebanon", "Israel", "Palestine", "Jordan", "Saudi Arabia", "Yemen", "Oman", "United Arab Emirates", "Qatar", "Kuwait", "Georgia", "Armenia", "Azerbaijan"],
-    "North Africa": ["Morocco", "Algeria", "Tunisia", "Libya", "Egypt", "Western Sahara"],
-    "West Africa": ["Mauritania", "Senegal", "Gambia", "Mali", "Burkina Faso", "Benin", "Togo", "Ghana", "Ivory Coast", "Liberia", "Sierra Leone", "Guinea", "Guinea-Bissau", "Cape Verde", "Nigeria", "Niger"],
-    "Central Africa": ["Chad", "Cameroon", "Central African Republic", "DR Congo", "Republic of the Congo", "Gabon", "Equatorial Guinea"],
-    "East Africa": ["Sudan", "South Sudan", "Eritrea", "Ethiopia", "Djibouti", "Somalia", "Kenya", "Uganda", "Rwanda", "Burundi", "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles", "Mauritius"],
-    "Southern Africa": ["Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana", "Namibia", "South Africa", "Eswatini", "Lesotho"],
-    "Western North America": ["Canada", "United States"],
-    "Central North America": ["Mexico"],
-    "Eastern North America": ["United States"],
+# =====================================================================
+# PROVINCES (states) grouped by subregions
+# =====================================================================
+PROVINCES: Dict[str, List[str]] = {
+    "Eastern Europe": [
+        "Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria",
+        "Ukraine", "Belarus", "Moldova", "Russia"
+    ],
+    "Western Europe": [
+        "France", "United Kingdom", "Ireland", "Netherlands",
+        "Belgium", "Luxembourg", "Monaco", "Andorra", "San Marino"
+    ],
+    "Central Europe": [
+        "Germany", "Austria", "Switzerland", "Liechtenstein"
+    ],
+    "Balkans": [
+        "Kosovo", "Serbia", "Bosnia and Herzegovina", "Montenegro",
+        "Albania", "North Macedonia", "Slovenia", "Croatia"
+    ],
+    "Southern Europe": [
+        "Portugal", "Spain", "Italy", "Greece", "Malta", "Cyprus"
+    ],
+    "Northern Europe": [
+        "Norway", "Sweden", "Finland", "Denmark", "Iceland",
+        "Estonia", "Latvia", "Lithuania", "Greenland"
+    ],
+    "Central Asia": [
+        "Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan",
+        "Tajikistan", "Afghanistan"
+    ],
+    "Northeast Asia": [
+        "China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan"
+    ],
+    "South Asia": [
+        "India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan"
+    ],
+    "Southeast Asia": [
+        "Thailand", "Vietnam", "Indonesia", "Philippines", "Malaysia",
+        "Singapore", "Cambodia", "Laos", "Timor-Leste", "Brunei", "Myanmar"
+    ],
+    "Middle East": [
+        "Turkey", "Iran", "Iraq", "Syria", "Lebanon", "Israel",
+        "Palestine", "Jordan", "Saudi Arabia", "Yemen", "Oman",
+        "United Arab Emirates", "Qatar", "Kuwait",
+        "Georgia", "Armenia", "Azerbaijan"
+    ],
+    "North Africa": [
+        "Morocco", "Algeria", "Tunisia", "Libya", "Egypt", "Western Sahara"
+    ],
+    "West Africa": [
+        "Mauritania", "Senegal", "Gambia", "Mali", "Burkina Faso",
+        "Benin", "Togo", "Ghana", "Ivory Coast", "Liberia",
+        "Sierra Leone", "Guinea", "Guinea-Bissau", "Cape Verde",
+        "Nigeria", "Niger"
+    ],
+    "Central Africa": [
+        "Chad", "Cameroon", "Central African Republic", "DR Congo",
+        "Republic of the Congo", "Gabon", "Equatorial Guinea"
+    ],
+    "East Africa": [
+        "Sudan", "South Sudan", "Eritrea", "Ethiopia", "Djibouti",
+        "Somalia", "Kenya", "Uganda", "Rwanda", "Burundi",
+        "Tanzania", "Mozambique", "Madagascar", "Comoros", "Seychelles",
+        "Mauritius"
+    ],
+    "Southern Africa": [
+        "Angola", "Zambia", "Malawi", "Zimbabwe", "Botswana",
+        "Namibia", "South Africa", "Eswatini", "Lesotho"
+    ],
+    "Western North America": [
+        "Canada", "United States"
+    ],
+    "Central North America": [
+        "Mexico"
+    ],
+    "Eastern North America": [
+        "United States"
+    ],
     "Mexico": ["Mexico"],
-    "Central America": ["Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama"],
-    "Northern South America": ["Venezuela", "Colombia", "Guyana", "Suriname"],
-    "Western South America": ["Ecuador", "Peru", "Bolivia", "Chile"],
-    "Eastern South America": ["Brazil"],
+    "Central America": [
+        "Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua",
+        "Costa Rica", "Panama"
+    ],
+    "Northern South America": [
+        "Venezuela", "Colombia", "Guyana", "Suriname"
+    ],
+    "Western South America": [
+        "Ecuador", "Peru", "Bolivia", "Chile"
+    ],
+    "Eastern South America": [
+        "Brazil"
+    ],
     "Brazil": ["Brazil"],
-    "Southern Cone": ["Argentina", "Uruguay", "Paraguay"],
+    "Southern Cone": [
+        "Argentina", "Uruguay", "Paraguay"
+    ],
     "Australia": ["Australia"],
     "New Zealand": ["New Zealand"],
-    "Pacific Islands": ["Papua New Guinea"],
+    "Pacific Islands": [
+        "Papua New Guinea"
+    ],
     "Antarctic Peninsula": [],
     "East Antarctica": [],
     "West Antarctica": [],
 }
 
-PROVINCE_TO_SUBREGION = {}
+# ---- Reverse mapping: province -> subregion ----
+PROVINCE_TO_SUBREGION: Dict[str, str] = {}
 for subregion, province_list in PROVINCES.items():
     for province in province_list:
         PROVINCE_TO_SUBREGION[province] = subregion
 
-ALL_PROVINCES = list(PROVINCE_TO_SUBREGION.keys())
-ALL_SUBREGIONS = list(PROVINCES.keys())
+ALL_PROVINCES: List[str] = list(PROVINCE_TO_SUBREGION.keys())
+ALL_SUBREGIONS: List[str] = list(PROVINCES.keys())
 
-SUBREGION_DATA = {
+# =====================================================================
+# SUBREGION NEIGHBOURS
+# =====================================================================
+SUBREGION_DATA: Dict[str, Dict[str, List[str]]] = {
     "Eastern Europe": {"neighbours": ["Central Europe", "Balkans", "Northern Europe", "Central Asia"]},
     "Western Europe": {"neighbours": ["Southern Europe", "Central Europe", "Northern Europe"]},
     "Central Europe": {"neighbours": ["Western Europe", "Eastern Europe", "Balkans", "Southern Europe"]},
@@ -168,38 +443,80 @@ SUBREGION_DATA = {
     "West Antarctica": {"neighbours": ["Antarctic Peninsula"]},
 }
 
-SUBREGION_TO_CONTINENT = {
-    "Eastern Europe": "Europe", "Western Europe": "Europe", "Central Europe": "Europe",
-    "Balkans": "Europe", "Southern Europe": "Europe", "Northern Europe": "Europe",
-    "Central Asia": "Asia", "Northeast Asia": "Asia", "South Asia": "Asia",
-    "Southeast Asia": "Asia", "Middle East": "Asia",
-    "North Africa": "Africa", "West Africa": "Africa", "Central Africa": "Africa",
-    "East Africa": "Africa", "Southern Africa": "Africa",
-    "Western North America": "North America", "Central North America": "North America",
-    "Eastern North America": "North America", "Mexico": "North America",
-    "Central America": "South America", "Northern South America": "South America",
-    "Western South America": "South America", "Eastern South America": "South America",
-    "Brazil": "South America", "Southern Cone": "South America",
-    "Australia": "Oceania", "New Zealand": "Oceania", "Pacific Islands": "Oceania",
-    "Antarctic Peninsula": "Antarctica", "East Antarctica": "Antarctica",
+# =====================================================================
+# SUBREGION -> CONTINENT
+# =====================================================================
+SUBREGION_TO_CONTINENT: Dict[str, str] = {
+    "Eastern Europe": "Europe",
+    "Western Europe": "Europe",
+    "Central Europe": "Europe",
+    "Balkans": "Europe",
+    "Southern Europe": "Europe",
+    "Northern Europe": "Europe",
+    "Central Asia": "Asia",
+    "Northeast Asia": "Asia",
+    "South Asia": "Asia",
+    "Southeast Asia": "Asia",
+    "Middle East": "Asia",
+    "North Africa": "Africa",
+    "West Africa": "Africa",
+    "Central Africa": "Africa",
+    "East Africa": "Africa",
+    "Southern Africa": "Africa",
+    "Western North America": "North America",
+    "Central North America": "North America",
+    "Eastern North America": "North America",
+    "Mexico": "North America",
+    "Central America": "South America",
+    "Northern South America": "South America",
+    "Western South America": "South America",
+    "Eastern South America": "South America",
+    "Brazil": "South America",
+    "Southern Cone": "South America",
+    "Australia": "Oceania",
+    "New Zealand": "Oceania",
+    "Pacific Islands": "Oceania",
+    "Antarctic Peninsula": "Antarctica",
+    "East Antarctica": "Antarctica",
     "West Antarctica": "Antarctica",
 }
 
-REGION_TO_COUNTRYBALL = {
-    "Eastern Europe": "soviet_union", "Western Europe": "reich", "Central Europe": "german_empire",
-    "Balkans": "austria-hungary", "Southern Europe": "italy", "Northern Europe": "british_empire",
-    "Central Asia": "soviet_union", "Northeast Asia": "china", "South Asia": "british_empire",
-    "Southeast Asia": "japanese_empire", "Middle East": "ottoman_empire",
-    "North Africa": "ottoman_empire", "West Africa": "france", "Central Africa": "france",
-    "East Africa": "british_empire", "Southern Africa": "british_empire",
-    "Western North America": "america", "Central North America": "america",
-    "Eastern North America": "america", "Mexico": "america",
-    "Central America": "america", "Northern South America": "america",
-    "Western South America": "america", "Eastern South America": "america",
-    "Brazil": "america", "Southern Cone": "america",
-    "Australia": "british_empire", "New Zealand": "british_empire",
+# =====================================================================
+# SUBREGION -> COUNTRYBALL UNLOCK
+# =====================================================================
+REGION_TO_COUNTRYBALL: Dict[str, Optional[str]] = {
+    "Eastern Europe": "soviet_union",
+    "Western Europe": "reich",
+    "Central Europe": "german_empire",
+    "Balkans": "austria-hungary",
+    "Southern Europe": "italy",
+    "Northern Europe": "british_empire",
+    "Central Asia": "soviet_union",
+    "Northeast Asia": "china",
+    "South Asia": "british_empire",
+    "Southeast Asia": "japanese_empire",
+    "Middle East": "ottoman_empire",
+    "North Africa": "ottoman_empire",
+    "West Africa": "france",
+    "Central Africa": "france",
+    "East Africa": "british_empire",
+    "Southern Africa": "british_empire",
+    "Western North America": "america",
+    "Central North America": "america",
+    "Eastern North America": "america",
+    "Mexico": "america",
+    "Central America": "america",
+    "Northern South America": "america",
+    "Western South America": "america",
+    "Eastern South America": "america",
+    "Brazil": "america",
+    "Southern Cone": "america",
+    "Australia": "british_empire",
+    "New Zealand": "british_empire",
     "Pacific Islands": "british_empire",
-    "Antarctic Peninsula": None, "East Antarctica": None, "West Antarctica": None,
+    "Antarctic Peninsula": None,
+    "East Antarctica": None,
+    "West Antarctica": None,
 }
 
 
@@ -331,6 +648,11 @@ class TerritoryCog(commands.Cog):
 
         embed = discord.Embed(title="🗺️ Your Provinces (States)", color=discord.Color.green())
         embed.add_field(name="Total States", value=f"{len(owned)}", inline=True)
+
+        # Total land size
+        total_area = sum(self.province_areas.get(p, 1000) for p in owned)
+        embed.add_field(name="Total Land", value=f"{total_area:,.0f} km²", inline=True)
+
         # Civil war state
         civ = self.civ_manager.get_civilization(user_id)
         cw = (civ or {}).get('civil_war') or {}
@@ -341,7 +663,17 @@ class TerritoryCog(commands.Cog):
                        f"Rebel: {len(cw.get('rebel_territories', []))}"),
                 inline=True
             )
-        embed.add_field(name="Owned States", value=", ".join(owned[:20]) + ("..." if len(owned) > 20 else ""), inline=False)
+
+        # Show up to 20 territories with their areas
+        shown = owned[:20]
+        lines = []
+        for p in shown:
+            area = self.province_areas.get(p, 1000)
+            lines.append(f"• **{p}** ({area:,.0f} km²)")
+        value = "\n".join(lines)
+        if len(owned) > 20:
+            value += f"\n*...and {len(owned) - 20} more*"
+        embed.add_field(name="Owned States", value=value[:1024], inline=False)
         await ctx.send(embed=embed)
 
     @commands.command(name='states')
@@ -355,16 +687,17 @@ class TerritoryCog(commands.Cog):
                     return
                 country = matches[0]
             owner_id = territories.get(country, {}).get("owner_id")
+            area = self.province_areas.get(country, 1000)
             if owner_id:
                 civ = self.civ_manager.get_civilization(owner_id)
                 owner_name = civ['name'] if civ else "Unknown"
-                await ctx.send(f"**{country}** is owned by **{owner_name}**.")
+                await ctx.send(f"**{country}** ({area:,.0f} km²) is owned by **{owner_name}**.")
             else:
-                await ctx.send(f"**{country}** is unowned.")
+                await ctx.send(f"**{country}** ({area:,.0f} km²) is unowned.")
             return
 
         embed = discord.Embed(title="🌍 Global State Map", color=discord.Color.blue())
-        by_country = {}
+        by_country: Dict[str, List[str]] = {}
         for province, data in territories.items():
             owner_id = data.get("owner_id")
             if owner_id:
@@ -375,9 +708,17 @@ class TerritoryCog(commands.Cog):
             by_country.setdefault(owner_name, []).append(province)
         for owner, states in by_country.items():
             if owner == "Unowned":
-                embed.add_field(name="🌍 Unowned", value=", ".join(states[:10]) + ("..." if len(states) > 10 else ""), inline=False)
+                embed.add_field(
+                    name="🌍 Unowned",
+                    value=", ".join(states[:10]) + ("..." if len(states) > 10 else ""),
+                    inline=False
+                )
             else:
-                embed.add_field(name=f"👑 {owner}", value=", ".join(states[:10]) + ("..." if len(states) > 10 else ""), inline=False)
+                embed.add_field(
+                    name=f"👑 {owner} ({len(states)} states)",
+                    value=", ".join(states[:10]) + ("..." if len(states) > 10 else ""),
+                    inline=False
+                )
         await ctx.send(embed=embed)
 
     # =================================================================
@@ -398,7 +739,7 @@ class TerritoryCog(commands.Cog):
             if not available:
                 await ctx.send("❌ No available countries to expand into.")
                 return
-            subregion_map = {}
+            subregion_map: Dict[str, List[str]] = {}
             for subregion, provinces in PROVINCES.items():
                 avail = sorted([p for p in provinces if p in available])
                 if avail:
@@ -489,7 +830,14 @@ class TerritoryCog(commands.Cog):
                 description=f"The defenders of **{target_state}** have repelled your invasion!",
                 color=discord.Color.red()
             )
-            embed.add_field(name="Lost Resources", value="\n".join([f"{'🪙' if res=='gold' else '🌾' if res=='food' else '🪵' if res=='wood' else '🪨'} {format_number(amt)} {res.capitalize()}" for res, amt in lost_resources.items()]), inline=True)
+            embed.add_field(
+                name="Lost Resources",
+                value="\n".join([
+                    f"{'🪙' if res=='gold' else '🌾' if res=='food' else '🪵' if res=='wood' else '🪨'} {format_number(amt)} {res.capitalize()}"
+                    for res, amt in lost_resources.items()
+                ]),
+                inline=True
+            )
             embed.add_field(name="Lost Soldiers", value=f"⚔️ {format_number(lost_soldiers)}", inline=True)
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "expansion_repelled", "Expansion Repelled", f"Repelled from {target_state}")
@@ -514,7 +862,7 @@ class TerritoryCog(commands.Cog):
             )
             cost_display = ", ".join([f"{amt} {res}" for res, amt in resource_cost.items()])
             embed.add_field(name="Cost", value=cost_display + f"\n⚔️ {soldier_cost} soldiers", inline=True)
-            embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
+            embed.add_field(name="Area Added", value=f"+{area:,.0f} km²", inline=True)
             embed.add_field(name="Reduction Applied", value=reduction_reason, inline=False)
             embed.add_field(name="Overseas", value="✅" if is_overseas else "❌", inline=True)
             await ctx.send(embed=embed)
@@ -541,7 +889,11 @@ class TerritoryCog(commands.Cog):
                 description="Use `.rapidexpansion <country_name>` to expand using only soldiers (2x cost).",
                 color=discord.Color.orange()
             )
-            embed.add_field(name="Available Countries", value=", ".join(sorted(available)[:25]) + ("..." if len(available) > 25 else ""), inline=False)
+            embed.add_field(
+                name="Available Countries",
+                value=", ".join(sorted(available)[:25]) + ("..." if len(available) > 25 else ""),
+                inline=False
+            )
             await ctx.send(embed=embed)
             return
 
@@ -613,7 +965,7 @@ class TerritoryCog(commands.Cog):
                 color=discord.Color.gold()
             )
             embed.add_field(name="Soldiers Spent", value=f"⚔️ {format_number(soldier_cost)}", inline=True)
-            embed.add_field(name="Area Added", value=f"+{area:,} km²", inline=True)
+            embed.add_field(name="Area Added", value=f"+{area:,.0f} km²", inline=True)
             embed.add_field(name="Overseas", value="✅" if is_overseas else "❌", inline=True)
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "rapid_expansion", "Rapid Expansion", f"Rapidly claimed {target_state}")
@@ -644,7 +996,6 @@ class TerritoryCog(commands.Cog):
             await ctx.send("✅ No rebel territories remain! The war is essentially over.")
             return
 
-        # If user gave a territory name, try to match a rebel one
         target = None
         if territory:
             for r in rebel_territories:
@@ -652,14 +1003,15 @@ class TerritoryCog(commands.Cog):
                     target = r
                     break
             if not target:
-                # fuzzy
                 for r in rebel_territories:
                     if territory.lower() in r.lower():
                         target = r
                         break
             if not target:
-                await ctx.send(f"❌ **{territory}** is not a rebel-held territory.\n"
-                               f"Rebel territories: {', '.join(rebel_territories[:10])}")
+                await ctx.send(
+                    f"❌ **{territory}** is not a rebel-held territory.\n"
+                    f"Rebel territories: {', '.join(rebel_territories[:10])}"
+                )
                 return
 
         result = self.civ_manager.fight_civil_war_battle(user_id, target)
@@ -750,6 +1102,25 @@ class TerritoryCog(commands.Cog):
             if province_list and all(p in owned for p in province_list):
                 fully_owned.add(subregion)
         return fully_owned
+
+
+async def start_civil_war_ai_news(bot, channel, civ_name, state):
+    """Helper exposed for the civil war AI news generation from economy.py."""
+    try:
+        openrouter_key = os.getenv("OPENROUTER")
+        article = await asyncio.to_thread(
+            bot.civ_manager.generate_civil_war_article,
+            civ_name, state, openrouter_key
+        )
+        if article:
+            for i in range(0, len(article), 1800):
+                chunk = article[i:i + 1800]
+                await channel.send(f"📰 **BREAKING NEWS**\n\n{chunk}")
+                await asyncio.sleep(1)
+        image_url = bot.civ_manager.generate_civil_war_image_url(civ_name, state)
+        await channel.send(image_url)
+    except Exception as e:
+        logger.error(f"start_civil_war_ai_news error: {e}")
 
 
 async def setup(bot):
