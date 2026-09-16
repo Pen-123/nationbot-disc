@@ -634,6 +634,129 @@ class Database:
             logger.error(f"add_alliance_member error: {e}")
             return False
 
+    # -------------------- ALLIANCE PROPOSALS (persist across restarts) --------------------
+    def save_alliance_proposal(self, proposal_id: str, data: dict) -> bool:
+        try:
+            self.client.collection("alliance_proposals").document(str(proposal_id)).set(data)
+            return True
+        except Exception as e:
+            logger.error(f"save_alliance_proposal error: {e}")
+            return False
+
+    def get_alliance_proposal(self, proposal_id: str) -> Optional[dict]:
+        try:
+            doc = self.client.collection("alliance_proposals").document(str(proposal_id)).get()
+            if not doc.exists:
+                return None
+            data = doc.to_dict()
+            data["id"] = doc.id
+            exp = data.get("expires")
+            if exp:
+                exp_dt = _parse_iso_to_utc(exp)
+                if exp_dt and exp_dt <= datetime.now(timezone.utc).replace(tzinfo=None):
+                    self.client.collection("alliance_proposals").document(str(proposal_id)).delete()
+                    return None
+            return data
+        except Exception as e:
+            logger.error(f"get_alliance_proposal error: {e}")
+            return None
+
+    def get_alliance_proposals_for_user(self, user_id: str) -> list:
+        try:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            docs = self.client.collection("alliance_proposals").where("target_id", "==", user_id).stream()
+            result = []
+            for doc in docs:
+                data = doc.to_dict()
+                exp = data.get("expires")
+                if exp:
+                    exp_dt = _parse_iso_to_utc(exp)
+                    if exp_dt and exp_dt <= now:
+                        continue
+                data["id"] = doc.id
+                result.append(data)
+            return result
+        except Exception as e:
+            logger.error(f"get_alliance_proposals_for_user error: {e}")
+            return []
+
+    def delete_alliance_proposal(self, proposal_id: str) -> bool:
+        try:
+            self.client.collection("alliance_proposals").document(str(proposal_id)).delete()
+            return True
+        except Exception as e:
+            logger.error(f"delete_alliance_proposal error: {e}")
+            return False
+
+    # -------------------- TRADE PROPOSALS (persist across restarts) --------------------
+    def save_trade_proposal(self, proposal_id: str, data: dict) -> bool:
+        try:
+            self.client.collection("trade_proposals").document(str(proposal_id)).set(data)
+            return True
+        except Exception as e:
+            logger.error(f"save_trade_proposal error: {e}")
+            return False
+
+    def get_trade_proposal(self, proposal_id: str) -> Optional[dict]:
+        try:
+            doc = self.client.collection("trade_proposals").document(str(proposal_id)).get()
+            if not doc.exists:
+                return None
+            data = doc.to_dict()
+            data["id"] = doc.id
+            exp = data.get("expires")
+            if exp:
+                exp_dt = _parse_iso_to_utc(exp)
+                if exp_dt and exp_dt <= datetime.now(timezone.utc).replace(tzinfo=None):
+                    self.client.collection("trade_proposals").document(str(proposal_id)).delete()
+                    return None
+            return data
+        except Exception as e:
+            logger.error(f"get_trade_proposal error: {e}")
+            return None
+
+    def get_trade_proposals_for_user(self, user_id: str) -> list:
+        try:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            docs = self.client.collection("trade_proposals").where("target_id", "==", user_id).stream()
+            result = []
+            for doc in docs:
+                data = doc.to_dict()
+                exp = data.get("expires")
+                if exp:
+                    exp_dt = _parse_iso_to_utc(exp)
+                    if exp_dt and exp_dt <= now:
+                        continue
+                data["id"] = doc.id
+                result.append(data)
+            return result
+        except Exception as e:
+            logger.error(f"get_trade_proposals_for_user error: {e}")
+            return []
+
+    def delete_trade_proposal(self, proposal_id: str) -> bool:
+        try:
+            self.client.collection("trade_proposals").document(str(proposal_id)).delete()
+            return True
+        except Exception as e:
+            logger.error(f"delete_trade_proposal error: {e}")
+            return False
+
+    # -------------------- SHARED-ALLIANCE LOOKUP (optional helper) --------------------
+    def find_alliances_containing_both(self, user_a: str, user_b: str) -> list:
+        try:
+            docs = self.client.collection("alliances").where("members", "array_contains", user_a).stream()
+            result = []
+            for doc in docs:
+                data = doc.to_dict()
+                if user_b in data.get("members", []):
+                    data["id"] = doc.id
+                    result.append(data)
+            return result
+        except Exception as e:
+            logger.error(f"find_alliances_containing_both error: {e}")
+            return []
+
     # -------------------- EVENTS --------------------
     def log_event(self, user_id: str, event_type: str, title: str, description: str, effects: Dict = None):
         try:
@@ -679,7 +802,7 @@ class Database:
             logger.error(f"get_recent_events error: {e}")
             return []
 
-    # -------------------- TRADE REQUESTS --------------------
+    # -------------------- TRADE REQUESTS (legacy collection) --------------------
     def create_trade_request(self, sender_id: str, recipient_id: str, offer: Dict, request: Dict) -> bool:
         try:
             self.client.collection("trade_requests").add({
@@ -746,7 +869,7 @@ class Database:
             logger.error(f"delete_trade_request error: {e}")
             return False
 
-    # -------------------- ALLIANCE INVITATIONS --------------------
+    # -------------------- ALLIANCE INVITATIONS (legacy collection) --------------------
     def create_alliance_invite(self, alliance_id, sender_id: str, recipient_id: str) -> bool:
         try:
             self.client.collection("alliance_invitations").add({
@@ -1103,7 +1226,8 @@ class Database:
                 "alliances", "messages", "trade_requests", "events",
                 "alliance_invitations", "territories", "territory_history",
                 "wars", "peace_offers", "navy", "airforce", "military_tech",
-                "training", "industrial_revolutions"
+                "training", "industrial_revolutions",
+                "alliance_proposals", "trade_proposals"
             ]
             for col_name in top_collections:
                 col_data = {}
@@ -1151,7 +1275,8 @@ class Database:
                 "events", "trade_requests", "messages",
                 "alliance_invitations", "territories",
                 "territory_history", "navy", "airforce",
-                "military_tech", "training", "industrial_revolutions"
+                "military_tech", "training", "industrial_revolutions",
+                "alliance_proposals", "trade_proposals"
             ]
             for col_name in collections:
                 docs = self.client.collection(col_name).stream()
@@ -1174,7 +1299,6 @@ class Database:
 
     # -------------------- TESTING MODE --------------------
     def get_all_resources_snapshot(self) -> Dict[str, Dict[str, int]]:
-        """Return dict of user_id -> resources for all civilizations."""
         civs = self.get_all_civilizations()
         snapshot = {}
         for civ in civs:
@@ -1183,7 +1307,6 @@ class Database:
         return snapshot
 
     def set_all_resources(self, resources_dict: Dict[str, Dict[str, int]]) -> bool:
-        """Set resources for all civilizations to the given dict (user_id -> resources)."""
         try:
             batch = self.client.batch()
             for uid, resources in resources_dict.items():
