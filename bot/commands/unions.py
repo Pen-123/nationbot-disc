@@ -33,7 +33,7 @@ class UnionCommands(commands.Cog):
     def _remove_gold(self, uid, amount):
         civ = self._civ(uid) or {}
         resources = dict(civ.get("resources", {}))
-        if resources.get("gold", 0) < amount):
+        if resources.get("gold", 0) < amount:
             return False
         resources["gold"] -= amount
         self._ref(uid).update({"resources": resources, "last_active": now_iso()})
@@ -45,16 +45,7 @@ class UnionCommands(commands.Cog):
     def _proposal(self, collection, rid):
         return self.db.client.collection(collection).document(rid)
 
-    # ------------------------------------------------------------------
-    # UNION SHARED STATE
-    # ------------------------------------------------------------------
     def _install_shared_state_hooks(self):
-        """Make a union behave like one civilization for stats/resources.
-
-        Existing commands all go through CivilizationManager for resource,
-        population, military and territory updates. Wrapping those methods
-        here lets both members use one shared pool without rewriting every cog.
-        """
         manager = self.civ_manager
         if getattr(manager, "_union_hooks_installed", False):
             return
@@ -65,7 +56,6 @@ class UnionCommands(commands.Cog):
         original_military = manager.update_military
         original_employment = manager.update_employment
         original_territory = manager.update_territory
-        self._original_get = original_get
 
         def union_members(uid):
             civ = self.db.get_civilization(str(uid)) or {}
@@ -79,25 +69,18 @@ class UnionCommands(commands.Cog):
             members = union_members(uid)
             if len(members) < 2:
                 return base
-
             civs = [(m, self.db.get_civilization(m) or {}) for m in members]
             out = deepcopy(base)
-            first_union = (civs[0][1].get("union") or {})
-            out["name"] = first_union.get("name", base.get("name"))
-            out["union"] = first_union
+            union = civs[0][1].get("union") or {}
+            out["name"] = union.get("name", base.get("name"))
+            out["union"] = union
             out["leaders"] = members
 
-            # Resources are one shared pool. Use the sum of the stored member
-            # values, then update hooks keep both member documents identical.
             resource_keys = set()
             for _, c in civs:
                 resource_keys.update((c.get("resources") or {}).keys())
-            out["resources"] = {
-                k: sum((c.get("resources") or {}).get(k, 0) for _, c in civs)
-                for k in resource_keys
-            }
+            out["resources"] = {k: sum((c.get("resources") or {}).get(k, 0) for _, c in civs) for k in resource_keys}
 
-            # Military is also shared. Tech level is a single union level.
             military_keys = set()
             for _, c in civs:
                 military_keys.update((c.get("military") or {}).keys())
@@ -116,8 +99,6 @@ class UnionCommands(commands.Cog):
                 out["population"]["happiness"] = round(sum(p.get("happiness", 0) for p in pops) / len(pops))
                 out["population"]["hunger"] = round(sum(p.get("hunger", 0) for p in pops) / len(pops))
 
-            # Territory is represented by the actual Firestore provinces, not
-            # the duplicated land_size field stored on each member.
             out.setdefault("territory", {})["land_size"] = sum(self._own_land(m) for m in members)
             return out
 
@@ -193,8 +174,6 @@ class UnionCommands(commands.Cog):
             members = union_members(uid)
             if len(members) < 2:
                 return original_territory(uid, changes)
-            # Land changes should affect the union's displayed total. Keep the
-            # duplicated member field synchronized to the actual province total.
             result = original_territory(uid, changes)
             total = sum(self._own_land(m) for m in members)
             for m in members:
@@ -211,7 +190,6 @@ class UnionCommands(commands.Cog):
         manager._union_hooks_installed = True
 
     def _sync_union(self, members):
-        """Normalize an existing union so both member documents share state."""
         members = [str(m) for m in members]
         if len(members) < 2:
             return
@@ -235,7 +213,7 @@ class UnionCommands(commands.Cog):
             population["happiness"] = round(sum(p.get("happiness", 0) for p in populations) / len(populations))
             population["hunger"] = round(sum(p.get("hunger", 0) for p in populations) / len(populations))
         land = sum(self._own_land(m) for m in members)
-        union = (civs[0].get("union") or {})
+        union = civs[0].get("union") or {}
         for m in members:
             self._ref(m).update({
                 "resources": dict(resources),
@@ -244,6 +222,7 @@ class UnionCommands(commands.Cog):
                 "territory.land_size": int(land),
                 "name": union.get("name", civs[0].get("name", "Union")),
                 "union": {**union, "members": members},
+                "leaders": members,
                 "last_active": now_iso(),
             })
             self.civ_manager._invalidate_civ(m)
@@ -294,7 +273,6 @@ class UnionCommands(commands.Cog):
                 "leaders": members,
                 "last_active": now_iso()
             })
-        # Merge the two existing pools exactly once, then keep them synchronized.
         self._sync_union(members)
         ref.update({"status": "accepted", "accepted_at": now_iso()})
         await ctx.send(f"🤝 **{req['new_country']}** has been formed! {ctx.author.mention} and <@{requester}> now act as one country.")
@@ -324,9 +302,8 @@ class UnionCommands(commands.Cog):
         members = [m for m in union.get("members", []) if m != uid]
         civ = self._civ(uid) or {}
         old_name = civ.get("original_union_name") or "Independent Nation"
-        shared = self._civ(uid) or {}
         if members:
-            # Split the shared pools evenly when one member leaves.
+            shared = self._civ(uid) or {}
             resources = dict(shared.get("resources", {}))
             military = dict(shared.get("military", {}))
             population = dict(shared.get("population", {}))
@@ -339,7 +316,8 @@ class UnionCommands(commands.Cog):
                 if key in population:
                     population[key] //= 2
             self._ref(uid).update({"union": None, "name": old_name, "original_union_name": None, "resources": resources, "military": military, "population": population, "territory.land_size": int(self._own_land(uid)), "last_active": now_iso()})
-            self._ref(members[0]).update({"union": None, "name": (self._civ(members[0]) or {}).get("original_union_name", "Independent Nation"), "original_union_name": None, "resources": resources, "military": military, "population": population, "territory.land_size": int(self._own_land(members[0])), "last_active": now_iso()})
+            other = self._civ(members[0]) or {}
+            self._ref(members[0]).update({"union": None, "name": other.get("original_union_name", "Independent Nation"), "original_union_name": None, "resources": resources, "military": military, "population": population, "territory.land_size": int(self._own_land(members[0])), "last_active": now_iso()})
             self.civ_manager._invalidate_civ(uid)
             self.civ_manager._invalidate_civ(members[0])
         else:
@@ -363,7 +341,8 @@ class UnionCommands(commands.Cog):
         owner = self.db.get_territory_owner(province)
         if not owner:
             return await ctx.send("❌ Nobody currently owns that territory.")
-        if str(owner) == uid or str(owner) in [str(x) for x in ((self._union(uid) or {}).get("members", []))]:
+        union_members_list = [str(x) for x in ((self._union(uid) or {}).get("members", []))]
+        if str(owner) == uid or str(owner) in union_members_list:
             return await ctx.send("❌ You already own that territory.")
         ref = self.db.client.collection("annex_requests").document()
         ref.set({"requester_id": uid, "target_id": str(owner), "territory": province, "status": "pending", "created_at": now_iso()})
