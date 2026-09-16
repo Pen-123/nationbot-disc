@@ -16,14 +16,25 @@ class DiplomacyCommands(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
-        # Pending proposals now live in Firestore so they survive restarts.
+        # Proposals live in Firestore — no in-memory dicts.
 
-    # ---------- Response helper ----------
+    # ---------- Internal helpers ----------
+    def _are_allied(self, user_a: str, user_b: str) -> bool:
+        """Inline alliance check — no dependency on Database.find_alliances_containing_both."""
+        try:
+            docs = self.db.client.collection("alliances").where("members", "array_contains", user_a).stream()
+            for doc in docs:
+                if user_b in doc.to_dict().get("members", []):
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"_are_allied error: {e}")
+            return False
+
     async def _respond(self, ctx, content: str = None, embed: discord.Embed = None, ephemeral: bool = False):
-        """Send a response. Slash commands honour ephemeral; prefix commands stay public."""
+        """Slash commands honour ephemeral; prefix stays public."""
         is_slash = getattr(ctx, "interaction", None) is not None
         use_eph = ephemeral and is_slash
-
         if is_slash:
             kwargs = {"ephemeral": use_eph}
             if content is not None:
@@ -38,7 +49,6 @@ class DiplomacyCommands(commands.Cog):
                 return
             except Exception:
                 logger.exception("Interaction response failed; falling back to ctx.send")
-        # Prefix / fallback
         await ctx.send(content=content, embed=embed)
 
     # ---------- Autocomplete ----------
@@ -79,19 +89,18 @@ class DiplomacyCommands(commands.Cog):
         return True, None
 
     # =================================================================
-    #                          ALLIANCES
+    # ALLIANCES
     # =================================================================
 
     @commands.hybrid_command(name='ally')
     @app_commands.describe(target="Civilization leader to ally with", alliance_name="Name of the alliance")
     async def propose_alliance(self, ctx, target: Optional[discord.Member] = None, alliance_name: Optional[str] = None):
-        """Propose an alliance with another civilization"""
         if not target or not alliance_name:
             await self._respond(
                 ctx,
                 content=("🤝 **Alliance Proposal**\n"
                          "Usage: `.ally <user> <alliance_name>` or `/ally`\n"
-                         "Propose a mutual defense pact with another civilization.")
+                         "Propose a mutual defense pact.")
             )
             return
 
@@ -116,7 +125,7 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="❌ Target user doesn't have a civilization!")
             return
 
-        # Already at war?
+        # War check
         for war in self.db.get_wars(status="ongoing"):
             a = war.get("attacker_id"); d = war.get("defender_id")
             if (a == user_id and d == target_id) or (a == target_id and d == user_id):
@@ -124,8 +133,7 @@ class DiplomacyCommands(commands.Cog):
                 return
 
         # Already allied?
-        existing = self.db.find_alliances_containing_both(user_id, target_id)
-        if existing:
+        if self._are_allied(user_id, target_id):
             await self._respond(ctx, content="❌ One of you is already in an alliance together!")
             return
 
@@ -168,7 +176,13 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="Usage: `.acceptally <id>` or `/acceptally <id>`")
             return
         user_id = str(ctx.author.id)
-        proposal = self.db.get_alliance_proposal(alliance_id)
+
+        try:
+            proposal = self.db.get_alliance_proposal(alliance_id)
+        except AttributeError:
+            await self._respond(ctx, content="❌ Alliance proposals are not enabled on this server. Contact an admin.")
+            return
+
         if not proposal:
             await self._respond(ctx, content="❌ Invalid or expired alliance ID!")
             return
@@ -208,9 +222,12 @@ class DiplomacyCommands(commands.Cog):
 
             self.db.log_event(proposal["proposer_id"], "alliance", "Alliance Formed", f"Created alliance '{proposal['alliance_name']}'")
             self.db.log_event(user_id, "alliance", "Alliance Formed", f"Joined alliance '{proposal['alliance_name']}'")
-            self.db.delete_alliance_proposal(alliance_id)
+            try:
+                self.db.delete_alliance_proposal(alliance_id)
+            except AttributeError:
+                pass
         except Exception as e:
-            logger.error(f"Error creating alliance: {e}")
+            logger.error(f"Error creating alliance: {e}", exc_info=True)
             await self._respond(ctx, content="❌ Failed to form alliance. Please try again.")
 
     @commands.hybrid_command(name='rejectally')
@@ -221,7 +238,13 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="Usage: `.rejectally <id>` or `/rejectally <id>`")
             return
         user_id = str(ctx.author.id)
-        proposal = self.db.get_alliance_proposal(alliance_id)
+
+        try:
+            proposal = self.db.get_alliance_proposal(alliance_id)
+        except AttributeError:
+            await self._respond(ctx, content="❌ Alliance proposals are not enabled on this server.")
+            return
+
         if not proposal:
             await self._respond(ctx, content="❌ Invalid or expired alliance ID!")
             return
@@ -239,7 +262,10 @@ class DiplomacyCommands(commands.Cog):
 
         self.db.log_event(user_id, "alliance_reject", "Alliance Rejected", f"Rejected alliance {alliance_id}")
         self.db.log_event(proposal["proposer_id"], "alliance_reject", "Alliance Rejected", f"Alliance {alliance_id} rejected by target")
-        self.db.delete_alliance_proposal(alliance_id)
+        try:
+            self.db.delete_alliance_proposal(alliance_id)
+        except AttributeError:
+            pass
 
     @commands.hybrid_command(name='break')
     async def break_alliance(self, ctx):
@@ -289,7 +315,7 @@ class DiplomacyCommands(commands.Cog):
         self.db.log_event(user_id, "alliance_break", "Alliance Broken", f"Left the {alliance_data['name']} alliance")
 
     # =================================================================
-    #                          RESOURCE TRANSFER
+    # RESOURCE TRANSFER
     # =================================================================
 
     @commands.hybrid_command(name='send')
@@ -334,7 +360,7 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content=f"❌ You don't have {amount} {resource_type}!")
             return
 
-        is_allied = bool(self.db.find_alliances_containing_both(user_id, target_id))
+        is_allied = self._are_allied(user_id, target_id)
         transfer_efficiency = 0.95 if is_allied else 0.9
 
         received_amount = int(amount * transfer_efficiency)
@@ -357,7 +383,6 @@ class DiplomacyCommands(commands.Cog):
         if is_allied:
             embed.add_field(name="Alliance Bonus", value="Higher transfer efficiency due to alliance!", inline=False)
 
-        # Slash: silent confirmation + DM target
         if ctx.interaction is not None:
             await self._respond(ctx, embed=embed, ephemeral=True)
             try:
@@ -373,7 +398,7 @@ class DiplomacyCommands(commands.Cog):
         self.db.log_event(target_id, "resource_transfer", "Resources Received", f"Received {received_amount} {resource_type} from {civ['name']}")
 
     # =================================================================
-    #                          TRADES
+    # TRADES
     # =================================================================
 
     @commands.hybrid_command(name='trade')
@@ -432,16 +457,20 @@ class DiplomacyCommands(commands.Cog):
             return
 
         trade_id = str(random.randint(100000, 999999))
-        self.db.save_trade_proposal(trade_id, {
-            "proposer_id": user_id,
-            "target_id": target_id,
-            "offer_resource": offer_resource,
-            "offer_amount": offer_amount,
-            "request_resource": request_resource,
-            "request_amount": request_amount,
-            "expires": (datetime.utcnow() + timedelta(minutes=30)).isoformat(),
-            "created_at": datetime.utcnow().isoformat(),
-        })
+        try:
+            self.db.save_trade_proposal(trade_id, {
+                "proposer_id": user_id,
+                "target_id": target_id,
+                "offer_resource": offer_resource,
+                "offer_amount": offer_amount,
+                "request_resource": request_resource,
+                "request_amount": request_amount,
+                "expires": (datetime.utcnow() + timedelta(minutes=30)).isoformat(),
+                "created_at": datetime.utcnow().isoformat(),
+            })
+        except AttributeError:
+            await self._respond(ctx, content="❌ Trade proposals are not enabled on this server. Contact an admin.")
+            return
 
         resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
         embed = discord.Embed(
@@ -475,7 +504,12 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="Usage: `.accepttrade <id>` or `/accepttrade <id>`")
             return
         user_id = str(ctx.author.id)
-        trade = self.db.get_trade_proposal(trade_id)
+        try:
+            trade = self.db.get_trade_proposal(trade_id)
+        except AttributeError:
+            await self._respond(ctx, content="❌ Trade proposals are not enabled on this server.")
+            return
+
         if not trade:
             await self._respond(ctx, content="❌ Invalid or expired trade ID!")
             return
@@ -490,12 +524,18 @@ class DiplomacyCommands(commands.Cog):
 
         if not self.civ_manager.can_afford(trade["proposer_id"], {trade["offer_resource"]: trade["offer_amount"]}):
             await self._respond(ctx, content="❌ The proposer no longer has the offered resources!")
-            self.db.delete_trade_proposal(trade_id)
+            try:
+                self.db.delete_trade_proposal(trade_id)
+            except AttributeError:
+                pass
             return
 
         if not self.civ_manager.can_afford(user_id, {trade["request_resource"]: trade["request_amount"]}):
             await self._respond(ctx, content="❌ You no longer have the requested resources!")
-            self.db.delete_trade_proposal(trade_id)
+            try:
+                self.db.delete_trade_proposal(trade_id)
+            except AttributeError:
+                pass
             return
 
         self.civ_manager.spend_resources(trade["proposer_id"], {trade["offer_resource"]: trade["offer_amount"]})
@@ -508,7 +548,10 @@ class DiplomacyCommands(commands.Cog):
 
         self.db.log_event(user_id, "trade_accept", "Trade Accepted", f"Accepted trade {trade_id}")
         self.db.log_event(trade["proposer_id"], "trade_accept", "Trade Accepted", f"Trade {trade_id} accepted by target")
-        self.db.delete_trade_proposal(trade_id)
+        try:
+            self.db.delete_trade_proposal(trade_id)
+        except AttributeError:
+            pass
 
     @commands.hybrid_command(name='rejecttrade')
     @app_commands.describe(trade_id="Pending trade proposal ID")
@@ -518,7 +561,12 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="Usage: `.rejecttrade <id>` or `/rejecttrade <id>`")
             return
         user_id = str(ctx.author.id)
-        trade = self.db.get_trade_proposal(trade_id)
+        try:
+            trade = self.db.get_trade_proposal(trade_id)
+        except AttributeError:
+            await self._respond(ctx, content="❌ Trade proposals are not enabled on this server.")
+            return
+
         if not trade:
             await self._respond(ctx, content="❌ Invalid or expired trade ID!")
             return
@@ -536,17 +584,20 @@ class DiplomacyCommands(commands.Cog):
 
         self.db.log_event(user_id, "trade_reject", "Trade Rejected", f"Rejected trade {trade_id}")
         self.db.log_event(trade["proposer_id"], "trade_reject", "Trade Rejected", f"Trade {trade_id} rejected by target")
-        self.db.delete_trade_proposal(trade_id)
+        try:
+            self.db.delete_trade_proposal(trade_id)
+        except AttributeError:
+            pass
 
     # =================================================================
-    #                          MAIL
+    # MAIL
     # =================================================================
 
     @commands.hybrid_command(name='mail')
     @app_commands.describe(target="Message recipient", message="Diplomatic message")
     async def send_diplomatic_message(self, ctx, target: Optional[discord.Member] = None, *, message: Optional[str] = None):
         if not target or not message:
-            await self._respond(ctx, content="📜 **Diplomatic Mail**\nUsage: `.mail <user> <message>` or `/mail`\nSend diplomatic communications to other civilizations.")
+            await self._respond(ctx, content="📜 **Diplomatic Mail**\nUsage: `.mail <user> <message>` or `/mail`")
             return
 
         if len(message) > 500:
@@ -580,7 +631,6 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="❌ Failed to send message. Please try again.")
             return
 
-        # Slash: silent, DM target
         if ctx.interaction is not None:
             await self._respond(ctx, content=f"📜 **Message sent to {target_civ['name']}.** Only you can see this.", ephemeral=True)
             try:
@@ -615,37 +665,43 @@ class DiplomacyCommands(commands.Cog):
 
         # Alliance proposals
         alliance_proposals = []
-        for proposal in self.db.get_alliance_proposals_for_user(user_id):
-            proposer_civ = self.civ_manager.get_civilization(proposal["proposer_id"])
-            if proposer_civ:
-                exp_raw = proposal.get("expires")
-                exp_dt = datetime.fromisoformat(exp_raw) if isinstance(exp_raw, str) else exp_raw
-                exp_ts = int(exp_dt.timestamp()) if exp_dt else 0
-                alliance_proposals.append(
-                    f"**Alliance ID**: {proposal['id']}\n"
-                    f"From: **{proposer_civ['name']}**\n"
-                    f"Alliance Name: **{proposal['alliance_name']}**\n"
-                    f"Respond with: `.acceptally {proposal['id']}` or `.rejectally {proposal['id']}`\n"
-                    f"Expires: <t:{exp_ts}:R>"
-                )
+        try:
+            for proposal in self.db.get_alliance_proposals_for_user(user_id):
+                proposer_civ = self.civ_manager.get_civilization(proposal["proposer_id"])
+                if proposer_civ:
+                    exp_raw = proposal.get("expires")
+                    exp_dt = datetime.fromisoformat(exp_raw) if isinstance(exp_raw, str) else exp_raw
+                    exp_ts = int(exp_dt.timestamp()) if exp_dt else 0
+                    alliance_proposals.append(
+                        f"**Alliance ID**: {proposal['id']}\n"
+                        f"From: **{proposer_civ['name']}**\n"
+                        f"Alliance Name: **{proposal['alliance_name']}**\n"
+                        f"Respond with: `.acceptally {proposal['id']}` or `.rejectally {proposal['id']}`\n"
+                        f"Expires: <t:{exp_ts}:R>"
+                    )
+        except AttributeError:
+            pass
 
         # Trade proposals
         trade_proposals = []
         resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
-        for trade in self.db.get_trade_proposals_for_user(user_id):
-            proposer_civ = self.civ_manager.get_civilization(trade["proposer_id"])
-            if proposer_civ:
-                exp_raw = trade.get("expires")
-                exp_dt = datetime.fromisoformat(exp_raw) if isinstance(exp_raw, str) else exp_raw
-                exp_ts = int(exp_dt.timestamp()) if exp_dt else 0
-                trade_proposals.append(
-                    f"**Trade ID**: {trade['id']}\n"
-                    f"From: **{proposer_civ['name']}**\n"
-                    f"Offers: {resource_icons[trade['offer_resource']]} {trade['offer_amount']} {trade['offer_resource'].capitalize()}\n"
-                    f"Requests: {resource_icons[trade['request_resource']]} {trade['request_amount']} {trade['request_resource'].capitalize()}\n"
-                    f"Respond with: `.accepttrade {trade['id']}` or `.rejecttrade {trade['id']}`\n"
-                    f"Expires: <t:{exp_ts}:R>"
-                )
+        try:
+            for trade in self.db.get_trade_proposals_for_user(user_id):
+                proposer_civ = self.civ_manager.get_civilization(trade["proposer_id"])
+                if proposer_civ:
+                    exp_raw = trade.get("expires")
+                    exp_dt = datetime.fromisoformat(exp_raw) if isinstance(exp_raw, str) else exp_raw
+                    exp_ts = int(exp_dt.timestamp()) if exp_dt else 0
+                    trade_proposals.append(
+                        f"**Trade ID**: {trade['id']}\n"
+                        f"From: **{proposer_civ['name']}**\n"
+                        f"Offers: {resource_icons[trade['offer_resource']]} {trade['offer_amount']} {trade['offer_resource'].capitalize()}\n"
+                        f"Requests: {resource_icons[trade['request_resource']]} {trade['request_amount']} {trade['request_resource'].capitalize()}\n"
+                        f"Respond with: `.accepttrade {trade['id']}` or `.rejecttrade {trade['id']}`\n"
+                        f"Expires: <t:{exp_ts}:R>"
+                    )
+        except AttributeError:
+            pass
 
         # Diplomatic messages
         diplomatic_messages = []
@@ -682,18 +738,18 @@ class DiplomacyCommands(commands.Cog):
             inline=False
         )
 
-        # Inbox is private — always ephemeral on slash
+        # Inbox is always ephemeral on slash
         await self._respond(ctx, embed=embed, ephemeral=True)
 
     # =================================================================
-    #                          COALITION
+    # COALITION
     # =================================================================
 
     @commands.hybrid_command(name='coalition')
     @app_commands.describe(target_alliance="Target alliance name")
     async def form_coalition(self, ctx, target_alliance: str = None):
         if not target_alliance:
-            await self._respond(ctx, content="⚔️ **Coalition Warfare**\nUsage: `.coalition <target_alliance_name>`\nForm a coalition to declare war on another alliance.")
+            await self._respond(ctx, content="⚔️ **Coalition Warfare**\nUsage: `.coalition <target_alliance_name>`")
             return
 
         ok, msg = self._check_cooldown(ctx, "coalition")
@@ -744,9 +800,9 @@ class DiplomacyCommands(commands.Cog):
             for member_id in all_affected:
                 if member_id != user_id:
                     if member_id in user_members:
-                        await ctx.send(f"<@{member_id}> ⚔️ **Coalition Formed!** Your alliance has formed a coalition against {target_alliance}!")
+                        await ctx.send(f"<@{member_id}> ⚔️ **Coalition Formed!** Your alliance formed a coalition against {target_alliance}!")
                     else:
-                        await ctx.send(f"<@{member_id}> ⚔️ **Coalition Against You!** {user_alliance_data['name']} has formed a coalition against your alliance!")
+                        await ctx.send(f"<@{member_id}> ⚔️ **Coalition Against You!** {user_alliance_data['name']} formed a coalition against your alliance!")
             await self._respond(ctx, embed=embed)
         else:
             embed = discord.Embed(
