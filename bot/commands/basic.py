@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 MAX_CONVERSATION_HISTORY = 100
 CONVERSATION_TIMEOUT = 1800
 
+
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -29,7 +30,9 @@ class BasicCommands(commands.Cog):
         self.groq_key = os.getenv('GROQ_API_KEY')
         self.openrouter_key = os.getenv('OPENROUTER')
         self.openai_key = os.getenv('OPENAI_API_KEY')
-        self.current_model = "llama-3.3-70b-versatile"
+        # Groq uses short model IDs; OpenRouter uses org-prefixed paths
+        self.groq_model = "llama-3.1-8b-instant"
+        self.openrouter_model = "meta-llama/llama-3.3-70b-instruct"
         self.model_switch_time = None
         self.rate_limited = False
         self.conversations = defaultdict(deque)
@@ -79,6 +82,9 @@ class BasicCommands(commands.Cog):
                     pass
         return True
 
+    # =================================================================
+    # RESET
+    # =================================================================
     @commands.command(name='reset')
     async def reset_civilization(self, ctx):
         user_id = str(ctx.author.id)
@@ -106,6 +112,7 @@ class BasicCommands(commands.Cog):
 
         def check(m):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
         try:
             msg = await self.bot.wait_for('message', timeout=30.0, check=check)
             if msg.content == "CONFIRM RESET":
@@ -134,6 +141,9 @@ class BasicCommands(commands.Cog):
         except asyncio.TimeoutError:
             await ctx.send("🕒 Reset confirmation timed out. Your civilization is safe.")
 
+    # =================================================================
+    # SAVED CHAT
+    # =================================================================
     @commands.command(name='sv')
     async def start_saved_chat(self, ctx):
         user_id = str(ctx.author.id)
@@ -174,6 +184,9 @@ class BasicCommands(commands.Cog):
         )
         await ctx.send(embed=embed)
 
+    # =================================================================
+    # AI LISTENER
+    # =================================================================
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
@@ -263,9 +276,8 @@ class BasicCommands(commands.Cog):
             except Exception:
                 civ_status = ""
 
-        # ----- COMPREHENSIVE SYSTEM PROMPT (updated with victory) -----
-        system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
-Players build civilizations, manage resources, wage wars, and form alliances. 
+        system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game.
+Players build civilizations, manage resources, wage wars, and form alliances.
 Your role is to help players understand game mechanics and strategies.
 
 {civ_status}
@@ -274,12 +286,10 @@ Your role is to help players understand game mechanics and strategies.
 - Economy gains use config.ECONOMY (gather base 5-20, cap 500k; tax nerfed).
 - Soldier cost: 20 gold each.
 - Expansion: large provinces (≥1M km²) cost 1 soldier per 2000 km² (small: 1 per 595 km²). Navy gives 25% off, airforce gives 50% off (land only).
-- Territory factor: max 3.0x, coefficient 0.8.
-- Mid-game commands (harvest, drill, labor, raidcaravan) now scale with population, tech, and territory.
-- Corporations: build for 100k gold, upgrade for 200k, passive income (halved until Tech 5).
-- Megaprojects: build world-changing projects (Great Wall, Space Program, etc.) requiring millions of resources.
-- Policies: enable/upgrade/disable policies for permanent bonuses (military, agriculture, trade, education, environment, industry).
-- Victory conditions: Domination (60% of territories), Economic (500M gold & 100k GDP/citizen), Industrial (3 megaprojects & 6 policies), Conquest (all provinces), United Nations (alliance with 5 members). Use `.victory` to track your progress.
+- Territory factor: max 2.0x, coefficient 0.4.
+- Tax has a HARD CAP of 150,000 per collection.
+- Civil war triggers when happiness is low; rebels split your territories in half. You get +30% offensive boost when reclaiming.
+- Victory conditions: Domination (80% of territories), Economic (500M gold & 100k GDP/citizen), Industrial (3 megaprojects & 6 policies), Conquest (all provinces), United Nations (alliance with 5 members). Use `.victory` to track your progress.
 
 **FULL COMMAND LIST:**
 - Basic: .start, .status, .ideology, .regions, .reset, .sv, .svc, .warhelp, .updates, .victory
@@ -288,39 +298,24 @@ Your role is to help players understand game mechanics and strategies.
 - Diplomacy: .ally, .acceptally, .rejectally, .break, .send, .trade, .accepttrade, .rejecttrade, .mail, .inbox, .coalition
 - Store: .store, .blackmarket, .inventory, .market
 - HyperItems: .laststand, .sacrifice, .mirror, .nuke, .obliterate, .shield, .luckystrike, .propaganda, .hiremercs, .boosttech, .mintgold, .superharvest, .superspy, .megainvent, .backstab, .bomb
-- Territory: .territories, .expand, .rapidexpansion, .states
+- Territory: .territories, .expand, .rapidexpansion, .states, .reclaim
 - Countryballs: .openpacks, .evolve, .packs, .activate, .deactivate, .synergies
-- Industrial: .industrial_start, .industrial_status, .industrial_build, .industrial_tech, .industrial_workers, .industrial_cleanup, .industrial_railway, .industrial_transport, .industrial_army, .industrial_policy, .industrial_import, .industrial_export, .industrial_steam, .industrial_mine, .industrial_hospital, .industrial_school, .industrial_law, .industrial_trade, .industrial_aid, .industrial_suppress, .industrial_bribe, .industrial_automate, .industrial_upgrade, .industrial_relief, .industrial_expand, .industrial_banking, .industrial_nationalize, .indushelp
-- ExtraEconomy: .extrawork, .extrastore, .extrainventory, .extragamble, .extracards, .slots, .blackjack, .jobs, .job, .arrest, .rob, .code, .darkweb, .setbalance
+- Industrial: .industrial_start, .industrial_status, and 20+ industrial_* commands
 
 **STRATEGY TIPS:**
-- Build a navy before expanding overseas – it gives 25% off and is required for non‑neighbour provinces.
-- Airforce gives 50% off for land expansions – build planes for cheaper land grabs.
+- Build a navy before expanding overseas – it gives 25% off and is required for non-neighbour provinces.
+- Airforce gives 50% off for land expansions.
 - Use .buysoldiers to quickly raise an army (20 gold each).
-- .immigration gives citizens but can trigger riots – use with care.
-- Tax is now weak – focus on active gathering and raids.
-- Buy cards for permanent bonuses – they cost 500 gold each.
+- .immigration gives citizens but can trigger riots.
+- Tax is capped – focus on active gathering and raids.
 - Complete subregions to unlock countryballs for passive bonuses and synergies.
-- The Industrial Revolution gives huge rewards but is risky – every command has 30% disaster chance.
-- Black Market has pity system: guaranteed Uncommon every 3, Rare every 6, Legendary every 10 purchases.
-- Always declare war before attacking.
-- Victory conditions: track your progress with `.victory` – complete any one condition to win the game!
+- Civil war splits your nation if happiness goes too low. Reclaim territories with `.reclaim`.
+- Victory conditions: track progress with `.victory`.
 
 You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay.
-If asked about non-game topics, politely decline. Use brief Discord-style formatting.
-Address the player as 'President' and keep a confident, commanding tone.
-When appropriate, include tactical suggestions and short examples.
+Address the player as 'President'.
 
-IMPORTANT: Use Discord markdown formatting in your responses:
-- **Bold** for emphasis
-- *Italics* for subtle emphasis
-- __Underline__ for important points
-- `Inline code` for commands and code references
-- > Blockquotes for special notes
-- --- for dividers
-- Use emoji where appropriate: 🏛️ ⚔️ 🪙 🌾 🪨 🪵 👥 🕵️
-
-Remember to keep responses engaging but focused on the game.
+IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused on the game.
 """
 
         try:
@@ -356,13 +351,14 @@ Remember to keep responses engaging but focused on the game.
                 pass
 
     async def generate_ai_response(self, messages):
+        # --- GROQ ---
         if self.groq_key:
             headers = {
                 "Authorization": f"Bearer {self.groq_key}",
                 "Content-Type": "application/json"
             }
             payload = {
-                "model": self.current_model,
+                "model": self.groq_model,
                 "messages": messages,
                 "max_tokens": 500,
                 "temperature": 0.7
@@ -383,6 +379,7 @@ Remember to keep responses engaging but focused on the game.
             except Exception:
                 logger.exception("Groq request failed")
 
+        # --- OPENROUTER ---
         if self.openrouter_key:
             headers = {
                 "Authorization": f"Bearer {self.openrouter_key}",
@@ -391,7 +388,7 @@ Remember to keep responses engaging but focused on the game.
             if self.rate_limited and self.model_switch_time and datetime.now() < self.model_switch_time:
                 model = "moonshotai/kimi-k2:free"
             else:
-                model = self.current_model
+                model = self.openrouter_model
                 self.rate_limited = False
 
             payload = {
@@ -402,8 +399,10 @@ Remember to keep responses engaging but focused on the game.
 
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.post("https://openrouter.ai/api/v1/chat/completions",
-                                            headers=headers, json=payload, timeout=60) as response:
+                    async with session.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers=headers, json=payload, timeout=60
+                    ) as response:
                         text = await response.text()
                         if response.status == 200:
                             data = await response.json()
@@ -413,8 +412,10 @@ Remember to keep responses engaging but focused on the game.
                             self.model_switch_time = datetime.now() + timedelta(hours=24)
                             logger.warning("OpenRouter rate limited; switching to fallback model for 24 hours")
                             payload["model"] = "moonshotai/kimi-k2:free"
-                            async with session.post("https://openrouter.ai/api/v1/chat/completions",
-                                                    headers=headers, json=payload, timeout=60) as fallback_response:
+                            async with session.post(
+                                "https://openrouter.ai/api/v1/chat/completions",
+                                headers=headers, json=payload, timeout=60
+                            ) as fallback_response:
                                 if fallback_response.status == 200:
                                     data = await fallback_response.json()
                                     return data['choices'][0]['message']['content']
@@ -425,6 +426,7 @@ Remember to keep responses engaging but focused on the game.
             except Exception:
                 logger.exception("OpenRouter failed, will try OpenAI if available")
 
+        # --- OPENAI ---
         if self.openai_key:
             headers = {
                 "Authorization": f"Bearer {self.openai_key}",
@@ -438,8 +440,10 @@ Remember to keep responses engaging but focused on the game.
             }
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.post("https://api.openai.com/v1/chat/completions",
-                                            headers=headers, json=payload, timeout=60) as response:
+                    async with session.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers=headers, json=payload, timeout=60
+                    ) as response:
                         text = await response.text()
                         if response.status == 200:
                             data = await response.json()
@@ -452,14 +456,11 @@ Remember to keep responses engaging but focused on the game.
         return ("AI is unavailable right now. Please make sure the bot has an API key set "
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
-    # ---------- UPDATED WARHELP ----------
+    # =================================================================
+    # WARHELP
+    # =================================================================
     @commands.command(name='warhelp')
     async def warhelp(self, ctx, category: str = None):
-        """
-        Show command categories or list commands for a specific category.
-        Usage: .warhelp             -> lists all categories
-               .warhelp <category>  -> lists commands in that category
-        """
         categories = {
             "basic": {
                 "name": "🏛️ Basic Commands",
@@ -494,29 +495,9 @@ Remember to keep responses engaging but focused on the game.
                     "trade": "Propose a resource trade with another civilization"
                 }
             },
-            "extraeconomy": {
-                "name": "🎲 ExtraEconomy",
-                "description": "Jobs, gambling, and extra economy commands",
-                "commands": {
-                    "arrest": "Arrest a target (police job)",
-                    "blackjack": "Play a game of blackjack",
-                    "code": "Start a coding project",
-                    "darkweb": "Purchase risky items from the dark web",
-                    "extracards": "Play a card game against the bot",
-                    "extragamble": "Gamble gold for a chance to win",
-                    "extrainventory": "Show your inventory",
-                    "extrastore": "Buy items from the store",
-                    "extrawork": "Work to earn gold",
-                    "job": "Apply for a specific job",
-                    "jobs": "List available jobs",
-                    "rob": "Attempt to rob another user",
-                    "setbalance": "Set your gold balance (admin only)",
-                    "slots": "Play the slot machine"
-                }
-            },
             "economy": {
                 "name": "💰 Economy",
-                "description": "Resource gathering, taxes, immigration, soldier buying, mid-game buffs, corps, megaprojects, policies",
+                "description": "Resource gathering, taxes, immigration, corporations, megaprojects, policies",
                 "commands": {
                     "advertise": "Run promotional campaigns to attract new citizens",
                     "burn": "Burn excess resources down to 1000 each",
@@ -526,34 +507,34 @@ Remember to keep responses engaging but focused on the game.
                     "cheer": "Spread cheer to boost citizen happiness (costs 50 gold)",
                     "cheerup": "Boost happiness by 50% towards 100 for 2000 gold",
                     "corporation": "Manage corporations (build/upgrade/list)",
-                    "drill": "Extract rare minerals – buffed, scales with tech and pop (Tech 2+)",
+                    "drill": "Extract rare minerals – requires Tech 2",
                     "drive": "Unemploy citizens, freeing them from work",
                     "farm": "Farm food for your civilization",
                     "festival": "Hold a grand festival to boost happiness",
                     "fish": "Fish for food or occasionally find treasure",
                     "gather": "Gather random resources from your territory",
-                    "harvest": "Large harvest – buffed, scales with pop and happiness",
+                    "harvest": "Large harvest",
                     "immigration": "Open borders to gain citizens (risk of protests/riots)",
                     "invest": "Invest gold for delayed profit",
-                    "labor": "Forced labor for wood/stone – buffed, gives all resources (Tech 3+)",
+                    "labor": "Forced labor for wood/stone – requires Tech 3",
                     "lottery": "Gamble gold for a chance at the jackpot",
                     "megaproject": "Build world-changing megaprojects",
                     "mine": "Mine stone and wood from your territory",
                     "policieshelp": "Show all available policies",
                     "policy": "Enable/upgrade/disable policies",
-                    "raidcaravan": "Raid NPC merchant caravans – buffed, scales with military",
+                    "raidcaravan": "Raid NPC merchant caravans",
                     "recruit": "Convert citizens into soldiers",
                     "sell": "Sell hyper items to wandering merchants",
-                    "tax": "Collect taxes from your citizens (now nerfed)",
+                    "tax": "Collect taxes from your citizens (capped at 150K)",
                     "work": "Employ citizens to work and gain immediate gold"
                 }
             },
             "hyperitems": {
                 "name": "💎 HyperItem Commands",
-                "description": "Powerful one‑time items",
+                "description": "Powerful one-time items",
                 "commands": {
-                    "backstab": "Use Dagger for assassination attempt",
-                    "bomb": "Use Missiles for mid‑tier military strike",
+                    "backstab": "Use Dagger – zeroes target happiness and steals 30% (60% if allied) of their gold",
+                    "bomb": "Use Missiles for mid-tier military strike",
                     "boosttech": "Use Ancient Scroll to instantly advance technology",
                     "hiremercs": "Use Mercenary Contract to hire professional soldiers",
                     "laststand": "Use Last Stand when under 500 gold",
@@ -565,7 +546,7 @@ Remember to keep responses engaging but focused on the game.
                     "obliterate": "Completely obliterate a civilization (HyperLaser)",
                     "propaganda": "Use Propaganda Kit to steal enemy soldiers",
                     "sacrifice": "Destroy both your civilization and another (mutual destruction)",
-                    "shield": "Display Anti‑Nuke Shield status",
+                    "shield": "Display Anti-Nuke Shield status",
                     "superharvest": "Use Harvest Engine for massive food",
                     "superspy": "Use Spy Network for elite espionage"
                 }
@@ -579,8 +560,8 @@ Remember to keep responses engaging but focused on the game.
                     "airforce": "View your airforce fleet",
                     "attack": "Launch a direct attack (3min cooldown)",
                     "borderinfo": "Check your border status (1min cooldown)",
-                    "buildplane": "Build airforce planes (no cooldown)",
-                    "buildship": "Build navy ships (no cooldown)",
+                    "buildplane": "Build airforce planes",
+                    "buildship": "Build navy ships",
                     "cards": "View or use your purchased cards",
                     "declare": "Declare war on another civilization",
                     "find": "Search for wandering soldiers (1min cooldown)",
@@ -590,7 +571,7 @@ Remember to keep responses engaging but focused on the game.
                     "removeborder": "Remove your border and retrieve soldiers (2min)",
                     "retrieve": "Retrieve soldiers from the border (1min cooldown)",
                     "siege": "Lay siege to an enemy (10min cooldown)",
-                    "stealthbattle": "Conduct a spy‑based stealth attack (4min)",
+                    "stealthbattle": "Conduct a spy-based stealth attack (4min)",
                     "tech": "Upgrade military tech (500 gold per level)",
                     "train": "Train military units (2min cooldown)",
                     "trainboost": "Increase soldier training level (max 3)"
@@ -600,7 +581,7 @@ Remember to keep responses engaging but focused on the game.
                 "name": "🏪 Store Commands",
                 "description": "Upgrades and black market",
                 "commands": {
-                    "blackmarket": "Purchase random HyperItems (no cooldown)",
+                    "blackmarket": "Purchase random HyperItems",
                     "buycard": "Purchase a random card for 500 gold",
                     "inventory": "View your HyperItems and store upgrades",
                     "market": "Display information about the Black Market",
@@ -648,11 +629,12 @@ Remember to keep responses engaging but focused on the game.
                     "activate": "Activate a countryball as a manager",
                     "deactivate": "Deactivate a countryball manager",
                     "evolve": "Manually check evolution for countryballs",
-                    "expand": "Claim a province. Overseas expansion requires navy. Navy: 25% off, Airforce: 50% off (land only).",
+                    "expand": "Claim a province. Overseas requires navy.",
                     "map": "Show the world map",
                     "openpacks": "Unlock countryballs for completed subregions",
-                    "packs": "View your countryball collection",
-                    "rapidexpansion": "Claim a province using only soldiers (2× cost, cap 10000, reductions apply)",
+                    "packs": "View your countryball collection and progress",
+                    "rapidexpansion": "Claim a province using only soldiers (2× cost)",
+                    "reclaim": "Fight rebel-held territories during a civil war (+30% boost)",
                     "states": "Show global state ownership",
                     "synergies": "Show active synergy bonuses",
                     "territories": "List your owned provinces"
@@ -686,10 +668,7 @@ Remember to keep responses engaging but focused on the game.
                         parts.append(current)
                         current = line
                     else:
-                        if current:
-                            current += "\n" + line
-                        else:
-                            current = line
+                        current = (current + "\n" + line) if current else line
                 if current:
                     parts.append(current)
                 for i, part in enumerate(parts, 1):
@@ -720,24 +699,9 @@ Remember to keep responses engaging but focused on the game.
                 )
                 value = "\n".join(chunk)
                 if len(value) > 1024:
-                    sub_chunks = []
-                    current = ""
-                    for line in chunk:
-                        if len(current) + len(line) + 1 > 1024:
-                            sub_chunks.append(current)
-                            current = line
-                        else:
-                            if current:
-                                current += "\n" + line
-                            else:
-                                current = line
-                    if current:
-                        sub_chunks.append(current)
-                    for j, sub in enumerate(sub_chunks, 1):
-                        embed.add_field(name=f"Commands (Part {j})", value=sub, inline=False)
-                else:
-                    embed.add_field(name="Commands", value=value, inline=False)
-                embed.set_footer(text=f"Page {i}/{len(chunks)} – Use .warhelp for categories")
+                    value = value[:1021] + "..."
+                embed.add_field(name="Commands", value=value, inline=False)
+                embed.set_footer(text=f"Page {i}/{len(chunks)}")
                 await ctx.send(embed=embed)
             return
 
@@ -748,76 +712,62 @@ Remember to keep responses engaging but focused on the game.
         )
         value = "\n".join(cmd_list)
         if len(value) > 1024:
-            parts = []
-            current = ""
-            for line in cmd_list:
-                if len(current) + len(line) + 1 > 1024:
-                    parts.append(current)
-                    current = line
-                else:
-                    if current:
-                        current += "\n" + line
-                    else:
-                        current = line
-            if current:
-                parts.append(current)
-            for i, part in enumerate(parts, 1):
-                embed.add_field(name=f"Commands (Part {i})", value=part, inline=False)
-        else:
-            embed.add_field(name="Commands", value=value, inline=False)
+            value = value[:1021] + "..."
+        embed.add_field(name="Commands", value=value, inline=False)
         embed.set_footer(text="Use .warhelp for categories")
         await ctx.send(embed=embed)
 
-    # ---------- UPDATES COMMAND ----------
+    # =================================================================
+    # UPDATES
+    # =================================================================
     @commands.command(name='updates')
     async def show_updates(self, ctx):
-        embed = discord.Embed(
-            title="📅 NationBot Roadmap & Updates",
-            color=discord.Color.blue()
-        )
+        embed = discord.Embed(title="📅 NationBot Roadmap & Updates", color=discord.Color.blue())
         roadmap = (
             "**Phase 1: Core Stabilisation** (✅ Done)\n"
             "• Complete Firestore migration\n"
             "• Centralised config.py\n"
-            "• Fix economy balance (nerf tax, buff mid-game)\n"
+            "• Fix economy balance\n"
             "• Add corporation, megaproject, policy systems\n\n"
             "**Phase 2: Expansion & War Rework** (✅ Done)\n"
-            "• State‑based expansion with repel chance\n"
+            "• State-based expansion\n"
             "• Navy/airforce integration\n"
             "• `.states` global ownership map\n\n"
-            "**Phase 3: Victory Conditions** (🔄 In Progress)\n"
+            "**Phase 3: Victory Conditions** (✅ Done)\n"
             "• Domination, Economic, Industrial, Conquest, United Nations\n"
             "• `.victory` command to track progress\n\n"
-            "**Phase 4: Endgame Content** (📋 Planned)\n"
-            "• Global events (world wars, plagues)\n"
-            "• Post‑victory New Game+ mode"
+            "**Phase 4: Civil War** (✅ Done)\n"
+            "• Territory splits when happiness is low\n"
+            "• AI-generated news articles\n"
+            "• +30% offensive boost for the player"
         )
         embed.add_field(name="🗺️ Roadmap", value=roadmap, inline=False)
 
         updates = (
-            "**v2.5.0 – 2026-08-13**\n"
+            "**v2.6.0**\n"
+            "• Added full civil war system with territory splits\n"
+            "• AI-generated news + Pollinations images on war outbreak\n"
+            "• `.reclaim` command with +30% offensive boost\n"
+            "• Happiness can go negative (-100)\n"
+            "• Passive income scales down with negative happiness\n"
+            "• Tax hard-capped at 150,000 per collection\n"
+            "• AI models fixed (Groq + OpenRouter)\n"
+            "• 5-second civ cache for speed\n\n"
+            "**v2.5.0**\n"
             "• Added Victory Conditions system\n"
             "• Added `.victory` command\n"
             "• Added `.states` global map\n"
-            "• Expansion now has 25% repel chance\n"
-            "• Added `.rapidexpansion` with 2x soldier cost\n"
-            "• Updated warhelp with all new commands\n\n"
-            "**v2.4.0 – 2026-08-12**\n"
-            "• Added corporation system\n"
-            "• Added megaprojects\n"
-            "• Added policies\n"
-            "• Buffed mid-game commands\n"
-            "• Added `.cheerup` and `.buytech`\n"
-            "• Removed cooldowns from buildship/buildplane\n"
-            "• Added testing mode (`/testmode on|off`)"
+            "• Expansion has 25% repel chance\n"
+            "• Added `.rapidexpansion`"
         )
         embed.add_field(name="📝 Update Log", value=updates, inline=False)
         await ctx.send(embed=embed)
 
-    # ---------- VICTORY COMMAND ----------
+    # =================================================================
+    # VICTORY
+    # =================================================================
     @commands.command(name='victory')
     async def show_victory_progress(self, ctx):
-        """Show your progress toward victory conditions."""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
@@ -835,7 +785,6 @@ Remember to keep responses engaging but focused on the game.
             color=discord.Color.gold()
         )
 
-        # Domination
         d = progress["domination"]
         bar = self._create_bar(d["progress"], d["target"])
         embed.add_field(
@@ -844,7 +793,6 @@ Remember to keep responses engaging but focused on the game.
             inline=False
         )
 
-        # Economic
         e = progress["economic"]
         gold_bar = self._create_bar(e["gold"], e["target_gold"])
         gdp_bar = self._create_bar(e["gdp"], e["target_gdp"])
@@ -855,7 +803,6 @@ Remember to keep responses engaging but focused on the game.
             inline=False
         )
 
-        # Industrial
         ind = progress["industrial"]
         mega_bar = self._create_bar(ind["megaprojects"], ind["target_megaprojects"])
         policy_bar = self._create_bar(ind["policies"], ind["target_policies"])
@@ -866,16 +813,10 @@ Remember to keep responses engaging but focused on the game.
             inline=False
         )
 
-        # Conquest
         c = progress["conquest"]
         status = "✅ Complete" if c["completed"] else f"❌ {c['owned']}/{c['total']} provinces"
-        embed.add_field(
-            name="🌍 Conquest",
-            value=f"Own all provinces: {status}",
-            inline=False
-        )
+        embed.add_field(name="🌍 Conquest", value=f"Own all provinces: {status}", inline=False)
 
-        # United Nations
         un = progress["united_nations"]
         un_status = "✅ In alliance" if un["in_alliance"] else "❌ No alliance"
         embed.add_field(
@@ -895,7 +836,9 @@ Remember to keep responses engaging but focused on the game.
         bar = "▓" * filled + "░" * (length - filled)
         return bar
 
-    # ---------- REGIONS COMMAND ----------
+    # =================================================================
+    # REGIONS
+    # =================================================================
     @commands.command(name='regions')
     @app_commands.describe(region_name="Subregion to select (e.g., 'western europe')")
     async def regions_command(self, ctx, *, region_name: str = None):
@@ -908,18 +851,20 @@ Remember to keep responses engaging but focused on the game.
         if not region_name:
             embed = discord.Embed(
                 title="🌍 Available Subregions",
-                description="Choose a subregion to start your civilization. Each subregion provides unique bonuses based on its continent and provinces are **unique** – once a province is taken, no one else can claim it.\n\nTo select one, use `.regions <subregion_name>` (e.g., `.regions western europe`).",
+                description=("Choose a subregion to start your civilization. Each subregion provides unique bonuses. "
+                             "Provinces are **unique** – once taken, no one else can claim it.\n\n"
+                             "To select one, use `.regions <subregion_name>`."),
                 color=0x00ff00
             )
             grouped = {}
             for sub in ALL_SUBREGIONS:
                 continent = SUBREGION_TO_CONTINENT.get(sub, "Unknown")
                 grouped.setdefault(continent, []).append(sub)
+            all_owned = self._get_all_owned_provinces()
             for continent, sublist in grouped.items():
                 available_subregions = []
                 for sub in sorted(sublist):
                     provinces = PROVINCES.get(sub, [])
-                    all_owned = self._get_all_owned_provinces()
                     available = [p for p in provinces if p not in all_owned and p not in FORBIDDEN_START_PROVINCES]
                     if available:
                         available_subregions.append(sub)
@@ -959,11 +904,10 @@ Remember to keep responses engaging but focused on the game.
         available_provinces = [p for p in provinces_in_subregion if p not in all_owned and p not in FORBIDDEN_START_PROVINCES]
 
         if not available_provinces:
-            await ctx.send(f"❌ All startable provinces in **{matched_subregion}** have already been claimed. Choose another subregion.")
+            await ctx.send(f"❌ All startable provinces in **{matched_subregion}** have already been claimed.")
             return
 
         chosen_province = random.choice(available_provinces)
-
         continent = SUBREGION_TO_CONTINENT.get(matched_subregion, "Unknown")
         continent_bonuses = {
             "Europe": {"gold": 300, "tech_level": 1},
@@ -1022,7 +966,9 @@ Remember to keep responses engaging but focused on the game.
         else:
             await ctx.send("❌ Failed to update your region. Please try again later.")
 
-    # ---------- START COMMAND ----------
+    # =================================================================
+    # START
+    # =================================================================
     @commands.command(name='start')
     @app_commands.describe(civ_name="Name of your civilization")
     async def start_civilization(self, ctx, *, civ_name: str = None):
@@ -1061,6 +1007,9 @@ Remember to keep responses engaging but focused on the game.
         embed.add_field(name="📋 Next Steps", value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`\nTrack your victory progress with `.victory`", inline=False)
         await ctx.send(embed=embed)
 
+    # =================================================================
+    # IDEOLOGY
+    # =================================================================
     @commands.command(name='ideology')
     @app_commands.describe(ideology_type="Government ideology")
     @app_commands.choices(ideology_type=[
@@ -1131,6 +1080,9 @@ Remember to keep responses engaging but focused on the game.
         embed.add_field(name="🎉 Nation Almost Complete!", value="Your civilization is nearly ready! **Select your region with `.regions`** to complete your nation setup and receive regional bonuses.", inline=False)
         await ctx.send(embed=embed)
 
+    # =================================================================
+    # STATUS
+    # =================================================================
     @commands.command(name='status')
     async def civilization_status(self, ctx):
         user_id = str(ctx.author.id)
@@ -1138,16 +1090,53 @@ Remember to keep responses engaging but focused on the game.
         if not civ:
             await ctx.send("❌ You don't have a civilization yet! Use `.start <name>` to begin.")
             return
-        embed = discord.Embed(title=f"🏛️ {civ['name']}", description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}\n**Region**: {civ.get('region', 'Not selected')}", color=0x0099ff)
+        embed = discord.Embed(
+            title=f"🏛️ {civ['name']}",
+            description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}\n**Region**: {civ.get('region', 'Not selected')}",
+            color=0x0099ff
+        )
         resources = civ['resources']
-        embed.add_field(name="💰 Resources", value=f"🪙 Gold: {format_number(resources['gold'])}\n🌾 Food: {format_number(resources['food'])}\n🪨 Stone: {format_number(resources['stone'])}\n🪵 Wood: {format_number(resources['wood'])}", inline=True)
+        embed.add_field(
+            name="💰 Resources",
+            value=(f"🪙 Gold: {format_number(resources['gold'])}\n"
+                   f"🌾 Food: {format_number(resources['food'])}\n"
+                   f"🪨 Stone: {format_number(resources['stone'])}\n"
+                   f"🪵 Wood: {format_number(resources['wood'])}"),
+            inline=True
+        )
         population = civ['population']
         military = civ['military']
-        embed.add_field(name="👥 Population & Military", value=f"👤 Citizens: {format_number(population['citizens'])}\n😊 Happiness: {population['happiness']}%\n🍽️ Hunger: {population['hunger']}%\n⚔️ Soldiers: {format_number(military['soldiers'])}\n🕵️ Spies: {format_number(military['spies'])}", inline=True)
+        embed.add_field(
+            name="👥 Population & Military",
+            value=(f"👤 Citizens: {format_number(population['citizens'])}\n"
+                   f"😊 Happiness: {population['happiness']}%\n"
+                   f"🍽️ Hunger: {population['hunger']}%\n"
+                   f"⚔️ Soldiers: {format_number(military['soldiers'])}\n"
+                   f"🕵️ Spies: {format_number(military['spies'])}"),
+            inline=True
+        )
         territory = civ['territory']
         hyper_items = civ.get('hyper_items', [])
-        embed.add_field(name="🗺️ Territory & Items", value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n🎁 HyperItems: {len(hyper_items)}\n" + ("\n".join(f"• {item}" for item in hyper_items[:5]) + ("..." if len(hyper_items) > 5 else "")), inline=True)
+        embed.add_field(
+            name="🗺️ Territory & Items",
+            value=(f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n"
+                   f"🎁 HyperItems: {len(hyper_items)}\n" +
+                   ("\n".join(f"• {item}" for item in hyper_items[:5]) + ("..." if len(hyper_items) > 5 else ""))),
+            inline=True
+        )
+
+        # Civil war status
+        cw = civ.get('civil_war') or {}
+        if cw.get('active'):
+            embed.add_field(
+                name="⚠️ CIVIL WAR ACTIVE",
+                value=(f"Rebel territories: {len(cw.get('rebel_territories', []))}\n"
+                       f"Rebel strength: {cw.get('rebel_strength', 0)}\n"
+                       f"Use `.reclaim <territory>` to fight back."),
+                inline=False
+            )
         await ctx.send(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(BasicCommands(bot))
