@@ -100,7 +100,7 @@ class UnionCommands(commands.Cog):
     def _install_shared_state_hooks(self):
         manager=self.civ_manager
         if getattr(manager,"_union_hooks_installed",False):return
-        original_get=manager.get_civilization; original_resources=manager.update_resources; original_population=manager.update_population; original_military=manager.update_military; original_employment=manager.update_employment; original_territory=manager.update_territory; original_update=manager.update_civilization
+        original_get=manager.get_civilization; original_resources=manager.update_resources; original_population=manager.update_population; original_military=manager.update_military; original_employment=manager.update_employment; original_territory=manager.update_territory
         def merged(uid):
             base=original_get(str(uid)); members=self._members(uid)
             if not base or len(members)<2:return base
@@ -136,13 +136,7 @@ class UnionCommands(commands.Cog):
             result=original_territory(uid,c);total=sum(self._own_land(m) for m in members)
             for m in members:self._ref(m).update({"territory.land_size":int(total),"last_active":now_iso()});manager._invalidate_civ(m)
             return result
-        def uc(uid,changes):
-            members=self._members(uid)
-            if len(members)<2:return original_update(uid,changes)
-            safe=deepcopy(changes)
-            for m in members:self._ref(m).update(safe|{"last_active":now_iso()});manager._invalidate_civ(m)
-            return True
-        manager.get_civilization=merged;manager.update_resources=rh;manager.update_population=ph;manager.update_military=mh;manager.update_employment=eh;manager.update_territory=th;manager.update_civilization=uc;manager._union_hooks_installed=True
+        manager.get_civilization=merged;manager.update_resources=rh;manager.update_population=ph;manager.update_military=mh;manager.update_employment=eh;manager.update_territory=th;manager._union_hooks_installed=True
 
     @commands.command(name="status")
     async def status(self,ctx):
