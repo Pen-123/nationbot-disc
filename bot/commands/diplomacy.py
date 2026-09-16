@@ -11,7 +11,6 @@ from bot import config
 
 logger = logging.getLogger(__name__)
 
-# Max annex territories per peace deal — capped at 5 or 25% of target's territory
 MAX_ANNEX_TERRITORIES = 5
 ANNEX_FRACTION_CAP = 0.25
 
@@ -21,9 +20,10 @@ class DiplomacyCommands(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
-        # Proposals persist in Firestore.
 
-    # ---------- Internal helpers ----------
+    # ============================================================
+    # INTERNAL HELPERS
+    # ============================================================
     def _are_allied(self, user_a: str, user_b: str) -> bool:
         try:
             docs = self.db.client.collection("alliances").where("members", "array_contains", user_a).stream()
@@ -51,7 +51,7 @@ class DiplomacyCommands(commands.Cog):
                     await ctx.interaction.followup.send(**kwargs)
                 return
             except Exception:
-                logger.exception("Interaction response failed; falling back to ctx.send")
+                logger.exception("Interaction response failed")
         await ctx.send(content=content, embed=embed)
 
     def _check_cooldown(self, ctx, command_name: str):
@@ -70,8 +70,18 @@ class DiplomacyCommands(commands.Cog):
         self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
         return True, None
 
-    # ---------- Autocomplete ----------
-    async def _alliance_id_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    def _check_war(self, a_id: str, b_id: str) -> bool:
+        for war in self.db.get_wars(status="ongoing"):
+            a = war.get("attacker_id")
+            d = war.get("defender_id")
+            if (a == a_id and d == b_id) or (a == b_id and d == a_id):
+                return True
+        return False
+
+    # ============================================================
+    # AUTOCOMPLETE
+    # ============================================================
+    async def _alliance_id_autocomplete(self, interaction: discord.Interaction, current: str):
         uid = str(interaction.user.id)
         candidates = []
         for proposal in self.db.get_alliance_proposals_for_user(uid):
@@ -80,7 +90,7 @@ class DiplomacyCommands(commands.Cog):
                 candidates.append(app_commands.Choice(name=label[:100], value=proposal["id"]))
         return candidates[:25]
 
-    async def _trade_id_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    async def _trade_id_autocomplete(self, interaction: discord.Interaction, current: str):
         uid = str(interaction.user.id)
         candidates = []
         for trade in self.db.get_trade_proposals_for_user(uid):
@@ -90,7 +100,7 @@ class DiplomacyCommands(commands.Cog):
                 candidates.append(app_commands.Choice(name=label[:100], value=trade["id"]))
         return candidates[:25]
 
-    async def _peace_id_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    async def _peace_id_autocomplete(self, interaction: discord.Interaction, current: str):
         uid = str(interaction.user.id)
         candidates = []
         try:
@@ -98,32 +108,26 @@ class DiplomacyCommands(commands.Cog):
         except Exception:
             offers = []
         for offer in offers:
-            receiver_id = offer.get("receiver_id")
-            if receiver_id != uid:
+            if offer.get("receiver_id") != uid:
                 continue
             label = f"{offer['id']} - {offer.get('offerer_name','?')} ({offer.get('type','peace')})"
             if current.lower() in label.lower():
                 candidates.append(app_commands.Choice(name=label[:100], value=offer["id"]))
         return candidates[:25]
 
-    # =================================================================
+    # ============================================================
     # ALLIANCES
-    # =================================================================
-
+    # ============================================================
     @commands.hybrid_command(name='ally')
     @app_commands.describe(target="Civilization leader to ally with", alliance_name="Name of the alliance")
     async def propose_alliance(self, ctx, target: Optional[discord.Member] = None, alliance_name: Optional[str] = None):
         if not target or not alliance_name:
-            await self._respond(ctx, content="🤝 **Alliance Proposal**\nUsage: `.ally <user> <alliance_name>` or `/ally`")
-            return
-        ok, msg = self._check_cooldown(ctx, "ally")
-        if not ok:
-            await self._respond(ctx, content=msg, ephemeral=True)
+            await self._respond(ctx, content="🤝 **Alliance Proposal**\nUsage: `.ally <user> <alliance_name>`")
             return
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         if not civ:
-            await self._respond(ctx, content="❌ You need to start a civilization first! Use `.start <name>`")
+            await self._respond(ctx, content="❌ You need a civilization first!")
             return
         target_id = str(target.id)
         if target_id == user_id:
@@ -133,13 +137,11 @@ class DiplomacyCommands(commands.Cog):
         if not target_civ:
             await self._respond(ctx, content="❌ Target user doesn't have a civilization!")
             return
-        for war in self.db.get_wars(status="ongoing"):
-            a = war.get("attacker_id"); d = war.get("defender_id")
-            if (a == user_id and d == target_id) or (a == target_id and d == user_id):
-                await self._respond(ctx, content="❌ You cannot ally with a civilization you are at war with!")
-                return
+        if self._check_war(user_id, target_id):
+            await self._respond(ctx, content="❌ You cannot ally with someone you're at war with!")
+            return
         if self._are_allied(user_id, target_id):
-            await self._respond(ctx, content="❌ One of you is already in an alliance together!")
+            await self._respond(ctx, content="❌ You're already in an alliance together!")
             return
         alliance_id = str(random.randint(100000, 999999))
         self.db.save_alliance_proposal(alliance_id, {
@@ -153,24 +155,19 @@ class DiplomacyCommands(commands.Cog):
                               description=f"From **{civ['name']}** (led by {ctx.author.name})",
                               color=discord.Color.blue())
         embed.add_field(name="Proposed Alliance",
-                        value=f"Alliance Name: **{alliance_name}**\nBenefits: Mutual defense, resource sharing",
-                        inline=False)
+                        value=f"Alliance Name: **{alliance_name}**", inline=False)
         embed.add_field(name="How to Respond",
-                        value=(f"Use `.acceptally {alliance_id}` or `/acceptally`\n"
-                               f"Or `.rejectally {alliance_id}` or `/rejectally`\n"
-                               "Expires in 30 minutes."),
+                        value=f"`.acceptally {alliance_id}` or `.rejectally {alliance_id}`\nExpires in 30 minutes.",
                         inline=False)
         await ctx.send(f"<@{target_id}>", embed=embed)
         await self._respond(ctx, content=f"🤝 **Alliance Proposed!** Sent to **{target_civ['name']}**.")
-        self.db.log_event(user_id, "alliance_proposal", "Alliance Proposed",
-                          f"Proposed alliance '{alliance_name}' to {target_civ['name']}")
 
     @commands.hybrid_command(name='acceptally')
     @app_commands.describe(alliance_id="Pending alliance proposal ID")
     @app_commands.autocomplete(alliance_id=_alliance_id_autocomplete)
     async def accept_alliance(self, ctx, alliance_id: str = None):
         if not alliance_id:
-            await self._respond(ctx, content="Usage: `.acceptally <id>` or `/acceptally <id>`")
+            await self._respond(ctx, content="Usage: `.acceptally <id>`")
             return
         user_id = str(ctx.author.id)
         proposal = self.db.get_alliance_proposal(alliance_id)
@@ -178,35 +175,21 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="❌ Invalid or expired alliance ID!")
             return
         if user_id != proposal["target_id"]:
-            await self._respond(ctx, content="❌ This alliance proposal isn't for you!")
+            await self._respond(ctx, content="❌ This proposal isn't for you!")
             return
-        ok, msg = self._check_cooldown(ctx, "acceptally")
-        if not ok:
-            await self._respond(ctx, content=msg, ephemeral=True)
+        success = self.db.create_alliance(proposal["alliance_name"], proposal["proposer_id"], description="")
+        if not success:
+            await self._respond(ctx, content="❌ Failed to create alliance.")
             return
-        try:
-            success = self.db.create_alliance(proposal["alliance_name"], proposal["proposer_id"], description="")
-            if not success:
-                await self._respond(ctx, content="❌ Failed to create alliance.")
-                return
-            alliance = self.db.get_alliance_by_name(proposal["alliance_name"])
-            if not alliance:
-                await self._respond(ctx, content="❌ Alliance not found. Contact admin.")
-                return
+        alliance = self.db.get_alliance_by_name(proposal["alliance_name"])
+        if alliance:
             self.db.add_alliance_member(alliance["id"], user_id)
-            embed = discord.Embed(title="🤝 Alliance Formed!",
-                                  description=f"**{proposal['alliance_name']}** has been established!",
-                                  color=discord.Color.green())
-            await self._respond(ctx, embed=embed)
-            await ctx.send(f"<@{proposal['proposer_id']}> 🤝 **Alliance Accepted!**")
-            self.db.log_event(proposal["proposer_id"], "alliance", "Alliance Formed",
-                              f"Created alliance '{proposal['alliance_name']}'")
-            self.db.log_event(user_id, "alliance", "Alliance Formed",
-                              f"Joined alliance '{proposal['alliance_name']}'")
-            self.db.delete_alliance_proposal(alliance_id)
-        except Exception as e:
-            logger.error(f"Error creating alliance: {e}", exc_info=True)
-            await self._respond(ctx, content="❌ Failed to form alliance.")
+        embed = discord.Embed(title="🤝 Alliance Formed!",
+                              description=f"**{proposal['alliance_name']}** has been established!",
+                              color=discord.Color.green())
+        await self._respond(ctx, embed=embed)
+        await ctx.send(f"<@{proposal['proposer_id']}> 🤝 **Alliance Accepted!**")
+        self.db.delete_alliance_proposal(alliance_id)
 
     @commands.hybrid_command(name='rejectally')
     @app_commands.describe(alliance_id="Pending alliance proposal ID")
@@ -218,7 +201,7 @@ class DiplomacyCommands(commands.Cog):
         user_id = str(ctx.author.id)
         proposal = self.db.get_alliance_proposal(alliance_id)
         if not proposal:
-            await self._respond(ctx, content="❌ Invalid or expired alliance ID!")
+            await self._respond(ctx, content="❌ Invalid or expired!")
             return
         if user_id != proposal["target_id"]:
             await self._respond(ctx, content="❌ Not for you!")
@@ -252,17 +235,14 @@ class DiplomacyCommands(commands.Cog):
         embed = discord.Embed(title="💔 Alliance Broken",
                               description=f"Left the **{alliance_data['name']}** alliance.",
                               color=discord.Color.red())
-        embed.add_field(name="Consequence", value="-10 happiness", inline=False)
         await self._respond(ctx, embed=embed)
         for member_id in members:
             if member_id != user_id:
                 await ctx.send(f"<@{member_id}> 💔 {civ['name']} left the **{alliance_data['name']}** alliance.")
-        self.db.log_event(user_id, "alliance_break", "Alliance Broken", f"Left {alliance_data['name']}")
 
-    # =================================================================
+    # ============================================================
     # SEND / TRADE
-    # =================================================================
-
+    # ============================================================
     @commands.hybrid_command(name='send')
     @app_commands.describe(target="Recipient", resource_type="Resource", amount="Amount")
     @app_commands.choices(resource_type=[
@@ -296,8 +276,8 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content=f"❌ You don't have {amount} {resource_type}!")
             return
         is_allied = self._are_allied(user_id, target_id)
-        transfer_efficiency = 0.95 if is_allied else 0.9
-        received = int(amount * transfer_efficiency)
+        efficiency = 0.95 if is_allied else 0.9
+        received = int(amount * efficiency)
         self.civ_manager.spend_resources(user_id, {resource_type: amount})
         self.civ_manager.update_resources(target_id, {resource_type: received})
         icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
@@ -305,7 +285,7 @@ class DiplomacyCommands(commands.Cog):
                               description=f"Sent to **{target_civ['name']}**!",
                               color=discord.Color.blue())
         embed.add_field(name="Transfer",
-                        value=f"{icons[resource_type]} Sent: {amount}\n{icons[resource_type]} Received: {received}\n📊 Efficiency: {int(transfer_efficiency * 100)}%",
+                        value=f"{icons[resource_type]} Sent: {amount}\n{icons[resource_type]} Received: {received}\n📊 Efficiency: {int(efficiency * 100)}%",
                         inline=False)
         if is_allied:
             embed.add_field(name="Alliance Bonus", value="Higher efficiency!", inline=False)
@@ -335,7 +315,7 @@ class DiplomacyCommands(commands.Cog):
             return
         valid = ['gold', 'food', 'wood', 'stone']
         if offer_resource not in valid or request_resource not in valid:
-            await self._respond(ctx, content=f"❌ Invalid resource! Choose from: {', '.join(valid)}")
+            await self._respond(ctx, content=f"❌ Invalid resource!")
             return
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -422,10 +402,9 @@ class DiplomacyCommands(commands.Cog):
         await self._respond(ctx, content="💰 **Rejected.**")
         self.db.delete_trade_proposal(trade_id)
 
-    # =================================================================
+    # ============================================================
     # MAIL
-    # =================================================================
-
+    # ============================================================
     @commands.hybrid_command(name='mail')
     @app_commands.describe(target="Recipient", message="Diplomatic message")
     async def send_diplomatic_message(self, ctx, target: Optional[discord.Member] = None, *, message: Optional[str] = None):
@@ -465,10 +444,9 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="❌ You need a civilization first!")
             return
         embed = discord.Embed(title="📬 Inbox",
-                              description=f"Pending proposals and messages for **{civ['name']}**",
+                              description=f"Pending proposals for **{civ['name']}**",
                               color=discord.Color.blue())
 
-        # Alliance proposals
         alliance_proposals = []
         for proposal in self.db.get_alliance_proposals_for_user(user_id):
             proposer_civ = self.civ_manager.get_civilization(proposal["proposer_id"])
@@ -482,7 +460,6 @@ class DiplomacyCommands(commands.Cog):
                     f"`.acceptally {proposal['id']}` / `.rejectally {proposal['id']}` | Expires <t:{exp_ts}:R>"
                 )
 
-        # Trade proposals
         trade_proposals = []
         icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
         for trade in self.db.get_trade_proposals_for_user(user_id):
@@ -493,34 +470,32 @@ class DiplomacyCommands(commands.Cog):
                 exp_ts = int(exp_dt.timestamp()) if exp_dt else 0
                 trade_proposals.append(
                     f"**ID**: {trade['id']} — from **{proposer_civ['name']}**\n"
-                    f"Offers: {icons[trade['offer_resource']]} {trade['offer_amount']} {trade['offer_resource'].capitalize()}\n"
-                    f"Requests: {icons[trade['request_resource']]} {trade['request_amount']} {trade['request_resource'].capitalize()}\n"
+                    f"Offers: {icons[trade['offer_resource']]} {trade['offer_amount']}\n"
+                    f"Requests: {icons[trade['request_resource']]} {trade['request_amount']}\n"
                     f"`.accepttrade {trade['id']}` / `.rejecttrade {trade['id']}` | Expires <t:{exp_ts}:R>"
                 )
 
-        # Peace offers
         peace_offers_list = []
         for offer in self.db.get_peace_offers(user_id):
             if offer.get("receiver_id") != user_id:
                 continue
             terms = offer.get("terms", {}) or {}
             offer_type = offer.get("type", "peace")
-            expiry_iso = offer.get("expires_at")
+            exp_iso = offer.get("expires_at")
             exp_ts = 0
-            if expiry_iso:
+            if exp_iso:
                 try:
-                    exp_dt = datetime.fromisoformat(expiry_iso)
+                    exp_dt = datetime.fromisoformat(exp_iso)
                     exp_ts = int(exp_dt.timestamp())
                 except Exception:
                     pass
-            terms_summary = self._summarize_terms(terms, offer_type)
+            terms_summary = self._format_terms(terms, offer_type)
             peace_offers_list.append(
                 f"**ID**: {offer['id']} — from **{offer.get('offerer_name','?')}** ({offer_type})\n"
                 f"{terms_summary}\n"
                 f"`.acceptpeace {offer['id']}` / `.rejectpeace {offer['id']}` | Expires <t:{exp_ts}:R>"
             )
 
-        # Diplomatic messages
         messages_list = []
         try:
             for m in self.db.get_messages(user_id):
@@ -550,16 +525,15 @@ class DiplomacyCommands(commands.Cog):
 
         await self._respond(ctx, embed=embed, ephemeral=True)
 
-    # =================================================================
-    # PEACE — SIMPLE (permanent, no terms)
-    # =================================================================
-
-    @commands.hybrid_command(name='peace')
+    # ============================================================
+    # SIMPLE PEACE (renamed from 'peace' to avoid military.py collision)
+    # ============================================================
+    @commands.hybrid_command(name='simplepeace', aliases=['sp'])
     @app_commands.describe(target="Civilization leader to offer peace to")
-    async def make_peace(self, ctx, target: Optional[discord.Member] = None):
-        """Simple permanent peace — no terms."""
+    async def simple_peace(self, ctx, target: Optional[discord.Member] = None):
+        """Simple permanent peace — no terms. (Renamed from .peace to avoid clash with military.)"""
         if not target:
-            await self._respond(ctx, content="🕊️ **Simple Peace**\nUsage: `.peace <user>`\nFor a customizable deal, use `.peacedraft`.")
+            await self._respond(ctx, content="🕊️ **Simple Peace**\nUsage: `.simplepeace <user>` (alias `.sp`)\nFor a customizable deal, use `.peacedraft`.")
             return
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -577,13 +551,11 @@ class DiplomacyCommands(commands.Cog):
         if not self._check_war(user_id, target_id):
             await self._respond(ctx, content="❌ You're not at war with them!")
             return
-
         existing = self.db.get_peace_offers(user_id)
         for offer in existing:
             if offer.get("offerer_id") == user_id and offer.get("receiver_id") == target_id:
-                await self._respond(ctx, content="❌ You already have a pending offer to them!")
+                await self._respond(ctx, content="❌ You already have a pending offer!")
                 return
-
         offer_id = self.db.create_peace_offer(
             user_id, target_id, offer_type="peace",
             terms={"gold": 0, "food": 0, "wood": 0, "stone": 0,
@@ -604,16 +576,15 @@ class DiplomacyCommands(commands.Cog):
         except Exception:
             pass
 
-    # =================================================================
-    # PEACE — DRAFTED (interactive walkthrough)
-    # =================================================================
-
+    # ============================================================
+    # DRAFTED PEACE
+    # ============================================================
     @commands.hybrid_command(name='peacedraft')
     @app_commands.describe(target="Civilization leader to negotiate with")
     async def peace_draft(self, ctx, target: Optional[discord.Member] = None):
         """Interactive peace deal drafting — annex territories, demand resources, set ceasefire time."""
         if not target:
-            await self._respond(ctx, content="🕊️ **Draft Peace**\nUsage: `.peacedraft <user>`\nYou'll be walked through each term.")
+            await self._respond(ctx, content="🕊️ **Draft Peace**\nUsage: `.peacedraft <user>`")
             return
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
@@ -629,17 +600,16 @@ class DiplomacyCommands(commands.Cog):
             await self._respond(ctx, content="❌ Target has no civilization!")
             return
         if not self._check_war(user_id, target_id):
-            await self._respond(ctx, content="❌ You're not at war with them! Peace deals only apply to active wars.")
+            await self._respond(ctx, content="❌ You're not at war with them!")
             return
 
-        # Intro
         embed = discord.Embed(
             title="🕊️ Draft a Peace Deal",
             description=(
                 f"Negotiating with **{target_civ['name']}**.\n"
                 "You'll be asked for each term one at a time.\n"
                 "**Type `skip` for any field** to leave it at 0.\n"
-                f"Whole draft expires in **5 minutes**."
+                "Whole draft expires in **5 minutes**."
             ),
             color=discord.Color.blue()
         )
@@ -666,39 +636,26 @@ class DiplomacyCommands(commands.Cog):
             except (ValueError, AttributeError):
                 return None
 
-        # --- Gold ---
-        max_gold = target_civ['resources']['gold']
-        gold_demand = await ask(f"💰 **How much gold to demand?** Target has {max_gold:,}.", max_gold)
+        gold_demand = await ask(f"💰 **How much gold?** Target has {target_civ['resources']['gold']:,}.", target_civ['resources']['gold'])
         if gold_demand is None:
             await ctx.send("❌ Draft timed out.")
             return
-
-        # --- Food ---
-        max_food = target_civ['resources']['food']
-        food_demand = await ask(f"🌾 **How much food?** Target has {max_food:,}.", max_food)
+        food_demand = await ask(f"🌾 **How much food?** Target has {target_civ['resources']['food']:,}.", target_civ['resources']['food'])
         if food_demand is None:
             await ctx.send("❌ Draft timed out.")
             return
-
-        # --- Wood ---
-        max_wood = target_civ['resources']['wood']
-        wood_demand = await ask(f"🪵 **How much wood?** Target has {max_wood:,}.", max_wood)
+        wood_demand = await ask(f"🪵 **How much wood?** Target has {target_civ['resources']['wood']:,}.", target_civ['resources']['wood'])
         if wood_demand is None:
             await ctx.send("❌ Draft timed out.")
             return
-
-        # --- Stone ---
-        max_stone = target_civ['resources']['stone']
-        stone_demand = await ask(f"🪨 **How much stone?** Target has {max_stone:,}.", max_stone)
+        stone_demand = await ask(f"🪨 **How much stone?** Target has {target_civ['resources']['stone']:,}.", target_civ['resources']['stone'])
         if stone_demand is None:
             await ctx.send("❌ Draft timed out.")
             return
-
-        # --- Ceasefire hours ---
         hours = await ask(
             "⏳ **Ceasefire duration in hours?**\n"
             "`0` = permanent peace (ends the war)\n"
-            "Any positive number = temporary ceasefire (war continues after expiry)\n"
+            "Any positive = temporary ceasefire (war continues after)\n"
             "Max 720 hours (30 days).",
             max_val=720
         )
@@ -706,19 +663,16 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ Draft timed out.")
             return
 
-        # --- Annex territories ---
         target_territories = self.db.get_player_territories(target_id)
         annex_list: List[str] = []
-
         if target_territories:
             max_annex = min(MAX_ANNEX_TERRITORIES, max(1, int(len(target_territories) * ANNEX_FRACTION_CAP)))
             preview = ", ".join(target_territories[:20])
             if len(target_territories) > 20:
                 preview += f"... (+{len(target_territories) - 20} more)"
-
             await ctx.send(
                 f"🏴 **Which territories to annex?**\n"
-                f"You can annex up to **{max_annex}** (25% cap, max {MAX_ANNEX_TERRITORIES}).\n"
+                f"You can annex up to **{max_annex}**.\n"
                 f"Target owns: {preview}\n\n"
                 f"Type comma-separated names, or `skip` for none."
             )
@@ -727,7 +681,6 @@ class DiplomacyCommands(commands.Cog):
                 content = msg.content.strip()
                 if content.lower() != "skip":
                     requested = [t.strip() for t in content.split(",") if t.strip()]
-                    # Match to actual territory names (case-insensitive)
                     matched = []
                     for req in requested:
                         for t in target_territories:
@@ -736,12 +689,11 @@ class DiplomacyCommands(commands.Cog):
                                 break
                     annex_list = matched[:max_annex]
                     if len(matched) > max_annex:
-                        await ctx.send(f"⚠️ Only first **{max_annex}** territories will be included.")
+                        await ctx.send(f"⚠️ Only first **{max_annex}** will be included.")
             except asyncio.TimeoutError:
                 await ctx.send("❌ Draft timed out.")
                 return
 
-        # --- Summary ---
         terms = {
             "gold": gold_demand,
             "food": food_demand,
@@ -750,15 +702,13 @@ class DiplomacyCommands(commands.Cog):
             "annex_territories": annex_list,
             "ceasefire_hours": hours,
         }
-
         summary = self._format_terms(terms, "peace")
-        embed = discord.Embed(
-            title="📜 Peace Deal Summary",
-            description=f"From **{civ['name']}** → **{target_civ['name']}**",
-            color=discord.Color.gold()
-        )
+
+        embed = discord.Embed(title="📜 Peace Deal Summary",
+                              description=f"From **{civ['name']}** → **{target_civ['name']}**",
+                              color=discord.Color.gold())
         embed.add_field(name="Terms", value=summary, inline=False)
-        embed.set_footer(text="Type 'confirm' within 60 seconds to send, or 'cancel' to abort.")
+        embed.set_footer(text="Type 'confirm' within 60s to send, or 'cancel' to abort.")
         await ctx.send(embed=embed)
 
         try:
@@ -770,28 +720,22 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ Draft timed out.")
             return
 
-        # --- Save & send ---
         offer_id = self.db.create_peace_offer(user_id, target_id, offer_type="peace", terms=terms)
         if not offer_id:
             await ctx.send("❌ Failed to create peace offer.")
             return
-
-        embed = discord.Embed(
-            title="🕊️ Peace Offer Sent!",
-            description=f"**{civ['name']}** sent terms to **{target_civ['name']}**.",
-            color=discord.Color.green()
-        )
+        embed = discord.Embed(title="🕊️ Peace Offer Sent!",
+                              description=f"**{civ['name']}** sent terms to **{target_civ['name']}**.",
+                              color=discord.Color.green())
         embed.add_field(name="Terms", value=summary, inline=False)
         embed.add_field(name="Respond",
-                        value=f"`{target.mention}` — use `.acceptpeace {offer_id}` or `.rejectpeace {offer_id}`",
+                        value=f"`{target.mention}` — `.acceptpeace {offer_id}` or `.rejectpeace {offer_id}`",
                         inline=False)
         await ctx.send(embed=embed)
-        self.db.log_event(user_id, "peace_offer", "Peace Offer Drafted", f"Sent terms to {target_civ['name']}")
 
-    # =================================================================
+    # ============================================================
     # ACCEPT / REJECT PEACE
-    # =================================================================
-
+    # ============================================================
     @commands.hybrid_command(name='acceptpeace')
     @app_commands.describe(offer_id="Peace offer ID")
     @app_commands.autocomplete(offer_id=_peace_id_autocomplete)
@@ -819,7 +763,6 @@ class DiplomacyCommands(commands.Cog):
         terms = offer.get("terms", {}) or {}
         offer_type = offer.get("type", "peace")
 
-        # --- Verify the receiver can actually pay ---
         costs = {
             "gold": terms.get("gold", 0),
             "food": terms.get("food", 0),
@@ -827,21 +770,18 @@ class DiplomacyCommands(commands.Cog):
             "stone": terms.get("stone", 0),
         }
         if not self.civ_manager.can_afford(user_id, costs):
-            await self._respond(ctx, content="❌ You can no longer afford those terms! The deal is invalid.")
+            await self._respond(ctx, content="❌ You can no longer afford those terms!")
             self.db.delete_peace_offer(offer_id)
             return
 
-        # --- Verify the receiver still owns the annex territories ---
         receiver_territories = set(self.db.get_player_territories(user_id))
         annex_list = terms.get("annex_territories", [])
         missing = [t for t in annex_list if t not in receiver_territories]
         if missing:
-            await self._respond(ctx, content=f"❌ You no longer own: {', '.join(missing)}. Deal is invalid.")
+            await self._respond(ctx, content=f"❌ You no longer own: {', '.join(missing)}.")
             self.db.delete_peace_offer(offer_id)
             return
 
-        # --- Apply terms ---
-        # 1. Resource transfer
         paid = {}
         for res, amt in costs.items():
             if amt > 0:
@@ -849,7 +789,6 @@ class DiplomacyCommands(commands.Cog):
                 self.civ_manager.update_resources(offerer_id, {res: amt})
                 paid[res] = amt
 
-        # 2. Territory transfer
         transferred = []
         territory_cog = self.bot.get_cog("TerritoryCog")
         for t in annex_list:
@@ -860,24 +799,18 @@ class DiplomacyCommands(commands.Cog):
                 self.civ_manager.update_territory(user_id, {"land_size": -area})
                 transferred.append(t)
 
-        # 3. Ceasefire or permanent peace
         ceasefire_hours = terms.get("ceasefire_hours", 0)
         if ceasefire_hours and ceasefire_hours > 0:
             self.db.create_ceasefire(offerer_id, user_id, ceasefire_hours)
             war_ended = False
         else:
-            # permanent peace — end the war
             self.db.end_war(offerer_id, user_id, "peace")
             war_ended = True
 
-        # 4. Happiness bonus both sides
         self.civ_manager.update_population(user_id, {"happiness": 15})
         self.civ_manager.update_population(offerer_id, {"happiness": 15})
-
-        # 5. Cleanup
         self.db.delete_peace_offer(offer_id)
 
-        # --- Announce ---
         icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
         embed = discord.Embed(
             title="🕊️ Peace Deal Accepted!" if war_ended else "⏳ Ceasefire Accepted!",
@@ -885,33 +818,21 @@ class DiplomacyCommands(commands.Cog):
             color=discord.Color.green()
         )
         if paid:
-            embed.add_field(
-                name="Resources Transferred",
-                value="\n".join([f"{icons[r]} {v:,} {r.capitalize()}" for r, v in paid.items()]),
-                inline=False
-            )
+            embed.add_field(name="Resources Transferred",
+                            value="\n".join([f"{icons[r]} {v:,} {r.capitalize()}" for r, v in paid.items()]),
+                            inline=False)
         if transferred:
-            embed.add_field(
-                name="Territories Annexed",
-                value=", ".join(transferred),
-                inline=False
-            )
+            embed.add_field(name="Territories Annexed",
+                            value=", ".join(transferred),
+                            inline=False)
         if ceasefire_hours and ceasefire_hours > 0:
-            embed.add_field(
-                name="Ceasefire Duration",
-                value=f"{ceasefire_hours} hours",
-                inline=False
-            )
+            embed.add_field(name="Ceasefire Duration",
+                            value=f"{ceasefire_hours} hours",
+                            inline=False)
         else:
             embed.add_field(name="War Status", value="⚔️ **War Ended** — permanent peace.", inline=False)
         embed.add_field(name="Morale Boost", value="Both nations gain +15 happiness.", inline=False)
         await ctx.send(embed=embed)
-
-        self.db.log_event(offerer_id, "peace_accepted", "Peace Deal Accepted",
-                          f"Deal with {receiver_civ['name']} — {len(transferred)} territories, "
-                          f"{sum(paid.values()):,} resources")
-        self.db.log_event(user_id, "peace_accepted", "Peace Deal Accepted",
-                          f"Deal with {offerer_civ['name']}")
 
     @commands.hybrid_command(name='rejectpeace')
     @app_commands.describe(offer_id="Peace offer ID")
@@ -923,7 +844,7 @@ class DiplomacyCommands(commands.Cog):
         user_id = str(ctx.author.id)
         offer = self.db.get_peace_offer_by_id(offer_id)
         if not offer:
-            await self._respond(ctx, content="❌ Invalid or expired peace offer.")
+            await self._respond(ctx, content="❌ Invalid or expired.")
             return
         if offer.get("receiver_id") != user_id:
             await self._respond(ctx, content="❌ Not for you!")
@@ -946,11 +867,9 @@ class DiplomacyCommands(commands.Cog):
         terms = offer.get("terms", {}) or {}
         offer_type = offer.get("type", "peace")
         summary = self._format_terms(terms, offer_type)
-        embed = discord.Embed(
-            title=f"📜 Peace Offer {offer_id}",
-            description=f"From <@{offer.get('offerer_id')}> → <@{offer.get('receiver_id')}>",
-            color=discord.Color.blue()
-        )
+        embed = discord.Embed(title=f"📜 Peace Offer {offer_id}",
+                              description=f"From <@{offer.get('offerer_id')}> → <@{offer.get('receiver_id')}>",
+                              color=discord.Color.blue())
         embed.add_field(name="Type", value=offer_type.capitalize(), inline=True)
         embed.add_field(name="Terms", value=summary, inline=False)
         await self._respond(ctx, embed=embed, ephemeral=True)
@@ -966,22 +885,16 @@ class DiplomacyCommands(commands.Cog):
         for offer in offers:
             direction = "📤 SENT" if offer.get("offerer_id") == user_id else "📥 RECEIVED"
             terms = offer.get("terms", {}) or {}
-            summary = self._summarize_terms(terms, offer.get("type", "peace"))
-            embed.add_field(
-                name=f"{direction} — ID `{offer['id']}`",
-                value=summary,
-                inline=False
-            )
+            summary = self._format_terms(terms, offer.get("type", "peace"))
+            embed.add_field(name=f"{direction} — ID `{offer['id']}`", value=summary, inline=False)
         await self._respond(ctx, embed=embed, ephemeral=True)
 
-    # =================================================================
-    # CEASEFIRE — DIRECT (no terms, just pause)
-    # =================================================================
-
+    # ============================================================
+    # CEASEFIRE (was in ceasefire.py — now baked here)
+    # ============================================================
     @commands.hybrid_command(name='ceasefire')
     @app_commands.describe(target="Civilization leader", hours="Duration in hours (1-720)")
-    async def propose_ceasefire(self, ctx, target: Optional[discord.Member] = None, hours: int = None):
-        """Direct ceasefire — pauses military action for X hours without ending the war."""
+    async def ceasefire(self, ctx, target: Optional[discord.Member] = None, hours: int = None):
         if not target or hours is None:
             await self._respond(ctx, content="⏳ **Ceasefire**\nUsage: `.ceasefire <user> <hours>`\nMax 720 hours (30 days).")
             return
@@ -1004,13 +917,10 @@ class DiplomacyCommands(commands.Cog):
         if not self._check_war(user_id, target_id):
             await self._respond(ctx, content="❌ You're not at war with them!")
             return
-
-        # Check existing ceasefire
         active = self.db.get_active_ceasefire(user_id, target_id)
         if active:
-            await self._respond(ctx, content="❌ You already have an active ceasefire with them!")
+            await self._respond(ctx, content="❌ There's already an active ceasefire!")
             return
-
         offer_id = self.db.create_peace_offer(
             user_id, target_id, offer_type="ceasefire",
             terms={"ceasefire_hours": hours}
@@ -1018,36 +928,67 @@ class DiplomacyCommands(commands.Cog):
         if not offer_id:
             await self._respond(ctx, content="❌ Failed to create ceasefire proposal.")
             return
-
         embed = discord.Embed(
             title="⏳ Ceasefire Proposed",
             description=f"**{civ['name']}** → **{target_civ['name']}** for **{hours} hours**.",
             color=discord.Color.blue()
         )
-        embed.add_field(
-            name="Terms",
-            value=f"War continues, but no military actions between you for {hours}h.",
-            inline=False
-        )
-        embed.add_field(
-            name="Respond",
-            value=f"`{target.mention}` — `.acceptpeace {offer_id}` or `.rejectpeace {offer_id}`",
-            inline=False
-        )
+        embed.add_field(name="Terms",
+                        value=f"War continues, but no military actions for {hours}h.",
+                        inline=False)
+        embed.add_field(name="Respond",
+                        value=f"`{target.mention}` — `.acceptpeace {offer_id}` or `.rejectpeace {offer_id}`",
+                        inline=False)
         await ctx.send(embed=embed)
 
-    # =================================================================
+    @commands.hybrid_command(name='ceasefires')
+    async def list_ceasefires(self, ctx):
+        user_id = str(ctx.author.id)
+        ceasefires = self.db.get_all_ceasefires_for_user(user_id)
+        if not ceasefires:
+            await self._respond(ctx, content="📭 No active ceasefires.")
+            return
+        embed = discord.Embed(title="⏳ Active Ceasefires", color=discord.Color.blue())
+        for cf in ceasefires:
+            other_id = cf.get("civ_b") if cf.get("civ_a") == user_id else cf.get("civ_a")
+            other_civ = self.civ_manager.get_civilization(other_id)
+            other_name = other_civ['name'] if other_civ else other_id[:6]
+            exp_iso = cf.get("expires_at", "")
+            exp_ts = 0
+            try:
+                exp_dt = datetime.fromisoformat(exp_iso)
+                exp_ts = int(exp_dt.timestamp())
+            except Exception:
+                pass
+            embed.add_field(name=f"vs **{other_name}**", value=f"Expires <t:{exp_ts}:R>", inline=False)
+        await self._respond(ctx, embed=embed, ephemeral=True)
+
+    @commands.hybrid_command(name='breakceasefire')
+    @app_commands.describe(target="Civilization leader")
+    async def break_ceasefire(self, ctx, target: Optional[discord.Member] = None):
+        if not target:
+            await self._respond(ctx, content="Usage: `.breakceasefire <user>`")
+            return
+        user_id = str(ctx.author.id)
+        target_id = str(target.id)
+        cf = self.db.get_active_ceasefire(user_id, target_id)
+        if not cf:
+            await self._respond(ctx, content="❌ No active ceasefire between you.")
+            return
+        try:
+            self.db.client.collection("ceasefires").document(cf["id"]).delete()
+        except Exception as e:
+            logger.error(f"Failed to delete ceasefire: {e}")
+        self.civ_manager.update_population(user_id, {"happiness": -15})
+        embed = discord.Embed(title="💔 Ceasefire Broken",
+                              description=f"**{ctx.author.display_name}** broke the ceasefire with **{target.display_name}**.",
+                              color=discord.Color.red())
+        embed.add_field(name="Consequence", value="-15 happiness", inline=False)
+        await ctx.send(embed=embed)
+
+    # ============================================================
     # UTIL
-    # =================================================================
-
-    def _check_war(self, attacker_id: str, defender_id: str) -> bool:
-        for war in self.db.get_wars(status="ongoing"):
-            a = war.get("attacker_id")
-            d = war.get("defender_id")
-            if (a == attacker_id and d == defender_id) or (a == defender_id and d == attacker_id):
-                return True
-        return False
-
+    # ============================================================
     def _format_terms(self, terms: dict, offer_type: str) -> str:
         lines = []
         if offer_type == "ceasefire":
@@ -1081,13 +1022,9 @@ class DiplomacyCommands(commands.Cog):
             lines.append("*No terms — pure peace.*")
         return "\n".join(lines)
 
-    def _summarize_terms(self, terms: dict, offer_type: str) -> str:
-        return self._format_terms(terms, offer_type)[:1000]
-
-    # =================================================================
+    # ============================================================
     # COALITION
-    # =================================================================
-
+    # ============================================================
     @commands.hybrid_command(name='coalition')
     @app_commands.describe(target_alliance="Target alliance name")
     async def form_coalition(self, ctx, target_alliance: str = None):
