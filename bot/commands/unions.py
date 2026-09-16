@@ -23,9 +23,10 @@ class UnionCommands(commands.Cog):
     def _members(self, uid): return [str(x) for x in ((self._union(uid) or {}).get("members", []))]
     def _own_land(self, uid): return sum(PROVINCE_AREAS.get(p, 1000) for p in self.db.get_player_territories(uid))
     def _proposal(self, collection, rid): return self.db.client.collection(collection).document(rid)
+
     def _remove_gold(self, uid, amount):
         civ=self._civ(uid) or {}; r=dict(civ.get("resources", {}))
-        if r.get("gold",0) < amount: return False
+        if r.get("gold",0) < amount): return False
         r["gold"]-=amount; self._ref(uid).update({"resources":r,"last_active":now_iso()}); return True
 
     def _reps(self, members):
@@ -68,17 +69,44 @@ class UnionCommands(commands.Cog):
         out.setdefault("territory",{})["land_size"]=sum(self._own_land(m) for m in members)
         return out
 
-    def _sync_union(self,members):
-        members=list(dict.fromkeys(str(x) for x in members)); agg=self._aggregate(members)
-        if len(members)<2 or not agg: return
-        u=self._union(self._reps(members)[0]) or {}; u={**u,"members":members}
+    def _combine_aggregates(self, a, b, members):
+        out=deepcopy(a or b or {})
+        for field in ("resources","military"):
+            x=a.get(field,{}) if a else {}; y=b.get(field,{}) if b else {}; keys=set(x)|set(y)
+            out[field]={k:(max(x.get(k,0),y.get(k,0)) if k=="tech_level" else x.get(k,0)+y.get(k,0)) for k in keys}
+        ap=(a or {}).get("population",{}); bp=(b or {}).get("population",{}); p=deepcopy(ap or bp)
+        p["citizens"]=ap.get("citizens",0)+bp.get("citizens",0); p["employed"]=min(p["citizens"],ap.get("employed",0)+bp.get("employed",0))
+        totalp=p["citizens"] or 1; p["happiness"]=round((ap.get("happiness",0)*ap.get("citizens",0)+bp.get("happiness",0)*bp.get("citizens",0))/totalp); p["hunger"]=round((ap.get("hunger",0)*ap.get("citizens",0)+bp.get("hunger",0)*bp.get("citizens",0))/totalp); out["population"]=p
+        for field in ("bonuses","policies","corporations","megaprojects"):
+            x=a.get(field,{}) if a else {}; y=b.get(field,{}) if b else {}; merged=deepcopy(x)
+            for k,v in y.items(): merged[k]=merged.get(k,0)+v if isinstance(v,(int,float)) and isinstance(merged.get(k), (int,float)) else deepcopy(v)
+            if merged: out[field]=merged
+        for field in ("hyper_items","selected_cards","purchased_cards","owned_territories","black_market_history"):
+            vals=[]; seen=set()
+            for c in (a or {},b or {}):
+                for x in c.get(field,[]) or []:
+                    marker=repr(x)
+                    if marker not in seen: seen.add(marker); vals.append(deepcopy(x))
+            if vals: out[field]=vals
+        out.setdefault("territory",{})["land_size"]=sum(self._own_land(m) for m in members)
+        return out
+
+    def _write_union(self, members, union, agg):
         for m in members:
-            self._ref(m).update({"resources":agg.get("resources",{}),"military":agg.get("military",{}),"population":agg.get("population",{}),"territory.land_size":int(agg.get("territory",{}).get("land_size",0)),"name":u.get("name",agg.get("name","Union")),"union":u,"leaders":members,"last_active":now_iso()}); self.civ_manager._invalidate_civ(m)
+            self._ref(m).update({"resources":deepcopy(agg.get("resources",{})),"military":deepcopy(agg.get("military",{})),"population":deepcopy(agg.get("population",{})),"territory.land_size":int(agg.get("territory",{}).get("land_size",0)),"name":union.get("name",agg.get("name","Union")),"union":union,"leaders":members,"last_active":now_iso()})
+            self.civ_manager._invalidate_civ(m)
+
+    def _sync_union(self,members, agg=None):
+        members=list(dict.fromkeys(str(x) for x in members))
+        if len(members)<2: return
+        agg=agg or self._aggregate(members)
+        u=self._union(members[0]) or {}; u={**u,"members":members}
+        self._write_union(members,u,agg)
 
     def _install_shared_state_hooks(self):
         manager=self.civ_manager
         if getattr(manager,"_union_hooks_installed",False): return
-        original_get=manager.get_civilization; original_resources=manager.update_resources; original_population=manager.update_population; original_military=manager.update_military; original_employment=manager.update_employment; original_territory=manager.update_territory
+        original_get=manager.get_civilization; original_resources=manager.update_resources; original_population=manager.update_population; original_military=manager.update_military; original_employment=manager.update_employment; original_territory=manager.update_territory; original_update=manager.update_civilization
         def merged(uid):
             base=original_get(str(uid)); members=self._members(uid)
             if not base or len(members)<2: return base
@@ -114,7 +142,13 @@ class UnionCommands(commands.Cog):
             result=original_territory(uid,c); total=sum(self._own_land(m) for m in members)
             for m in members: self._ref(m).update({"territory.land_size":int(total),"last_active":now_iso()}); manager._invalidate_civ(m)
             return result
-        manager.get_civilization=merged; manager.update_resources=rh; manager.update_population=ph; manager.update_military=mh; manager.update_employment=eh; manager.update_territory=th; manager._union_hooks_installed=True
+        def uc(uid,changes):
+            members=self._members(uid)
+            if len(members)<2: return original_update(uid,changes)
+            safe=deepcopy(changes)
+            for m in members: self._ref(m).update(safe | {"last_active":now_iso()}); manager._invalidate_civ(m)
+            return True
+        manager.get_civilization=merged; manager.update_resources=rh; manager.update_population=ph; manager.update_military=mh; manager.update_employment=eh; manager.update_territory=th; manager.update_civilization=uc; manager._union_hooks_installed=True
 
     @commands.command(name="status")
     async def status(self,ctx):
@@ -151,12 +185,14 @@ class UnionCommands(commands.Cog):
         req=snap.to_dict(); requester=str(req.get("requester_id")); target=str(req.get("target_id"))
         if req.get("status")!="pending" or target!=uid: return await ctx.send("❌ This union request is not waiting for you.")
         a=self._members(requester) or [requester]; b=self._members(uid) or [uid]; members=list(dict.fromkeys(a+b))
-        union_id=((self._union(requester) or self._union(uid) or {}).get("id") or ref.id); union={"id":union_id,"name":req["new_country"],"members":members,"created_at":now_iso()}
-        for m in members:
-            civ=self._civ(m) or {}; updates={"union":union,"name":req["new_country"],"leaders":members,"last_active":now_iso()}
-            if not civ.get("original_union_name"): updates["original_union_name"]=civ.get("name","Independent Nation")
-            self._ref(m).update(updates)
-        self._sync_union(members); ref.update({"status":"accepted","accepted_at":now_iso()}); await ctx.send(f"🤝 **{req['new_country']}** has expanded into a **{len(members)}-member union**! Everyone now acts as one country.")
+        # IMPORTANT: aggregate both existing unions BEFORE changing their union IDs.
+        a_agg=self._aggregate(a); b_agg=self._aggregate(b) if b!=a else {}
+        agg=self._combine_aggregates(a_agg,b_agg,members) if a_agg and b_agg else (a_agg or b_agg)
+        old_union=self._union(requester) or self._union(uid) or {}
+        union_id=old_union.get("id") or ref.id
+        union={"id":union_id,"name":req["new_country"],"members":members,"created_at":old_union.get("created_at",now_iso())}
+        self._write_union(members,union,agg)
+        ref.update({"status":"accepted","accepted_at":now_iso()}); await ctx.send(f"🤝 **{req['new_country']}** has expanded into a **{len(members)}-member union**! All members now share one country, economy, military, population and territory.")
 
     @commands.command(name="declineunite")
     async def decline_unite(self,ctx,request_id:str=None):
