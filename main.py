@@ -27,6 +27,7 @@ from bot.commands.industrial import IndustrialCog
 from bot.commands.territory import TerritoryCog
 from bot.commands.map_cog import MapCog
 from bot.commands.countryballs import CountryballCog
+from bot.commands.unions import UnionCommands
 from bot.events import EventManager
 from bot import config
 
@@ -178,6 +179,8 @@ class WarBot(commands.Bot):
             logger.info("MapCog loaded successfully")
             await self.add_cog(CountryballCog(self))
             logger.info("CountryballCog loaded successfully")
+            await self.add_cog(UnionCommands(self))
+            logger.info("UnionCommands loaded successfully")
 
             logger.info("All command cogs loaded successfully")
             await self._auto_sync_commands()
@@ -428,4 +431,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Bot shutdown requested")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        logger.error(f"Fatal error: {e}", exc_info=True)
