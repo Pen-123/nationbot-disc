@@ -17,99 +17,30 @@ logger = logging.getLogger(__name__)
 
 # ---- CONSTANTS ----
 SHIP_TYPES = {
-    "frigate": {
-        "name": "Frigate",
-        "cost_gold": config.MILITARY["ship_costs"]["frigate"]["gold"],
-        "cost_wood": config.MILITARY["ship_costs"]["frigate"]["wood"],
-        "cost_stone": config.MILITARY["ship_costs"]["frigate"]["stone"],
-        "strength": 10,
-        "counters": [],
-        "weak_against": ["destroyer", "aircraft_carrier"],
-        "description": "Light escort ship, good against submarines and patrol."
-    },
-    "destroyer": {
-        "name": "Destroyer",
-        "cost_gold": config.MILITARY["ship_costs"]["destroyer"]["gold"],
-        "cost_wood": config.MILITARY["ship_costs"]["destroyer"]["wood"],
-        "cost_stone": config.MILITARY["ship_costs"]["destroyer"]["stone"],
-        "strength": 20,
-        "counters": ["frigate", "submarine"],
-        "weak_against": ["battleship"],
-        "description": "Anti-submarine and anti-aircraft, counters frigates and subs."
-    },
-    "battleship": {
-        "name": "Battleship",
-        "cost_gold": config.MILITARY["ship_costs"]["battleship"]["gold"],
-        "cost_wood": config.MILITARY["ship_costs"]["battleship"]["wood"],
-        "cost_stone": config.MILITARY["ship_costs"]["battleship"]["stone"],
-        "strength": 40,
-        "counters": ["destroyer", "submarine"],
-        "weak_against": ["aircraft_carrier"],
-        "description": "Heavily armed, counters destroyers and subs, but vulnerable to carriers."
-    },
-    "aircraft_carrier": {
-        "name": "Aircraft Carrier",
-        "cost_gold": config.MILITARY["ship_costs"]["aircraft_carrier"]["gold"],
-        "cost_wood": config.MILITARY["ship_costs"]["aircraft_carrier"]["wood"],
-        "cost_stone": config.MILITARY["ship_costs"]["aircraft_carrier"]["stone"],
-        "strength": 50,
-        "counters": ["frigate", "destroyer", "submarine"],
-        "weak_against": ["battleship"],
-        "description": "Project power, counters all small ships, but weak against battleships."
-    },
-    "submarine": {
-        "name": "Submarine",
-        "cost_gold": config.MILITARY["ship_costs"]["submarine"]["gold"],
-        "cost_wood": config.MILITARY["ship_costs"]["submarine"]["wood"],
-        "cost_stone": config.MILITARY["ship_costs"]["submarine"]["stone"],
-        "strength": 15,
-        "counters": ["battleship"],
-        "weak_against": ["destroyer", "aircraft_carrier"],
-        "description": "Stealth, counters battleships, prevents naval invasions."
-    }
+    "frigate": {"name": "Frigate", "cost_gold": config.MILITARY["ship_costs"]["frigate"]["gold"], "cost_wood": config.MILITARY["ship_costs"]["frigate"]["wood"], "cost_stone": config.MILITARY["ship_costs"]["frigate"]["stone"], "strength": 10, "counters": [], "weak_against": ["destroyer", "aircraft_carrier"], "description": "Light escort ship."},
+    "destroyer": {"name": "Destroyer", "cost_gold": config.MILITARY["ship_costs"]["destroyer"]["gold"], "cost_wood": config.MILITARY["ship_costs"]["destroyer"]["wood"], "cost_stone": config.MILITARY["ship_costs"]["destroyer"]["stone"], "strength": 20, "counters": ["frigate", "submarine"], "weak_against": ["battleship"], "description": "Anti-submarine and anti-aircraft."},
+    "battleship": {"name": "Battleship", "cost_gold": config.MILITARY["ship_costs"]["battleship"]["gold"], "cost_wood": config.MILITARY["ship_costs"]["battleship"]["wood"], "cost_stone": config.MILITARY["ship_costs"]["battleship"]["stone"], "strength": 40, "counters": ["destroyer", "submarine"], "weak_against": ["aircraft_carrier"], "description": "Heavily armed."},
+    "aircraft_carrier": {"name": "Aircraft Carrier", "cost_gold": config.MILITARY["ship_costs"]["aircraft_carrier"]["gold"], "cost_wood": config.MILITARY["ship_costs"]["aircraft_carrier"]["wood"], "cost_stone": config.MILITARY["ship_costs"]["aircraft_carrier"]["stone"], "strength": 50, "counters": ["frigate", "destroyer", "submarine"], "weak_against": ["battleship"], "description": "Project power."},
+    "submarine": {"name": "Submarine", "cost_gold": config.MILITARY["ship_costs"]["submarine"]["gold"], "cost_wood": config.MILITARY["ship_costs"]["submarine"]["wood"], "cost_stone": config.MILITARY["ship_costs"]["submarine"]["stone"], "strength": 15, "counters": ["battleship"], "weak_against": ["destroyer", "aircraft_carrier"], "description": "Stealth."}
 }
 
 PLANE_TYPES = {
-    "fighter": {
-        "name": "Fighter",
-        "cost_gold": config.MILITARY["plane_costs"]["fighter"]["gold"],
-        "cost_wood": config.MILITARY["plane_costs"]["fighter"]["wood"],
-        "cost_stone": config.MILITARY["plane_costs"]["fighter"]["stone"],
-        "range": 0,
-        "strength": 15,
-        "description": "Short-range air superiority, defensive only."
-    },
-    "attacker": {
-        "name": "Attacker",
-        "cost_gold": config.MILITARY["plane_costs"]["attacker"]["gold"],
-        "cost_wood": config.MILITARY["plane_costs"]["attacker"]["wood"],
-        "cost_stone": config.MILITARY["plane_costs"]["attacker"]["stone"],
-        "range": 1,
-        "strength": 25,
-        "description": "Medium-range ground attack, can strike one subregion away."
-    },
-    "bomber": {
-        "name": "Bomber",
-        "cost_gold": config.MILITARY["plane_costs"]["bomber"]["gold"],
-        "cost_wood": config.MILITARY["plane_costs"]["bomber"]["wood"],
-        "cost_stone": config.MILITARY["plane_costs"]["bomber"]["stone"],
-        "range": 2,
-        "strength": 40,
-        "description": "Long-range heavy bomber, can strike two subregions away."
-    }
+    "fighter": {"name": "Fighter", "cost_gold": config.MILITARY["plane_costs"]["fighter"]["gold"], "cost_wood": config.MILITARY["plane_costs"]["fighter"]["wood"], "cost_stone": config.MILITARY["plane_costs"]["fighter"]["stone"], "range": 0, "strength": 15, "description": "Short-range air superiority."},
+    "attacker": {"name": "Attacker", "cost_gold": config.MILITARY["plane_costs"]["attacker"]["gold"], "cost_wood": config.MILITARY["plane_costs"]["attacker"]["wood"], "cost_stone": config.MILITARY["plane_costs"]["attacker"]["stone"], "range": 1, "strength": 25, "description": "Medium-range ground attack."},
+    "bomber": {"name": "Bomber", "cost_gold": config.MILITARY["plane_costs"]["bomber"]["gold"], "cost_wood": config.MILITARY["plane_costs"]["bomber"]["wood"], "cost_stone": config.MILITARY["plane_costs"]["bomber"]["stone"], "range": 2, "strength": 40, "description": "Long-range heavy bomber."}
 }
 
-TRAINING_LEVELS = [1.0, 1.5, 2.0, 3.0]   # multipliers for training level 0,1,2,3
+TRAINING_LEVELS = [1.0, 1.5, 2.0, 3.0]
 MAX_BOOSTED_SOLDIERS = 300
 
-# ---- MAIN COG ----
+
 class MilitaryCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.cooldowns = {}
-        self.blockades = {}  # {target_id: {"attacker": attacker_id, "expires": datetime}}
+        self.blockades = {}
         self._blockade_cleanup_task = None
 
     async def cog_load(self):
@@ -119,18 +50,17 @@ class MilitaryCommands(commands.Cog):
         if self._blockade_cleanup_task:
             self._blockade_cleanup_task.cancel()
 
-    # ---- BLOCKADE CLEANUP TASK ----
     async def _cleanup_blockades(self):
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
-            await asyncio.sleep(60)  # check every minute
+            await asyncio.sleep(60)
             now = datetime.utcnow()
             expired = [uid for uid, data in self.blockades.items() if data["expires"] <= now]
             for uid in expired:
                 del self.blockades[uid]
                 logger.info(f"Blockade against {uid} expired.")
 
-    # ---- HELPERS (Firestore-based) ----
+    # ---- Firestore helpers ----
     def _get_navy(self, user_id: str) -> Dict[str, int]:
         return self.db.get_navy(user_id)
 
@@ -200,16 +130,8 @@ class MilitaryCommands(commands.Cog):
         if not attacker_provinces or not defender_provinces:
             return False
         from bot.commands.territory import PROVINCE_TO_SUBREGION, SUBREGION_DATA
-        attacker_subregions = set()
-        for p in attacker_provinces:
-            sub = PROVINCE_TO_SUBREGION.get(p)
-            if sub:
-                attacker_subregions.add(sub)
-        defender_subregions = set()
-        for p in defender_provinces:
-            sub = PROVINCE_TO_SUBREGION.get(p)
-            if sub:
-                defender_subregions.add(sub)
+        attacker_subregions = {PROVINCE_TO_SUBREGION.get(p) for p in attacker_provinces if PROVINCE_TO_SUBREGION.get(p)}
+        defender_subregions = {PROVINCE_TO_SUBREGION.get(p) for p in defender_provinces if PROVINCE_TO_SUBREGION.get(p)}
         for att_sub in attacker_subregions:
             for def_sub in defender_subregions:
                 if def_sub in SUBREGION_DATA.get(att_sub, {}).get("neighbours", []):
@@ -243,24 +165,17 @@ class MilitaryCommands(commands.Cog):
 
         if navy_counts is None:
             navy_counts = self._get_navy(civ['user_id'])
-        navy_power = 0
-        for ship_type, count in navy_counts.items():
-            stats = SHIP_TYPES.get(ship_type)
-            if stats:
-                navy_power += count * stats["strength"] * naval_tech
+        navy_power = sum(count * SHIP_TYPES.get(st, {}).get("strength", 0) * naval_tech
+                         for st, count in navy_counts.items())
 
         if air_counts is None:
             air_counts = self._get_airforce(civ['user_id'])
-        air_power = 0
-        for plane_type, count in air_counts.items():
-            stats = PLANE_TYPES.get(plane_type)
-            if stats:
-                air_power += count * stats["strength"] * air_tech
+        air_power = sum(count * PLANE_TYPES.get(pt, {}).get("strength", 0) * air_tech
+                        for pt, count in air_counts.items())
 
         territory_bonus = civ['territory']['land_size'] / 10000
         return ground_power + spy_power + navy_power + air_power + territory_bonus
 
-    # ---- NEW HELPERS FOR NAVAL/AIR ----
     def _get_naval_strength(self, user_id: str) -> float:
         navy = self._get_navy(user_id)
         tech = self._get_military_tech(user_id)
@@ -287,8 +202,7 @@ class MilitaryCommands(commands.Cog):
         if not input_str:
             return None
         if input_str.startswith('<@') and input_str.endswith('>'):
-            inner = input_str[2:-1]
-            inner = inner.lstrip('!').strip()
+            inner = input_str[2:-1].lstrip('!').strip()
             if inner:
                 return inner
         if input_str.isalnum() and len(input_str) >= 6:
@@ -307,18 +221,18 @@ class MilitaryCommands(commands.Cog):
                     if str(m.id) == self._extract_user_id(mention):
                         return m
                 return ctx.message.mentions[0]
-        except:
+        except Exception:
             pass
         try:
             converter = commands.MemberConverter()
             return await converter.convert(ctx, mention)
-        except:
+        except Exception:
             pass
         user_id = self._extract_user_id(mention)
         if user_id:
             try:
                 return await ctx.guild.fetch_member(user_id)
-            except:
+            except Exception:
                 pass
         return None
 
@@ -337,24 +251,52 @@ class MilitaryCommands(commands.Cog):
             return int((self.cooldowns[key] - now).total_seconds())
         return 0
 
+    # ---- UPDATED: matches new civ.py returns ----
     async def check_civil_war_and_proceed(self, ctx, user_id: str) -> bool:
+        """Returns True if the command should proceed, False if blocked by civil war.
+
+        Economy cog handles the AI news + image on outbreak. Military just blocks
+        the action if a real civil war is now active. Single-territory warnings
+        pass through silently to avoid duplicating the economy embed.
+        """
         try:
-            if self.civ_manager.check_civil_war_risk(user_id):
-                civ = self.civ_manager.get_civilization(user_id)
-                if civ:
+            result = self.civ_manager.check_civil_war_risk(user_id)
+            if not result:
+                # Already at war? Block military actions.
+                state = self.civ_manager.get_civil_war_state(user_id)
+                if state:
                     embed = create_embed(
-                        "💥 CIVIL WAR!",
-                        "Your civilization has been torn apart by internal conflict! Check your events with `.events` to see the damage.",
+                        "💥 CIVIL WAR IN PROGRESS",
+                        "You cannot take military actions while your nation is at war with itself.\n"
+                        "Use `.reclaim <territory>` to fight the rebels.",
                         guilded.Color.red()
                     )
                     await ctx.send(embed=embed)
-                return False
-            return True
+                    return False
+                return True
+
+            if result.get("single_territory"):
+                # Just a warning — don't spam, no block, no AI news
+                return True
+
+            # Real civil war just started — block this action
+            state = result.get("state", {})
+            embed = create_embed(
+                "💥 CIVIL WAR ERUPTS!",
+                f"Rebels have seized **{len(state.get('rebel_territories', []))} territories**.\n"
+                f"Your military is in disarray — the action has been cancelled.\n\n"
+                f"Use `.reclaim <territory>` to fight back. **+30% offensive bonus** applies.",
+                guilded.Color.red()
+            )
+            await ctx.send(embed=embed)
+            return False
         except Exception as e:
             logger.error(f"Error checking civil war for {user_id}: {e}")
             return True
 
-    # ---- COMMANDS ----
+    # =================================================================
+    # TRAIN / DECLARE / ATTACK
+    # =================================================================
 
     @commands.command(name='train')
     @app_commands.describe(unit_type="Type of unit to train", amount="How many units to train")
@@ -394,7 +336,6 @@ class MilitaryCommands(commands.Cog):
             if unit_type not in ['soldiers', 'spies']:
                 await ctx.send("❌ Invalid unit type! Choose 'soldiers' or 'spies'.")
                 return
-
             if amount is None or amount < 1:
                 await ctx.send("❌ Please specify a valid amount to train!")
                 return
@@ -435,7 +376,6 @@ class MilitaryCommands(commands.Cog):
             if penalty_units > 0:
                 embed.add_field(name="Training Issues", value=f"⚠️ Ideology penalty lost {penalty_units} units during training", inline=True)
             await ctx.send(embed=embed)
-
         except Exception as e:
             logger.error(f"Error in train command: {e}", exc_info=True)
 
@@ -479,12 +419,11 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send(f"{target.mention} ⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.display_name}) has declared war on your civilization!")
             except Exception:
                 await ctx.send(f"⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.display_name}) has declared war on **{target_civ['name']}**!")
-
         except Exception as e:
             logger.error(f"Error declaring war: {e}", exc_info=True)
 
     @commands.command(name='attack')
-    @app_commands.describe(target="Civilization leader to attack", level="Attack intensity (1-10, higher = more damage but more cost)")
+    @app_commands.describe(target="Civilization leader to attack", level="Attack intensity (1-10)")
     async def attack_civilization(self, ctx, target: Optional[guilded.Member] = None, level: int = 5):
         try:
             user_id = str(ctx.author.id)
@@ -497,7 +436,7 @@ class MilitaryCommands(commands.Cog):
                 return
 
             if not target:
-                await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack <user> <level>`\nLevel: 1-10 (higher = more damage, higher cost)\nNote: War must be declared first!")
+                await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack <user> <level>`\nLevel: 1-10\nNote: War must be declared first!")
                 return
             if level < 1 or level > 10:
                 await ctx.send("❌ Attack level must be between 1 and 10!")
@@ -538,7 +477,7 @@ class MilitaryCommands(commands.Cog):
 
             if not shares_border:
                 defender_roll *= 1.5
-                await ctx.send("🛡️ **DEFENSIVE ADVANTAGE!** The defender does not share a border with you, making invasion much harder! (+50% defense)")
+                await ctx.send("🛡️ **DEFENSIVE ADVANTAGE!** The defender does not share a border with you (+50% defense)")
 
             if civ.get('ideology') == 'fascism':
                 attacker_roll *= 1.1
@@ -556,7 +495,7 @@ class MilitaryCommands(commands.Cog):
                 defender_roll *= (1 + underdog_bonus)
                 if strength_ratio < 0.25 and random.random() < 0.15:
                     defender_roll *= 1.5
-                    await ctx.send("🎯 **UNDERDOG SPIRIT!** The defenders fight with incredible determination against overwhelming odds!")
+                    await ctx.send("🎯 **UNDERDOG SPIRIT!** The defenders fight with incredible determination!")
 
             final_attacker = attacker_strength * attacker_roll
             final_defender = defender_strength * defender_roll
@@ -580,8 +519,7 @@ class MilitaryCommands(commands.Cog):
                 victory_margin = final_attacker / max(1, final_defender)
                 await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin, level)
 
-                # ---- TERRITORY CAPTURE CHANCE ----
-                capture_chance = 0.10 * level  # 10% at level 1, 100% at level 10
+                capture_chance = 0.10 * level
                 if random.random() < capture_chance:
                     territory_cog = self.bot.get_cog("TerritoryCog")
                     if territory_cog:
@@ -602,7 +540,6 @@ class MilitaryCommands(commands.Cog):
             else:
                 defeat_margin = final_defender / max(1, final_attacker)
                 await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin, level)
-
         except Exception as e:
             logger.error(f"Error in attack command: {e}", exc_info=True)
 
@@ -623,33 +560,24 @@ class MilitaryCommands(commands.Cog):
             self.civ_manager.update_military(attacker_id, {"soldiers": -attacker_losses})
             self.civ_manager.update_military(defender_id, {"soldiers": -defender_losses})
             self.civ_manager.update_resources(attacker_id, spoils)
-            negative_spoils = {res: -amt for res, amt in spoils.items()}
-            self.civ_manager.update_resources(defender_id, negative_spoils)
+            self.civ_manager.update_resources(defender_id, {r: -a for r, a in spoils.items()})
             self.civ_manager.update_territory(attacker_id, {"land_size": territory_gained})
             self.civ_manager.update_territory(defender_id, {"land_size": -territory_gained})
 
-            embed = create_embed("⚔️ Victory!", f"**{attacker_civ['name']}** has defeated **{defender_civ['name']}** in battle! (Level {level} attack)", guilded.Color.green())
+            embed = create_embed("⚔️ Victory!", f"**{attacker_civ['name']}** defeated **{defender_civ['name']}**! (Level {level})", guilded.Color.green())
             embed.add_field(name="Battle Results", value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers", inline=True)
-            spoils_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}" for res, amt in spoils.items() if amt > 0])
+            spoils_text = "\n".join([f"{'🪙' if r == 'gold' else '🌾' if r == 'food' else '🪨' if r == 'stone' else '🪵'} {format_number(a)} {r.capitalize()}" for r, a in spoils.items() if a > 0])
             embed.add_field(name="Spoils of War", value=spoils_text or "None", inline=True)
             embed.add_field(name="Territory Gained", value=f"🏞️ {format_number(territory_gained)} km²", inline=True)
 
             if attacker_civ.get('ideology') == 'destruction':
-                extra_damage = min(int(defender_civ['resources']['gold'] * 0.05 * damage_multiplier), defender_civ['resources']['gold'])
-                self.civ_manager.update_resources(defender_id, {"gold": -extra_damage})
-                embed.add_field(name="Destruction Bonus", value=f"Your destructive forces caused extra damage! (-{format_number(extra_damage)} enemy gold)", inline=False)
+                extra = min(int(defender_civ['resources']['gold'] * 0.05 * damage_multiplier), defender_civ['resources']['gold'])
+                self.civ_manager.update_resources(defender_id, {"gold": -extra})
+                embed.add_field(name="Destruction Bonus", value=f"Extra damage! (-{format_number(extra)} enemy gold)", inline=False)
 
             await ctx.send(embed=embed)
-            self.db.log_event(attacker_id, "victory", "Battle Victory", f"Defeated {defender_civ['name']} in battle (Level {level})!")
-            self.db.log_event(defender_id, "defeat", "Battle Defeat", f"Defeated by {attacker_civ['name']} in battle (Level {level}).")
-            try:
-                member = await ctx.guild.fetch_member(defender_id)
-                if member:
-                    await ctx.send(f"{member.mention} ⚔️ Your civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle! (Level {level})")
-                else:
-                    await ctx.send(f"⚔️ The civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle! (Level {level})")
-            except Exception:
-                await ctx.send(f"⚔️ The civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle! (Level {level})")
+            self.db.log_event(attacker_id, "victory", "Battle Victory", f"Defeated {defender_civ['name']} (Level {level})!")
+            self.db.log_event(defender_id, "defeat", "Battle Defeat", f"Defeated by {attacker_civ['name']} (Level {level}).")
         except Exception as e:
             logger.error(f"Error processing attack victory: {e}", exc_info=True)
 
@@ -668,32 +596,25 @@ class MilitaryCommands(commands.Cog):
                 bonus_morale = 20
                 self.civ_manager.update_resources(defender_id, {"gold": bonus_gold})
                 self.civ_manager.update_population(defender_id, {"happiness": bonus_morale})
-                await ctx.send(f"🏆 **UNDERDOG VICTORY!** {defender_civ['name']} gains {format_number(bonus_gold)} gold and +{bonus_morale} happiness for their heroic defense!")
+                await ctx.send(f"🏆 **UNDERDOG VICTORY!** {defender_civ['name']} gains {format_number(bonus_gold)} gold and +{bonus_morale} happiness!")
 
             self.civ_manager.update_population(attacker_id, {"happiness": -10})
 
-            embed = create_embed("⚔️ Defeat!", f"**{attacker_civ['name']}** was defeated by **{defender_civ['name']}**! (Level {level} attack)", guilded.Color.red())
+            embed = create_embed("⚔️ Defeat!", f"**{attacker_civ['name']}** was defeated by **{defender_civ['name']}**! (Level {level})", guilded.Color.red())
             embed.add_field(name="Battle Results", value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers", inline=True)
             embed.add_field(name="Consequences", value="Your people are demoralized! (-10 happiness)", inline=False)
-
             if defender_civ.get('ideology') == 'pacifist':
-                peace_chance = random.random()
-                if peace_chance > 0.7:
-                    embed.add_field(name="Pacifist Appeal", value="The defenders have offered a chance for peace through diplomacy! Use `.peace @user` to propose peace.", inline=False)
-
+                if random.random() > 0.7:
+                    embed.add_field(name="Pacifist Appeal", value="The defenders offer peace! Use `.peace @user`.", inline=False)
             await ctx.send(embed=embed)
-            self.db.log_event(attacker_id, "defeat", "Battle Defeat", f"Defeated by {defender_civ['name']} in battle (Level {level}).")
-            self.db.log_event(defender_id, "victory", "Battle Victory", f"Successfully defended against {attacker_civ['name']} (Level {level})!")
-            try:
-                member = await ctx.guild.fetch_member(defender_id)
-                if member:
-                    await ctx.send(f"{member.mention} ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**! (Level {level})")
-                else:
-                    await ctx.send(f"⚔️ The civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**! (Level {level})")
-            except Exception:
-                await ctx.send(f"⚔️ The civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**! (Level {level})")
+            self.db.log_event(attacker_id, "defeat", "Battle Defeat", f"Defeated by {defender_civ['name']} (Level {level}).")
+            self.db.log_event(defender_id, "victory", "Battle Victory", f"Defended against {attacker_civ['name']} (Level {level})!")
         except Exception as e:
             logger.error(f"Error processing attack defeat: {e}", exc_info=True)
+
+    # =================================================================
+    # STEALTH / SIEGE / FIND / PEACE
+    # =================================================================
 
     @commands.command(name='stealthbattle')
     @app_commands.describe(target="Civilization leader to target")
@@ -709,7 +630,7 @@ class MilitaryCommands(commands.Cog):
                 return
 
             if not target:
-                await ctx.send("🕵️ **Stealth Battle**\nUsage: `.stealthbattle <user>`\nUses spies instead of soldiers for covert operations.")
+                await ctx.send("🕵️ **Stealth Battle**\nUsage: `.stealthbattle <user>`\nUses spies instead of soldiers.")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -719,7 +640,7 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send("❌ You need to start a civilization first! Use `.start`")
                 return
             if civ['military']['spies'] < 3:
-                await ctx.send("❌ You need at least 3 spies to conduct stealth operations!")
+                await ctx.send("❌ You need at least 3 spies!")
                 return
 
             target_id = str(target.id)
@@ -758,7 +679,7 @@ class MilitaryCommands(commands.Cog):
                     if civ.get('ideology') == 'destruction':
                         extra = {"gold": -random.randint(20, 100), "food": -random.randint(30, 120)}
                         self.civ_manager.update_resources(target_id, extra)
-                        result_text += " Your destructive spies caused extra chaos!"
+                        result_text += " Extra chaos!"
                 elif operation_type == 'theft':
                     stolen = min(int(target_civ['resources']['gold'] * random.uniform(0.05, 0.15)), target_civ['resources']['gold'])
                     self.civ_manager.update_resources(target_id, {"gold": -stolen})
@@ -768,32 +689,30 @@ class MilitaryCommands(commands.Cog):
                     tech_gain = 1 if random.random() < 0.3 else 0
                     if tech_gain:
                         self._update_military_tech(user_id, {"ground_tech": tech_gain})
-                    result_text = "Your spies gathered valuable intelligence!" + (f" (+{tech_gain} ground tech level)" if tech_gain else "")
+                    result_text = "Your spies gathered intelligence!" + (f" (+{tech_gain} ground tech)" if tech_gain else "")
 
                 if spy_losses > 0:
                     self.civ_manager.update_military(user_id, {"spies": -spy_losses})
 
                 embed = create_embed("🕵️ Stealth Operation Success!", result_text, guilded.Color.purple())
                 if spy_losses > 0:
-                    embed.add_field(name="Casualties", value=f"Lost {spy_losses} spies during the operation", inline=False)
+                    embed.add_field(name="Casualties", value=f"Lost {spy_losses} spies", inline=False)
                 await ctx.send(embed=embed)
-
                 try:
-                    await ctx.send(f"{target.mention} 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
+                    await ctx.send(f"{target.mention} 🕵️ Your civ was hit by a stealth operation from **{civ['name']}**!")
                 except Exception:
-                    await ctx.send(f"🕵️ The civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
+                    await ctx.send(f"🕵️ **{target_civ['name']}** was hit by a stealth operation from **{civ['name']}**!")
             else:
                 spy_losses = random.randint(1, 4)
                 self.civ_manager.update_military(user_id, {"spies": -spy_losses})
-                embed = create_embed("🕵️ Stealth Operation Failed!", f"Your stealth mission was detected! Lost {spy_losses} spies.", guilded.Color.red())
+                embed = create_embed("🕵️ Stealth Operation Failed!", f"Detected! Lost {spy_losses} spies.", guilded.Color.red())
                 await ctx.send(embed=embed)
                 try:
-                    await ctx.send(f"{target.mention} 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
+                    await ctx.send(f"{target.mention} 🔍 Your network detected and thwarted a stealth attack from **{civ['name']}**!")
                 except Exception:
-                    await ctx.send(f"🔍 The intelligence network of **{target_civ['name']}** detected and thwarted a stealth attack from **{civ['name']}**!")
-
+                    await ctx.send(f"🔍 **{target_civ['name']}** detected and thwarted a stealth attack from **{civ['name']}**!")
         except Exception as e:
-            logger.error(f"Error in stealthbattle command: {e}", exc_info=True)
+            logger.error(f"Error in stealthbattle: {e}", exc_info=True)
 
     @commands.command(name='siege')
     @app_commands.describe(target="Civilization leader to siege")
@@ -809,7 +728,7 @@ class MilitaryCommands(commands.Cog):
                 return
 
             if not target:
-                await ctx.send("🏰 **Siege Warfare**\nUsage: `.siege <user>`\nDrains enemy resources over time but requires large army.")
+                await ctx.send("🏰 **Siege Warfare**\nUsage: `.siege <user>`\nDrains enemy resources over time.")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -841,7 +760,7 @@ class MilitaryCommands(commands.Cog):
             if strength_ratio < 0.5:
                 underdog_resistance = (0.5 - strength_ratio) * 0.3
                 siege_effectiveness *= (1 - underdog_resistance)
-                await ctx.send("🛡️ **UNDERDOG DEFENSE!** The defenders use clever tactics to resist the siege more effectively!")
+                await ctx.send("🛡️ **UNDERDOG DEFENSE!** The defenders resist the siege more effectively!")
 
             resource_drain = {
                 "gold": min(int(target_civ['resources']['gold'] * siege_effectiveness * 0.1), target_civ['resources']['gold']),
@@ -856,35 +775,32 @@ class MilitaryCommands(commands.Cog):
                 return
 
             self.civ_manager.spend_resources(user_id, maintenance_cost)
-            negative_drain = {res: -amt for res, amt in resource_drain.items()}
-            self.civ_manager.update_resources(target_id, negative_drain)
+            self.civ_manager.update_resources(target_id, {r: -a for r, a in resource_drain.items()})
             self.civ_manager.update_population(target_id, {"happiness": -15})
             self.civ_manager.update_population(user_id, {"happiness": -5})
 
             embed = create_embed("🏰 Siege in Progress", f"**{civ['name']}** has laid siege to **{target_civ['name']}**!", guilded.Color.orange())
-            drain_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}" for res, amt in resource_drain.items() if amt > 0])
+            drain_text = "\n".join([f"{'🪙' if r == 'gold' else '🌾' if r == 'food' else '🪨' if r == 'stone' else '🪵'} {format_number(a)} {r.capitalize()}" for r, a in resource_drain.items() if a > 0])
             embed.add_field(name="Enemy Resources Drained", value=drain_text or "None", inline=True)
-            cost_text = f"🪙 {format_number(maintenance_cost['gold'])} Gold\n🌾 {format_number(maintenance_cost['food'])} Food"
-            embed.add_field(name="Siege Maintenance Cost", value=cost_text, inline=True)
+            embed.add_field(name="Maintenance Cost", value=f"🪙 {format_number(maintenance_cost['gold'])} Gold\n🌾 {format_number(maintenance_cost['food'])} Food", inline=True)
 
             if civ.get('ideology') == 'destruction':
-                extra_damage = {
+                extra = {
                     "gold": min(int(target_civ['resources']['gold'] * 0.05), target_civ['resources']['gold']),
                     "food": min(int(target_civ['resources']['food'] * 0.05), target_civ['resources']['food'])
                 }
-                self.civ_manager.update_resources(target_id, {k: -v for k, v in extra_damage.items()})
-                embed.add_field(name="Destruction Bonus", value=f"Your destructive siege caused extra damage!\n🪙 {format_number(extra_damage['gold'])} Gold\n🌾 {format_number(extra_damage['food'])} Food", inline=False)
+                self.civ_manager.update_resources(target_id, {k: -v for k, v in extra.items()})
+                embed.add_field(name="Destruction Bonus", value=f"Extra damage!\n🪙 {format_number(extra['gold'])} Gold\n🌾 {format_number(extra['food'])} Food", inline=False)
 
             await ctx.send(embed=embed)
             self.db.log_event(user_id, "siege", "Siege Initiated", f"Laying siege to {target_civ['name']}")
             self.db.log_event(target_id, "besieged", "Under Siege", f"Being sieged by {civ['name']}")
             try:
-                await ctx.send(f"{target.mention} 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
+                await ctx.send(f"{target.mention} 🏰 Your civilization is under siege by **{civ['name']}**!")
             except Exception:
-                await ctx.send(f"🏰 The civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
-
+                await ctx.send(f"🏰 **{target_civ['name']}** is under siege by **{civ['name']}**!")
         except Exception as e:
-            logger.error(f"Error in siege command: {e}", exc_info=True)
+            logger.error(f"Error in siege: {e}", exc_info=True)
 
     @commands.command(name='find')
     async def find_soldiers(self, ctx):
@@ -895,7 +811,7 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'find')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before searching for soldiers again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before searching again!")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -908,7 +824,6 @@ class MilitaryCommands(commands.Cog):
             base_chance = 0.5
             min_soldiers = 5
             max_soldiers = 20
-
             if civ.get('ideology') == 'pacifist':
                 base_chance *= 1.9
                 max_soldiers = 15
@@ -927,26 +842,24 @@ class MilitaryCommands(commands.Cog):
                     bonus = soldiers_found // 2
                     soldiers_found += bonus
                 self.civ_manager.update_military(user_id, {"soldiers": soldiers_found})
-                embed = create_embed("🔍 Soldiers Found!", f"You've discovered {soldiers_found} wandering soldiers who have joined your army!" +
-                                     (f" (including {bonus} coerced by your destructive reputation)" if bonus else ""), guilded.Color.green())
+                embed = create_embed("🔍 Soldiers Found!", f"You've discovered {soldiers_found} wandering soldiers who joined your army!" +
+                                     (f" (including {bonus} coerced)" if bonus else ""), guilded.Color.green())
                 if civ.get('ideology') == 'pacifist':
-                    embed.add_field(name="Pacifist Note", value="These soldiers joined reluctantly, drawn by your peaceful ideals.", inline=False)
+                    embed.add_field(name="Pacifist Note", value="Joined reluctantly, drawn by peaceful ideals.", inline=False)
             else:
-                embed = create_embed("🔍 Search Unsuccessful", "You couldn't find any willing soldiers to join your cause.", guilded.Color.blue())
+                embed = create_embed("🔍 Search Unsuccessful", "You couldn't find any willing soldiers.", guilded.Color.blue())
                 if civ.get('ideology') == 'destruction':
-                    embed.add_field(name="Destruction Backfire", value="Your reputation scared away potential recruits.", inline=False)
-
+                    embed.add_field(name="Destruction Backfire", value="Your reputation scared away recruits.", inline=False)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in find command: {e}", exc_info=True)
+            logger.error(f"Error in find: {e}", exc_info=True)
 
     @commands.command(name='peace')
     @app_commands.describe(target="Civilization leader to offer peace to")
     async def make_peace(self, ctx, target: Optional[guilded.Member] = None):
         try:
             if not target:
-                await ctx.send("🕊️ **Peace Offering**\nUsage: `.peace <user>`\nSend a peace offer to end a war. They can accept with `.accept_peace <you>`.")
+                await ctx.send("🕊️ **Peace Offering**\nUsage: `.peace <user>`\nThey can accept with `.accept_peace <you>`.")
                 return
 
             user_id = str(ctx.author.id)
@@ -974,28 +887,25 @@ class MilitaryCommands(commands.Cog):
             offers = self.db.get_peace_offers()
             for offer in offers:
                 if offer.get("offerer_id") == user_id and offer.get("receiver_id") == target_id:
-                    await ctx.send("❌ You already have a pending peace offer to this civilization!")
+                    await ctx.send("❌ You already have a pending peace offer!")
                     return
 
             self.db.create_peace_offer(user_id, target_id)
-
-            embed = create_embed("🕊️ Peace Offer Sent!", f"**{civ['name']}** has offered peace to **{target_civ['name']}**! They can accept with `.accept_peace @{ctx.author.display_name}`.", guilded.Color.green())
+            embed = create_embed("🕊️ Peace Offer Sent!", f"**{civ['name']}** has offered peace to **{target_civ['name']}**!", guilded.Color.green())
             await ctx.send(embed=embed)
-
             try:
-                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
+                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** Use `.accept_peace @{ctx.author.display_name}` to accept.")
             except Exception:
-                await ctx.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
-
+                pass
         except Exception as e:
-            logger.error(f"Error in peace command: {e}", exc_info=True)
+            logger.error(f"Error in peace: {e}", exc_info=True)
 
     @commands.command(name='accept_peace')
     @app_commands.describe(target="Civilization leader who sent peace offer")
     async def accept_peace(self, ctx, target: Optional[guilded.Member] = None):
         try:
             if not target:
-                await ctx.send("🕊️ **Accept Peace**\nUsage: `.accept_peace <user>`\nAccept a pending peace offer to end the war.")
+                await ctx.send("🕊️ **Accept Peace**\nUsage: `.accept_peace <user>`")
                 return
 
             user_id = str(ctx.author.id)
@@ -1037,24 +947,22 @@ class MilitaryCommands(commands.Cog):
             self.civ_manager.update_population(user_id, {"happiness": 15})
             self.civ_manager.update_population(offerer_id, {"happiness": 15})
 
-            embed = create_embed("🕊️ Peace Achieved!", f"**{civ['name']}** has accepted peace from **{offerer_civ['name']}**! The war is over.", guilded.Color.green())
+            embed = create_embed("🕊️ Peace Achieved!", f"**{civ['name']}** accepted peace from **{offerer_civ['name']}**!", guilded.Color.green())
             if civ.get('ideology') == 'pacifist' or offerer_civ.get('ideology') == 'pacifist':
-                embed.add_field(name="Pacifist Influence", value="The peace movement was strengthened by pacifist ideals!", inline=False)
-
+                embed.add_field(name="Pacifist Influence", value="Peace strengthened by pacifist ideals!", inline=False)
             await ctx.send(embed=embed)
-
             try:
-                await ctx.send(f"{target.mention} 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.display_name}) has accepted your peace offer! The war is over.")
+                await ctx.send(f"{target.mention} 🕊️ **Peace Accepted!** The war is over.")
             except Exception:
-                await ctx.send(f"🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.display_name}) has accepted the peace offer! The war is over.")
-
+                pass
             self.db.log_event(user_id, "peace_accepted", "Peace Accepted", f"Accepted peace with {offerer_civ['name']}")
             self.db.log_event(offerer_id, "peace_accepted", "Peace Accepted", f"Peace accepted by {civ['name']}")
-
         except Exception as e:
-            logger.error(f"Error in accept_peace command: {e}", exc_info=True)
+            logger.error(f"Error in accept_peace: {e}", exc_info=True)
 
-    # ---- CARDS ----
+    # =================================================================
+    # CARDS
+    # =================================================================
     @commands.command(name='cards')
     async def manage_cards(self, ctx, action: str = None, *, card_name: str = None):
         user_id = str(ctx.author.id)
@@ -1066,29 +974,23 @@ class MilitaryCommands(commands.Cog):
         if action is None or action.lower() == 'view':
             purchased = civ.get('purchased_cards', [])
             if not purchased:
-                await ctx.send("📭 You have no cards. Buy one with `.buycard` or earn them from military commands!")
+                await ctx.send("📭 You have no cards. Buy one with `.buycard`!")
                 return
-
             embed = create_embed("🎴 Your Cards", "", guilded.Color.blue())
             for i, card in enumerate(purchased, 1):
-                embed.add_field(
-                    name=f"{i}. {card['name']}",
-                    value=f"Type: {card['type']}\n{card['description']}\nUse: `.cards use \"{card['name']}\"`",
-                    inline=False
-                )
+                embed.add_field(name=f"{i}. {card['name']}",
+                                value=f"Type: {card['type']}\n{card['description']}\nUse: `.cards use \"{card['name']}\"`",
+                                inline=False)
             await ctx.send(embed=embed)
-
         elif action.lower() == 'use':
             if not card_name:
                 await ctx.send("❌ Please specify a card name: `.cards use \"Card Name\"`")
                 return
-
             purchased = civ.get('purchased_cards', [])
             card = next((c for c in purchased if c['name'].lower() == card_name.lower()), None)
             if not card:
                 await ctx.send(f"❌ You don't have a card named '{card_name}'.")
                 return
-
             effect = card['effect']
             if card['type'] == 'bonus':
                 bonuses = civ.get('bonuses', {})
@@ -1096,33 +998,25 @@ class MilitaryCommands(commands.Cog):
                     bonuses[key] = bonuses.get(key, 0) + value
                 self.db.update_civilization(user_id, {"bonuses": bonuses})
             else:
-                if "gold" in effect:
-                    self.civ_manager.update_resources(user_id, {"gold": effect["gold"]})
-                if "food" in effect:
-                    self.civ_manager.update_resources(user_id, {"food": effect["food"]})
-                if "stone" in effect:
-                    self.civ_manager.update_resources(user_id, {"stone": effect["stone"]})
-                if "wood" in effect:
-                    self.civ_manager.update_resources(user_id, {"wood": effect["wood"]})
-                if "soldiers" in effect:
-                    self.civ_manager.update_military(user_id, {"soldiers": effect["soldiers"]})
-                if "spies" in effect:
-                    self.civ_manager.update_military(user_id, {"spies": effect["spies"]})
-                if "tech_level" in effect:
-                    self.civ_manager.update_military(user_id, {"tech_level": effect["tech_level"]})
-                if "citizens" in effect:
-                    self.civ_manager.update_population(user_id, {"citizens": effect["citizens"]})
-                if "happiness" in effect:
-                    self.civ_manager.update_population(user_id, {"happiness": effect["happiness"]})
-
+                for res in ["gold", "food", "stone", "wood"]:
+                    if res in effect:
+                        self.civ_manager.update_resources(user_id, {res: effect[res]})
+                for mil in ["soldiers", "spies", "tech_level"]:
+                    if mil in effect:
+                        self.civ_manager.update_military(user_id, {mil: effect[mil]})
+                for pop in ["citizens", "happiness"]:
+                    if pop in effect:
+                        self.civ_manager.update_population(user_id, {pop: effect[pop]})
             purchased.remove(card)
             self.db.update_civilization(user_id, {"purchased_cards": purchased})
             await ctx.send(f"✅ Used **{card['name']}**! Effect applied.")
-
         else:
             await ctx.send("❌ Invalid action. Use `.cards view` or `.cards use \"Card Name\"`.")
 
-    # ---- BORDERS ----
+    # =================================================================
+    # BORDERS
+    # =================================================================
+
     @commands.command(name='addborder')
     async def add_border(self, ctx):
         try:
@@ -1149,20 +1043,19 @@ class MilitaryCommands(commands.Cog):
 
             border_info = self._get_border_info(user_id)
             if border_info.get("has_border", False):
-                await ctx.send("❌ You already have a border! Use `.removeborder` to remove it first.")
+                await ctx.send("❌ You already have a border! Use `.removeborder` first.")
                 return
 
             self.civ_manager.spend_resources(user_id, border_cost)
             self._update_border(user_id, {"has_border": True, "border_strength": 100, "border_soldiers": 0})
 
-            embed = create_embed("🛡️ Border Established!", f"**{civ['name']}** has built a defensive border around their territory!", guilded.Color.green())
+            embed = create_embed("🛡️ Border Established!", f"**{civ['name']}** built a defensive border!", guilded.Color.green())
             embed.add_field(name="Border Strength", value="100/100", inline=True)
             embed.add_field(name="Cost", value=f"🪙 {format_number(border_cost['gold'])} Gold\n🪨 {format_number(border_cost['stone'])} Stone\n🪵 {format_number(border_cost['wood'])} Wood", inline=True)
-            embed.add_field(name="Next Steps", value="Use `.rectract <percentage>` to assign soldiers to your border for extra defense!", inline=False)
+            embed.add_field(name="Next Steps", value="Use `.rectract <percentage>` to assign soldiers to your border!", inline=False)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in addborder command: {e}", exc_info=True)
+            logger.error(f"Error in addborder: {e}", exc_info=True)
 
     @commands.command(name='removeborder')
     async def remove_border(self, ctx):
@@ -1193,14 +1086,12 @@ class MilitaryCommands(commands.Cog):
                 self.civ_manager.update_military(user_id, {"soldiers": soldiers_to_return})
 
             self._update_border(user_id, {"has_border": False, "border_strength": 0, "border_soldiers": 0})
-
-            embed = create_embed("🛡️ Border Removed!", f"**{civ['name']}** has dismantled their defensive border.", guilded.Color.blue())
+            embed = create_embed("🛡️ Border Removed!", f"**{civ['name']}** dismantled their defensive border.", guilded.Color.blue())
             if soldiers_to_return > 0:
-                embed.add_field(name="Soldiers Returned", value=f"⚔️ {format_number(soldiers_to_return)} soldiers have returned to your main army.", inline=False)
+                embed.add_field(name="Soldiers Returned", value=f"⚔️ {format_number(soldiers_to_return)} soldiers", inline=False)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in removeborder command: {e}", exc_info=True)
+            logger.error(f"Error in removeborder: {e}", exc_info=True)
 
     @commands.command(name='rectract', aliases=['retract'])
     async def rectract_soldiers(self, ctx, percentage: int = None):
@@ -1211,7 +1102,7 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'rectract')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before rectracting soldiers again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s!")
                 return
 
             if percentage is None or percentage < 1 or percentage > 100:
@@ -1235,12 +1126,12 @@ class MilitaryCommands(commands.Cog):
             available_soldiers = civ['military']['soldiers']
 
             if available_soldiers == 0:
-                await ctx.send("❌ You don't have any soldiers to assign to the border!")
+                await ctx.send("❌ You don't have any soldiers!")
                 return
 
             soldiers_to_assign = min((available_soldiers * percentage) // 100, available_soldiers)
             if soldiers_to_assign == 0:
-                await ctx.send("❌ That percentage would assign 0 soldiers. Try a higher percentage or train more soldiers.")
+                await ctx.send("❌ That percentage would assign 0 soldiers.")
                 return
 
             new_border_soldiers = current_border_soldiers + soldiers_to_assign
@@ -1252,14 +1143,13 @@ class MilitaryCommands(commands.Cog):
             })
             self.civ_manager.update_military(user_id, {"soldiers": -soldiers_to_assign})
 
-            embed = create_embed("🛡️ Soldiers Assigned to Border!", f"**{civ['name']}** has assigned {format_number(soldiers_to_assign)} soldiers to reinforce the border.", guilded.Color.green())
-            embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(new_border_soldiers)} total", inline=True)
+            embed = create_embed("🛡️ Soldiers Assigned!", f"**{civ['name']}** assigned {format_number(soldiers_to_assign)} soldiers to the border.", guilded.Color.green())
+            embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(new_border_soldiers)}", inline=True)
             embed.add_field(name="Border Strength", value=f"🛡️ {format_number(current_border_strength + border_strength_increase)}", inline=True)
-            embed.add_field(name="Main Army", value=f"⚔️ {format_number(available_soldiers - soldiers_to_assign)} soldiers remaining", inline=True)
+            embed.add_field(name="Main Army", value=f"⚔️ {format_number(available_soldiers - soldiers_to_assign)} remaining", inline=True)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in rectract command: {e}", exc_info=True)
+            logger.error(f"Error in rectract: {e}", exc_info=True)
 
     @commands.command(name='retrieve')
     async def retrieve_soldiers(self, ctx, percentage: int = None):
@@ -1270,7 +1160,7 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'retrieve')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before retrieving soldiers again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s!")
                 return
 
             if percentage is None or percentage < 1 or percentage > 100:
@@ -1293,7 +1183,7 @@ class MilitaryCommands(commands.Cog):
             current_border_soldiers = border_info.get("border_soldiers", 0)
 
             if current_border_soldiers == 0:
-                await ctx.send("❌ You don't have any soldiers assigned to your border!")
+                await ctx.send("❌ No soldiers assigned to your border!")
                 return
 
             soldiers_to_retrieve = min((current_border_soldiers * percentage) // 100, current_border_soldiers)
@@ -1307,17 +1197,15 @@ class MilitaryCommands(commands.Cog):
             })
             self.civ_manager.update_military(user_id, {"soldiers": soldiers_to_retrieve})
 
-            embed = create_embed("🛡️ Soldiers Retrieved from Border!", f"**{civ['name']}** has retrieved {format_number(soldiers_to_retrieve)} soldiers from the border.", guilded.Color.blue())
-            embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(new_border_soldiers)} remaining", inline=True)
+            embed = create_embed("🛡️ Soldiers Retrieved!", f"**{civ['name']}** retrieved {format_number(soldiers_to_retrieve)} soldiers.", guilded.Color.blue())
+            embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(new_border_soldiers)}", inline=True)
             embed.add_field(name="Border Strength", value=f"🛡️ {format_number(new_border_strength)}", inline=True)
-            embed.add_field(name="Main Army", value=f"⚔️ +{format_number(soldiers_to_retrieve)} soldiers", inline=True)
-
+            embed.add_field(name="Main Army", value=f"⚔️ +{format_number(soldiers_to_retrieve)}", inline=True)
             if new_border_strength < 50:
-                embed.add_field(name="⚠️ Warning", value="Your border strength is low! Consider reinforcing it.", inline=False)
+                embed.add_field(name="⚠️ Warning", value="Border strength is low!", inline=False)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in retrieve command: {e}", exc_info=True)
+            logger.error(f"Error in retrieve: {e}", exc_info=True)
 
     @commands.command(name='borderinfo')
     async def border_info(self, ctx):
@@ -1328,7 +1216,7 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'borderinfo')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before checking border info again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s!")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -1341,26 +1229,27 @@ class MilitaryCommands(commands.Cog):
             border_info = self._get_border_info(user_id)
             if not border_info.get("has_border", False):
                 embed = create_embed("🛡️ Border Status", "You don't have a defensive border yet!", guilded.Color.blue())
-                embed.add_field(name="How to Build", value="Use `.addborder` to build a defensive border (costs resources).", inline=False)
+                embed.add_field(name="How to Build", value="Use `.addborder` to build a defensive border.", inline=False)
             else:
-                border_strength = border_info.get("border_strength", 0)
-                border_soldiers = border_info.get("border_soldiers", 0)
+                strength = border_info.get("border_strength", 0)
+                soldiers = border_info.get("border_soldiers", 0)
                 embed = create_embed("🛡️ Border Status", f"**{civ['name']}**'s defensive border", guilded.Color.green())
-                embed.add_field(name="Border Strength", value=f"🛡️ {format_number(border_strength)}", inline=True)
-                embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(border_soldiers)}", inline=True)
+                embed.add_field(name="Border Strength", value=f"🛡️ {format_number(strength)}", inline=True)
+                embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(soldiers)}", inline=True)
                 embed.add_field(name="Main Army", value=f"⚔️ {format_number(civ['military']['soldiers'])}", inline=True)
-                defense_bonus = min(50, border_strength // 10)
+                defense_bonus = min(50, strength // 10)
                 embed.add_field(name="Defense Bonus", value=f"🛡️ +{defense_bonus}% in defensive battles", inline=False)
-                embed.add_field(name="Management", value="Use `.rectract <percentage>` to assign soldiers\nUse `.retrieve <percentage>` to retrieve soldiers", inline=False)
-
+                embed.add_field(name="Management", value="Use `.rectract <percentage>` to assign\nUse `.retrieve <percentage>` to retrieve", inline=False)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in borderinfo command: {e}", exc_info=True)
+            logger.error(f"Error in borderinfo: {e}", exc_info=True)
 
-    # ---- NAVY, AIRFORCE, TECH, TRAINING ----
+    # =================================================================
+    # NAVY / AIRFORCE / TECH / TRAINING
+    # =================================================================
+
     @commands.command(name='buildship')
-    @app_commands.describe(ship_type="Type of ship to build", amount="How many ships to build")
+    @app_commands.describe(ship_type="Type of ship", amount="How many")
     @app_commands.choices(ship_type=[
         app_commands.Choice(name="frigate", value="frigate"),
         app_commands.Choice(name="destroyer", value="destroyer"),
@@ -1371,14 +1260,13 @@ class MilitaryCommands(commands.Cog):
     async def build_ship(self, ctx, ship_type: Optional[Literal["frigate", "destroyer", "battleship", "aircraft_carrier", "submarine"]] = None, amount: int = 1):
         try:
             user_id = str(ctx.author.id)
-
             if not ship_type:
-                embed = create_embed("🚢 Build Ships", "Build navy ships to strengthen your fleet!", guilded.Color.blue())
+                embed = create_embed("🚢 Build Ships", "Build navy ships!", guilded.Color.blue())
                 ship_list = []
                 for key, data in SHIP_TYPES.items():
                     ship_list.append(f"**{data['name']}** (`{key}`) – 🪙{data['cost_gold']} 🪵{data['cost_wood']} 🪨{data['cost_stone']}\n{data['description']}")
                 embed.add_field(name="Available Ships", value="\n\n".join(ship_list), inline=False)
-                embed.add_field(name="Usage", value="`.buildship <type> <amount>` (e.g., `.buildship frigate 5`)", inline=False)
+                embed.add_field(name="Usage", value="`.buildship <type> <amount>`", inline=False)
                 await ctx.send(embed=embed)
                 return
 
@@ -1393,7 +1281,6 @@ class MilitaryCommands(commands.Cog):
             if ship_type not in SHIP_TYPES:
                 await ctx.send(f"❌ Invalid ship type! Choose from: {', '.join(SHIP_TYPES.keys())}")
                 return
-
             if amount < 1:
                 await ctx.send("❌ Amount must be at least 1!")
                 return
@@ -1404,7 +1291,6 @@ class MilitaryCommands(commands.Cog):
                 "wood": ship_data["cost_wood"] * amount,
                 "stone": ship_data["cost_stone"] * amount
             }
-
             if not self.civ_manager.can_afford(user_id, total_cost):
                 await ctx.send(f"❌ Not enough resources! Need {format_number(total_cost['gold'])} gold, {format_number(total_cost['wood'])} wood, and {format_number(total_cost['stone'])} stone.")
                 return
@@ -1416,12 +1302,11 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Cost", value=f"🪙 {format_number(total_cost['gold'])} Gold\n🪵 {format_number(total_cost['wood'])} Wood\n🪨 {format_number(total_cost['stone'])} Stone", inline=True)
             embed.add_field(name="Total Navy", value="Check with `.navy`", inline=True)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in buildship command: {e}", exc_info=True)
+            logger.error(f"Error in buildship: {e}", exc_info=True)
 
     @commands.command(name='buildplane')
-    @app_commands.describe(plane_type="Type of plane to build", amount="How many planes to build")
+    @app_commands.describe(plane_type="Type of plane", amount="How many")
     @app_commands.choices(plane_type=[
         app_commands.Choice(name="fighter", value="fighter"),
         app_commands.Choice(name="attacker", value="attacker"),
@@ -1430,9 +1315,8 @@ class MilitaryCommands(commands.Cog):
     async def build_plane(self, ctx, plane_type: Optional[Literal["fighter", "attacker", "bomber"]] = None, amount: int = 1):
         try:
             user_id = str(ctx.author.id)
-
             if not plane_type:
-                embed = create_embed("✈️ Build Planes", "Build airforce planes to dominate the skies!", guilded.Color.blue())
+                embed = create_embed("✈️ Build Planes", "Build airforce planes!", guilded.Color.blue())
                 plane_list = []
                 for key, data in PLANE_TYPES.items():
                     reqs = ""
@@ -1440,7 +1324,7 @@ class MilitaryCommands(commands.Cog):
                         reqs = " (Requires Industrial Revolution + Air Tech 3)"
                     plane_list.append(f"**{data['name']}** (`{key}`) – 🪙{data['cost_gold']} 🪵{data['cost_wood']} 🪨{data['cost_stone']}\nRange: {data['range']} subregions{reqs}\n{data['description']}")
                 embed.add_field(name="Available Planes", value="\n\n".join(plane_list), inline=False)
-                embed.add_field(name="Usage", value="`.buildplane <type> <amount>` (e.g., `.buildplane fighter 3`)", inline=False)
+                embed.add_field(name="Usage", value="`.buildplane <type> <amount>`", inline=False)
                 await ctx.send(embed=embed)
                 return
 
@@ -1462,7 +1346,7 @@ class MilitaryCommands(commands.Cog):
                     return
                 tech = self._get_military_tech(user_id)
                 if tech.get("air_tech", 1) < 3:
-                    await ctx.send("❌ You need Air Tech level 3 or higher to build attackers or bombers! Use `.tech air` to upgrade.")
+                    await ctx.send("❌ You need Air Tech level 3 or higher to build attackers or bombers!")
                     return
 
             if amount < 1:
@@ -1475,7 +1359,6 @@ class MilitaryCommands(commands.Cog):
                 "wood": plane_data["cost_wood"] * amount,
                 "stone": plane_data["cost_stone"] * amount
             }
-
             if not self.civ_manager.can_afford(user_id, total_cost):
                 await ctx.send(f"❌ Not enough resources! Need {format_number(total_cost['gold'])} gold, {format_number(total_cost['wood'])} wood, and {format_number(total_cost['stone'])} stone.")
                 return
@@ -1487,35 +1370,30 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Cost", value=f"🪙 {format_number(total_cost['gold'])} Gold\n🪵 {format_number(total_cost['wood'])} Wood\n🪨 {format_number(total_cost['stone'])} Stone", inline=True)
             embed.add_field(name="Total Airforce", value="Check with `.airforce`", inline=True)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in buildplane command: {e}", exc_info=True)
+            logger.error(f"Error in buildplane: {e}", exc_info=True)
 
     @commands.command(name='tech')
-    @app_commands.describe(branch="Tech branch to upgrade", amount="How many levels to upgrade (default 1)")
+    @app_commands.describe(branch="Tech branch", amount="How many levels (default 1)")
     @app_commands.choices(branch=[
         app_commands.Choice(name="ground", value="ground"),
         app_commands.Choice(name="naval", value="naval"),
         app_commands.Choice(name="air", value="air"),
+        app_commands.Choice(name="status", value="status"),
     ])
-    async def upgrade_tech(self, ctx, branch: Optional[Literal["ground", "naval", "air"]] = None, amount: int = 1):
+    async def upgrade_tech(self, ctx, branch: Optional[Literal["ground", "naval", "air", "status"]] = None, amount: int = 1):
         try:
-            if not branch:
-                embed = create_embed(
-                    "🔬 Military Tech Upgrade",
-                    f"Upgrade your military technology for {config.MILITARY['tech_upgrade_cost']} gold per level.",
-                    guilded.Color.blue()
-                )
-                embed.add_field(name="Branches", value="`ground` – improves soldiers and ground combat\n`naval` – improves ship strength\n`air` – improves plane strength", inline=False)
-                embed.add_field(name="Usage", value="`.tech <branch> [amount]` (e.g., `.tech ground 2`)", inline=False)
-                embed.add_field(name="Current Tech", value="Check with `.tech status`", inline=False)
-                await ctx.send(embed=embed)
-                return
-
             user_id = str(ctx.author.id)
             civ = self.civ_manager.get_civilization(user_id)
             if not civ:
                 await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
+            if not branch:
+                embed = create_embed("🔬 Military Tech Upgrade", f"Upgrade for {config.MILITARY['tech_upgrade_cost']} gold per level.", guilded.Color.blue())
+                embed.add_field(name="Branches", value="`ground` – soldiers\n`naval` – ships\n`air` – planes\n`status` – view current tech", inline=False)
+                embed.add_field(name="Usage", value="`.tech <branch> [amount]`", inline=False)
+                await ctx.send(embed=embed)
                 return
 
             if branch == "status":
@@ -1530,7 +1408,6 @@ class MilitaryCommands(commands.Cog):
             if branch not in ["ground", "naval", "air"]:
                 await ctx.send("❌ Invalid branch! Choose from: `ground`, `naval`, `air`.")
                 return
-
             if amount < 1:
                 await ctx.send("❌ Amount must be at least 1!")
                 return
@@ -1543,7 +1420,7 @@ class MilitaryCommands(commands.Cog):
 
             cost = config.MILITARY['tech_upgrade_cost'] * amount
             if not self.civ_manager.can_afford(user_id, {"gold": cost}):
-                await ctx.send(f"❌ Not enough gold! Need {format_number(cost)} gold for {amount} level(s).")
+                await ctx.send(f"❌ Not enough gold! Need {format_number(cost)} gold.")
                 return
 
             self.civ_manager.spend_resources(user_id, {"gold": cost})
@@ -1553,12 +1430,11 @@ class MilitaryCommands(commands.Cog):
             embed = create_embed("🔬 Tech Upgrade Complete!", f"**{branch.capitalize()} Tech** increased from **{current_level}** to **{new_level}**!", guilded.Color.green())
             embed.add_field(name="Cost", value=f"🪙 {format_number(cost)} Gold", inline=True)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in tech command: {e}", exc_info=True)
+            logger.error(f"Error in tech: {e}", exc_info=True)
 
     @commands.command(name='trainboost')
-    @app_commands.describe(amount="How many training levels to increase (default 1)")
+    @app_commands.describe(amount="How many training levels (default 1)")
     async def train_boost(self, ctx, amount: int = 1):
         try:
             user_id = str(ctx.author.id)
@@ -1572,7 +1448,6 @@ class MilitaryCommands(commands.Cog):
             if current_level >= 3:
                 await ctx.send("❌ Training level is already at maximum (level 3)!")
                 return
-
             if amount < 1:
                 await ctx.send("❌ Amount must be at least 1!")
                 return
@@ -1585,23 +1460,20 @@ class MilitaryCommands(commands.Cog):
 
             cost = config.MILITARY['tech_upgrade_cost'] * actual_increase
             if not self.civ_manager.can_afford(user_id, {"gold": cost}):
-                await ctx.send(f"❌ Not enough gold! Need {format_number(cost)} gold to increase training by {actual_increase} level(s).")
+                await ctx.send(f"❌ Not enough gold! Need {format_number(cost)} gold.")
                 return
 
             self.civ_manager.spend_resources(user_id, {"gold": cost})
             self._update_training(user_id, {"level": actual_increase})
 
-            embed = create_embed(
-                "⚔️ Training Level Up!",
-                f"Training level increased from **{current_level}** to **{new_level}**!\n"
-                f"Multiplier: {TRAINING_LEVELS[current_level]}x → {TRAINING_LEVELS[new_level]}x (up to {MAX_BOOSTED_SOLDIERS} soldiers)",
-                guilded.Color.gold()
-            )
+            embed = create_embed("⚔️ Training Level Up!",
+                                 f"Training level increased from **{current_level}** to **{new_level}**!\n"
+                                 f"Multiplier: {TRAINING_LEVELS[current_level]}x → {TRAINING_LEVELS[new_level]}x (up to {MAX_BOOSTED_SOLDIERS} soldiers)",
+                                 guilded.Color.gold())
             embed.add_field(name="Cost", value=f"🪙 {format_number(cost)} Gold", inline=True)
             await ctx.send(embed=embed)
-
         except Exception as e:
-            logger.error(f"Error in trainboost command: {e}", exc_info=True)
+            logger.error(f"Error in trainboost: {e}", exc_info=True)
 
     @commands.command(name='navy')
     async def show_navy(self, ctx):
@@ -1624,17 +1496,12 @@ class MilitaryCommands(commands.Cog):
                 strength = count * ship_data["strength"] * naval_tech
                 total_ships += count
                 total_strength += strength
-                embed.add_field(
-                    name=ship_data["name"],
-                    value=f"Count: {count}\nStrength: {format_number(strength)}",
-                    inline=True
-                )
+                embed.add_field(name=ship_data["name"], value=f"Count: {count}\nStrength: {format_number(strength)}", inline=True)
         if total_ships == 0:
-            embed.description += "\n\n**No ships built yet!** Use `.buildship` to start your navy."
+            embed.description += "\n\n**No ships built yet!** Use `.buildship`."
         else:
             embed.add_field(name="Total Ships", value=format_number(total_ships), inline=True)
             embed.add_field(name="Total Naval Strength", value=format_number(total_strength), inline=True)
-
         await ctx.send(embed=embed)
 
     @commands.command(name='airforce')
@@ -1658,22 +1525,22 @@ class MilitaryCommands(commands.Cog):
                 strength = count * plane_data["strength"] * air_tech
                 total_planes += count
                 total_strength += strength
-                embed.add_field(
-                    name=plane_data["name"],
-                    value=f"Count: {count}\nStrength: {format_number(strength)}\nRange: {plane_data['range']} subregion(s)",
-                    inline=True
-                )
+                embed.add_field(name=plane_data["name"],
+                                value=f"Count: {count}\nStrength: {format_number(strength)}\nRange: {plane_data['range']} subregion(s)",
+                                inline=True)
         if total_planes == 0:
-            embed.description += "\n\n**No planes built yet!** Use `.buildplane` to start your airforce."
+            embed.description += "\n\n**No planes built yet!** Use `.buildplane`."
         else:
             embed.add_field(name="Total Planes", value=format_number(total_planes), inline=True)
             embed.add_field(name="Total Air Strength", value=format_number(total_strength), inline=True)
-
         await ctx.send(embed=embed)
 
-    # ---- NEW COMMANDS ----
+    # =================================================================
+    # NAVAL/AIR ATTACKS
+    # =================================================================
+
     @commands.command(name='navalattack')
-    @app_commands.describe(target="Civilization leader to attack with navy")
+    @app_commands.describe(target="Civilization leader")
     async def naval_attack(self, ctx, target: Optional[guilded.Member] = None):
         try:
             user_id = str(ctx.author.id)
@@ -1682,11 +1549,11 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'navalattack')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using naval attack again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s!")
                 return
 
             if not target:
-                await ctx.send("🚢 **Naval Attack**\nUsage: `.navalattack <user>`\nLaunch a naval strike using your fleet. Requires war.")
+                await ctx.send("🚢 **Naval Attack**\nUsage: `.navalattack <user>`\nRequires war.")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -1712,7 +1579,7 @@ class MilitaryCommands(commands.Cog):
             my_navy = self._get_navy(user_id)
             total_ships = sum(my_navy.values())
             if total_ships < 1:
-                await ctx.send("❌ You need at least 1 ship for a naval attack!")
+                await ctx.send("❌ You need at least 1 ship!")
                 return
 
             attacker_strength = self._get_naval_strength(user_id)
@@ -1724,7 +1591,7 @@ class MilitaryCommands(commands.Cog):
             def_final = defender_strength * def_roll
 
             if att_final > def_final:
-                margin = att_final / def_final
+                margin = att_final / max(1, def_final)
                 defender_losses = min(int(total_ships * 0.3 * margin), total_ships)
                 attacker_losses = min(int(total_ships * 0.1), total_ships)
                 gold_stolen = min(int(target_civ['resources']['gold'] * 0.1 * margin), target_civ['resources']['gold'])
@@ -1739,18 +1606,16 @@ class MilitaryCommands(commands.Cog):
                 embed.add_field(name="Enemy Losses", value=f"{defender_losses} ships", inline=True)
                 await ctx.send(embed=embed)
             else:
-                margin = def_final / att_final
+                margin = def_final / max(1, att_final)
                 attacker_losses = min(int(total_ships * 0.4 * margin), total_ships)
                 defender_losses = min(int(total_ships * 0.1), total_ships)
                 self._reduce_navy(user_id, attacker_losses)
                 self._reduce_navy(target_id, defender_losses)
-                embed = create_embed("🚢 Naval Defeat!", f"Your fleet was defeated by **{target_civ['name']}**'s navy!", guilded.Color.red())
+                embed = create_embed("🚢 Naval Defeat!", f"Your fleet was defeated by **{target_civ['name']}**!", guilded.Color.red())
                 embed.add_field(name="Your Losses", value=f"{attacker_losses} ships", inline=True)
                 embed.add_field(name="Enemy Losses", value=f"{defender_losses} ships", inline=True)
                 await ctx.send(embed=embed)
-
             self.db.log_event(user_id, "naval_attack", "Naval Attack", f"Attacked {target_civ['name']} with navy")
-
         except Exception as e:
             logger.error(f"Error in navalattack: {e}", exc_info=True)
 
@@ -1793,7 +1658,7 @@ class MilitaryCommands(commands.Cog):
         self._update_airforce(user_id, air)
 
     @commands.command(name='airattack')
-    @app_commands.describe(target="Civilization leader to attack with airforce")
+    @app_commands.describe(target="Civilization leader")
     async def air_attack(self, ctx, target: Optional[guilded.Member] = None):
         try:
             user_id = str(ctx.author.id)
@@ -1802,11 +1667,11 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'airattack')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using air attack again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s!")
                 return
 
             if not target:
-                await ctx.send("✈️ **Air Attack**\nUsage: `.airattack <user>`\nLaunch an air strike using your airforce. Requires war.")
+                await ctx.send("✈️ **Air Attack**\nUsage: `.airattack <user>`\nRequires war.")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -1832,7 +1697,7 @@ class MilitaryCommands(commands.Cog):
             my_air = self._get_airforce(user_id)
             total_planes = sum(my_air.values())
             if total_planes < 1:
-                await ctx.send("❌ You need at least 1 plane for an air attack!")
+                await ctx.send("❌ You need at least 1 plane!")
                 return
 
             attacker_strength = self._get_air_strength(user_id)
@@ -1840,13 +1705,11 @@ class MilitaryCommands(commands.Cog):
             ground_defense = target_civ['military']['soldiers'] * 0.1
             defender_strength = defender_air_strength + ground_defense
 
-            att_roll = random.uniform(0.8, 1.2)
-            def_roll = random.uniform(0.8, 1.2)
-            att_final = attacker_strength * att_roll
-            def_final = defender_strength * def_roll
+            att_final = attacker_strength * random.uniform(0.8, 1.2)
+            def_final = defender_strength * random.uniform(0.8, 1.2)
 
             if att_final > def_final:
-                margin = att_final / def_final
+                margin = att_final / max(1, def_final)
                 soldier_loss = min(int(target_civ['military']['soldiers'] * 0.1 * margin), target_civ['military']['soldiers'])
                 gold_stolen = min(int(target_civ['resources']['gold'] * 0.05 * margin), target_civ['resources']['gold'])
                 wood_stolen = min(int(target_civ['resources']['wood'] * 0.1 * margin), target_civ['resources']['wood'])
@@ -1855,31 +1718,27 @@ class MilitaryCommands(commands.Cog):
                 defender_losses = min(int(total_planes * 0.1), total_planes)
                 self._reduce_airforce(user_id, attacker_losses)
                 self._reduce_airforce(target_id, defender_losses)
-
                 self.civ_manager.update_military(target_id, {"soldiers": -soldier_loss})
                 self.civ_manager.update_resources(user_id, {"gold": gold_stolen, "wood": wood_stolen, "stone": stone_stolen})
                 self.civ_manager.update_resources(target_id, {"gold": -gold_stolen, "wood": -wood_stolen, "stone": -stone_stolen})
-
                 embed = create_embed("✈️ Air Strike Victory!", f"Your airforce devastated **{target_civ['name']}**!", guilded.Color.green())
                 embed.add_field(name="Spoils", value=f"🪙 {format_number(gold_stolen)} gold\n🪵 {format_number(wood_stolen)} wood\n🪨 {format_number(stone_stolen)} stone", inline=True)
                 embed.add_field(name="Soldiers Killed", value=f"{format_number(soldier_loss)}", inline=True)
                 embed.add_field(name="Your Plane Losses", value=f"{attacker_losses}", inline=True)
                 await ctx.send(embed=embed)
             else:
-                margin = def_final / att_final
+                margin = def_final / max(1, att_final)
                 attacker_losses = min(int(total_planes * 0.3 * margin), total_planes)
                 self._reduce_airforce(user_id, attacker_losses)
                 embed = create_embed("✈️ Air Strike Defeat!", f"Your airforce was repelled by **{target_civ['name']}**!", guilded.Color.red())
                 embed.add_field(name="Plane Losses", value=f"{attacker_losses}", inline=True)
                 await ctx.send(embed=embed)
-
             self.db.log_event(user_id, "air_attack", "Air Attack", f"Attacked {target_civ['name']} with airforce")
-
         except Exception as e:
             logger.error(f"Error in airattack: {e}", exc_info=True)
 
     @commands.command(name='navalblockade')
-    @app_commands.describe(target="Civilization leader to blockade")
+    @app_commands.describe(target="Civilization leader")
     async def naval_blockade(self, ctx, target: Optional[guilded.Member] = None):
         try:
             user_id = str(ctx.author.id)
@@ -1888,11 +1747,11 @@ class MilitaryCommands(commands.Cog):
                 remaining = self._get_cooldown_remaining(user_id, 'navalblockade')
                 mins = remaining // 60
                 secs = remaining % 60
-                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using naval blockade again!")
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s!")
                 return
 
             if not target:
-                await ctx.send("🚢 **Naval Blockade**\nUsage: `.navalblockade <user>`\nImpose a blockade that reduces enemy resource income by 30% for 2 hours. Requires war.")
+                await ctx.send("🚢 **Naval Blockade**\nUsage: `.navalblockade <user>`\nReduces enemy income by 30% for 2 hours.")
                 return
 
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -1932,18 +1791,14 @@ class MilitaryCommands(commands.Cog):
             blockade_loss = max(1, int(total_ships * 0.2))
             self._reduce_navy(user_id, blockade_loss)
 
-            embed = create_embed(
-                "🚢 Blockade Imposed!",
-                f"**{civ['name']}** has blockaded **{target_civ['name']}**!",
-                guilded.Color.blue()
-            )
+            embed = create_embed("🚢 Blockade Imposed!",
+                                 f"**{civ['name']}** has blockaded **{target_civ['name']}**!",
+                                 guilded.Color.blue())
             embed.add_field(name="Duration", value=f"{duration_minutes} minutes", inline=True)
-            embed.add_field(name="Effect", value="The blockaded civilization's resource income is reduced by 30%!", inline=False)
+            embed.add_field(name="Effect", value="Blockaded civilization's resource income reduced by 30%!", inline=False)
             embed.add_field(name="Ships Committed", value=f"{blockade_loss} ships lost to maintain the blockade", inline=True)
             await ctx.send(embed=embed)
-
             self.db.log_event(user_id, "naval_blockade", "Naval Blockade", f"Blockaded {target_civ['name']}")
-
         except Exception as e:
             logger.error(f"Error in navalblockade: {e}", exc_info=True)
 
