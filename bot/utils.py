@@ -515,3 +515,16 @@ def get_territory_modifier(land_size: int) -> float:
     # Use log10 with a higher coefficient: 0.8 * log10(land_size / 1000 + 1)
     factor = 0.8 * math.log10(land_size / 1000 + 1)
     return min(1.0 + factor, 3.0)   # cap at 2.5x
+
+# ---------- DAILY LIMIT (DISABLED) ----------
+# You said you don't want daily command limits, so this decorator is a no-op.
+# It exists only so imports in economy.py/military.py don't break.
+
+def daily_limit_decorator(command_name: str = None):
+    """No-op decorator. Kept for import compatibility — does NOT enforce any limit."""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            return await func(self, *args, **kwargs)
+        return wrapper
+    return decorator
