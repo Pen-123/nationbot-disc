@@ -21,7 +21,8 @@ class UnionCommands(commands.Cog):
     def _remove_gold(self, uid, amount):
         civ = self._civ(uid) or {}
         resources = dict(civ.get("resources", {}))
-        if resources.get("gold", 0) < amount): return False
+        if resources.get("gold", 0) < amount:
+            return False
         resources["gold"] -= amount
         self._ref(uid).update({"resources": resources, "last_active": now_iso()})
         return True
@@ -79,11 +80,12 @@ class UnionCommands(commands.Cog):
         civ = self._civ(uid) or {}; old_name = civ.get("original_union_name") or "Independent Nation"
         self._ref(uid).update({"union": None, "name": old_name, "original_union_name": None, "territory.land_size": int(self._own_land(uid)), "last_active": now_iso()})
         for m in members:
+            mciv = self._civ(m) or {}
             if len(members) == 1:
-                mciv = self._civ(m) or {}; restore = mciv.get("original_union_name") or "Independent Nation"
+                restore = mciv.get("original_union_name") or "Independent Nation"
                 self._ref(m).update({"union": None, "name": restore, "original_union_name": None, "territory.land_size": int(self._own_land(m)), "last_active": now_iso()})
             else:
-                self._ref(m).update({"union": {**union, "members": members}, "territory.land_size": int(self._own_land(members[0]) + self._own_land(members[1])), "last_active": now_iso()})
+                self._ref(m).update({"union": {**union, "members": members}, "territory.land_size": int(self._own_land(m)), "last_active": now_iso()})
         await ctx.send(f"🚪 You left **{union['name']}** and paid the **{UNION_FINE} gold** separation fine.")
 
     @commands.command(name="annex")
