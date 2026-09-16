@@ -34,29 +34,39 @@ class MapCog(commands.Cog):
         self.cache = {}
 
     def get_ownership_data(self):
-        """
-        Fetch all users' owned provinces from Firestore and map them to countries.
-        Returns dict: user_id -> {"provinces": list, "name": civ_name}
-        """
+        """Fetch ownership and collapse union members into one map country."""
         if self.gdf is None:
             return {}
-        # Use Firestore method to get all territories
-        territories = self.db.get_all_territories()  # dict {province_name: {owner_id: ...}}
+        territories = self.db.get_all_territories()
         ownership = {}
+        union_groups = {}
+
         for province_name, data in territories.items():
             owner_id = data.get("owner_id")
-            if owner_id:
-                if owner_id not in ownership:
-                    civ = self.civ_manager.get_civilization(owner_id)
-                    name = civ['name'] if civ else owner_id[:6]
-                    ownership[owner_id] = {"provinces": [], "name": name}
-                ownership[owner_id]["provinces"].append(province_name)
+            if not owner_id:
+                continue
+
+            civ = self.civ_manager.get_civilization(owner_id)
+            union = (civ or {}).get("union")
+            if union and union.get("members"):
+                members = sorted(str(m) for m in union.get("members", []))
+                map_id = "union:" + ":".join(members)
+                name = union.get("name") or (civ['name'] if civ else owner_id[:6])
+                union_groups[map_id] = {"members": members, "name": name}
+            else:
+                map_id = str(owner_id)
+                name = civ['name'] if civ else owner_id[:6]
+
+            if map_id not in ownership:
+                ownership[map_id] = {"provinces": [], "name": name}
+            ownership[map_id]["provinces"].append(province_name)
+
         return ownership
 
     def generate_map(self, ownership_data):
         if self.gdf is None:
             fig, ax = plt.subplots(figsize=(10, 6))
-            ax.text(0.5, 0.5, "Map data not available\nRun generate_geojson.py", 
+            ax.text(0.5, 0.5, "Map data not available\nRun generate_geojson.py",
                     ha='center', va='center', fontsize=14)
             ax.set_axis_off()
             buf = BytesIO()
@@ -67,39 +77,32 @@ class MapCog(commands.Cog):
 
         colors = plt.cm.tab20.colors
         user_colors = {}
-        for i, (user_id, info) in enumerate(ownership_data.items()):
-            user_colors[user_id] = colors[i % len(colors)]
+        for i, (map_id, info) in enumerate(ownership_data.items()):
+            user_colors[map_id] = colors[i % len(colors)]
 
         fig, ax = plt.subplots(figsize=(15, 10))
 
-        # Plot each country/province individually
         for idx, row in self.gdf.iterrows():
             country_name = row.get('NAME', 'Unknown')
-            
-            # Find which user owns this specific country
             owner = None
-            for user_id, info in ownership_data.items():
+            for map_id, info in ownership_data.items():
                 for province in info["provinces"]:
-                    # Check for exact or partial matches (case insensitive)
                     if country_name.lower() == province.lower() or \
                        province.lower() in country_name.lower() or \
                        country_name.lower() in province.lower():
-                        owner = user_id
+                        owner = map_id
                         break
                 if owner:
                     break
 
-            color = user_colors.get(owner, (0.8, 0.8, 0.8, 1))  # grey if unowned
-
-            # Draw country with white border
+            color = user_colors.get(owner, (0.8, 0.8, 0.8, 1))
             gpd.GeoDataFrame([row], crs=self.gdf.crs).plot(
                 ax=ax, facecolor=color, edgecolor='white', linewidth=0.5
             )
 
-        # Legend
         patches = []
-        for user_id, color in user_colors.items():
-            name = ownership_data[user_id]["name"]
+        for map_id, color in user_colors.items():
+            name = ownership_data[map_id]["name"]
             patches.append(mpatches.Patch(color=color, label=name))
         if patches:
             ax.legend(handles=patches, loc='lower left', fontsize=8)
@@ -120,7 +123,7 @@ class MapCog(commands.Cog):
             return
 
         ownership = self.get_ownership_data()
-        key = hashlib.md5(json.dumps(ownership).encode()).hexdigest()
+        key = hashlib.md5(json.dumps(ownership, sort_keys=True).encode()).hexdigest()
         if key in self.cache:
             buf = self.cache[key]
             buf.seek(0)
