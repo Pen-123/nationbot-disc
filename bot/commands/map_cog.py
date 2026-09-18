@@ -149,13 +149,23 @@ class MapCog(commands.Cog):
                 for name, owner in zip(self._normalized_names, owners)
             ]
 
-            fig, ax = plt.subplots(figsize=(15, 10))
-            ax.set_facecolor('#76a9d1')
+            fig, ax = plt.subplots(figsize=(16, 9))
+            ax.set_facecolor("#6fa8dc")
+
+            # Ocean first, then countries on top. Add subtle geographic framing
+            # so the map feels like a world map rather than a raw GeoPandas plot.
             plot_gdf.plot(
                 ax=ax,
                 color=plot_gdf["_map_color"],
-                edgecolor="white",
-                linewidth=0.5,
+                edgecolor="#d9e3ec",
+                linewidth=0.35,
+                antialiased=True,
+            )
+            plot_gdf.boundary.plot(
+                ax=ax,
+                color="#d9e3ec",
+                linewidth=0.28,
+                alpha=0.8,
             )
 
             patches = [
