@@ -43,7 +43,7 @@ COOLDOWNS = {
     "industrial_start": 0, "industrial_status": 0, "industrial_build": 2, "industrial_tech": 2, "industrial_workers": 2, "industrial_cleanup": 2, "industrial_railway": 2, "industrial_transport": 2, "industrial_army": 2, "industrial_policy": 2, "industrial_import": 2, "industrial_export": 2, "industrial_steam": 2, "industrial_mine": 2, "industrial_hospital": 2, "industrial_school": 2, "industrial_law": 2, "industrial_trade": 2, "industrial_aid": 2, "industrial_suppress": 2, "industrial_bribe": 2, "industrial_automate": 2, "industrial_upgrade": 2, "industrial_relief": 2, "industrial_expand": 2, "industrial_banking": 10, "industrial_nationalize": 5, "indushelp": 0,
     "extrawork": 5, "extragamble": 1, "extracards": 1, "slots": 1, "blackjack": 1, "job": 1, "arrest": 1, "rob": 1, "code": 0, "darkweb": 0, "extrastore": 1, "extrainventory": 0, "setbalance": 0,
     "laststand": 60, "luckystrike": 60, "propaganda": 3, "hiremercs": 10, "boosttech": 5, "mintgold": 10, "superharvest": 10, "superspy": 10, "megainvent": 5, "backstab": 180, "bomb": 1, "nuke": 5, "obliterate": 13, "sacrifice": 1440,
-    "corporation": 0, "megaproject": 0, "policy": 0, "policieshelp": 0,
+    "corporation": 0, "megaproject": 0, "policy": 0, "policieshelp": 0, "rename": 10,
 }
 
 CAPS = {"gather": 500000, "work": 1500000, "farm": 500000, "mine_stone": 250000, "mine_wood": 250000, "harvest": 1500000, "drill_gold": 2000000, "drill_stone": 1000000, "fish": 250000, "tax": 300000, "raidcaravan": 2000000, "labor": 800000, "advertise": 5000, "immigration": 800, "sell": 10000}
