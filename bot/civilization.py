@@ -80,14 +80,14 @@ class CivilizationManager:
             logger.error(f"Error creating civilization for {user_id}: {e}")
             return False
 
-    def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def get_civilization(self, user_id: str, force: bool = False) -> Optional[Dict[str, Any]]:
         import time
         user_id = str(user_id)
         now = time.time()
         entry = self._civ_cache.get(user_id)
         if entry:
             ts, civ = entry
-            if now - ts < self.CIV_CACHE_TTL:
+            if not force and now - ts < self.CIV_CACHE_TTL:
                 return civ
         try:
             civ = self.db.get_civilization(user_id)
