@@ -28,6 +28,7 @@ class MapCog(commands.Cog):
         self._ownership_cache_at = 0.0
         self._map_cache = {}
         self._map_cache_limit = 3
+        self._map_lock = asyncio.Lock()
 
         if not os.path.exists(self.geojson_path):
             logger.error("regions.geojson not found. Map will not work.")
@@ -167,10 +168,17 @@ class MapCog(commands.Cog):
         png_bytes = self._map_cache.get(key)
 
         if png_bytes is None:
-            png_bytes = await asyncio.to_thread(self.generate_map_bytes, ownership)
-            self._map_cache[key] = png_bytes
-            if len(self._map_cache) > self._map_cache_limit:
-                self._map_cache.pop(next(iter(self._map_cache)), None)
+            # Deduplicate simultaneous .map requests. Without this, 10 users
+            # spamming .map could trigger 10 expensive Matplotlib renders.
+            async with self._map_lock:
+                ownership = await asyncio.to_thread(self.get_ownership_data)
+                key = self._signature(ownership)
+                png_bytes = self._map_cache.get(key)
+                if png_bytes is None:
+                    png_bytes = await asyncio.to_thread(self.generate_map_bytes, ownership)
+                    self._map_cache[key] = png_bytes
+                    if len(self._map_cache) > self._map_cache_limit:
+                        self._map_cache.pop(next(iter(self._map_cache)), None)
 
         await ctx.send(
             "🗺️ Here's the current world map:",
