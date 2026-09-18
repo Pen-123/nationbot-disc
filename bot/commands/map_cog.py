@@ -134,6 +134,7 @@ class MapCog(commands.Cog):
             ]
 
             fig, ax = plt.subplots(figsize=(15, 10))
+            ax.set_facecolor('#76a9d1')
             plot_gdf.plot(
                 ax=ax,
                 color=plot_gdf["_map_color"],
@@ -147,7 +148,8 @@ class MapCog(commands.Cog):
             ]
             if patches:
                 ax.legend(handles=patches, loc="lower left", fontsize=8)
-            ax.set_title("World Map of Civilizations", fontsize=14)
+            ax.set_title("🌍 NationBot World Map", fontsize=16, fontweight='bold')
+            ax.grid(True, alpha=0.18, linewidth=0.6)
             ax.set_axis_off()
 
         buf = BytesIO()
@@ -163,7 +165,7 @@ class MapCog(commands.Cog):
             )
             return
 
-        ownership = await asyncio.to_thread(self.get_ownership_data)
+        ownership = await asyncio.to_thread(self.get_ownership_data, True)
         key = self._signature(ownership)
         png_bytes = self._map_cache.get(key)
 
@@ -171,7 +173,7 @@ class MapCog(commands.Cog):
             # Deduplicate simultaneous .map requests. Without this, 10 users
             # spamming .map could trigger 10 expensive Matplotlib renders.
             async with self._map_lock:
-                ownership = await asyncio.to_thread(self.get_ownership_data)
+                ownership = await asyncio.to_thread(self.get_ownership_data, True)
                 key = self._signature(ownership)
                 png_bytes = self._map_cache.get(key)
                 if png_bytes is None:
