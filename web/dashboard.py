@@ -204,6 +204,63 @@ def country_overview(slug):
     return render_template("overview.html", civ=stats, overview=overview)
 
 
+def _overview_slug(name):
+    import re
+    return re.sub(r'[^a-z0-9]+', '-', str(name or '').lower()).strip('-')[:48]
+
+
+@app.route('/country/<slug>')
+def country_overview(slug):
+    initialize_services()
+    if db is None:
+        return "Database unavailable", 503
+    civ = next((c for c in db.get_all_civilizations()
+                if _overview_slug(c.get("name")) == slug.lower()), None)
+    if not civ:
+        return "Country not found", 404
+
+    stats = {
+        "name": civ.get("name", "Unknown"),
+        "ideology": civ.get("ideology") or "None",
+        "region": civ.get("region") or "Unknown",
+        "population": civ.get("population", {}).get("citizens", 0),
+        "happiness": civ.get("population", {}).get("happiness", 0),
+        "land": civ.get("territory", {}).get("land_size", 0),
+        "gold": civ.get("resources", {}).get("gold", 0),
+        "food": civ.get("resources", {}).get("food", 0),
+        "soldiers": civ.get("military", {}).get("soldiers", 0),
+        "spies": civ.get("military", {}).get("spies", 0),
+    }
+    overview = "An AI overview could not be generated."
+    api_key = os.getenv("GROQ_API_KEY")
+    if api_key:
+        try:
+            import urllib.request
+            payload = json.dumps({
+                "model": "qwen/qwen3-32b",
+                "messages": [{"role": "user", "content":
+                    f"Write a concise fictional nation-game intelligence brief for {stats['name']}. "
+                    f"Use only these stats: ideology={stats['ideology']}, region={stats['region']}, "
+                    f"population={stats['population']}, happiness={stats['happiness']}%, "
+                    f"land={stats['land']} km2, gold={stats['gold']}, food={stats['food']}, "
+                    f"soldiers={stats['soldiers']}, spies={stats['spies']}. "
+                    "Use headings Overview, Economy & Society, Military & Territory."}],
+                "temperature": 0.6, "max_tokens": 450
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.groq.com/openai/v1/chat/completions",
+                data=payload,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=12) as r:
+                overview = json.loads(r.read().decode())["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.warning(f"Country overview AI failed: {e}")
+
+    return render_template("overview.html", civ=stats, overview=overview)
+
+
 @app.route('/api/stats')
 def api_stats():
     """API endpoint for dashboard statistics"""
