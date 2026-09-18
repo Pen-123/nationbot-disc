@@ -187,7 +187,7 @@ class CivilizationManager:
     def trigger_civil_war(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Start a real civil war: split territories into loyalist/rebel halves."""
         try:
-            civ = self.get_civilization(user_id)
+            civ = self.get_civilization(user_id, force=True)
             if not civ:
                 return None
 
@@ -249,7 +249,7 @@ class CivilizationManager:
             return None
 
     def get_civil_war_state(self, user_id: str) -> Optional[Dict[str, Any]]:
-        civ = self.get_civilization(user_id)
+        civ = self.get_civilization(user_id, force=True)
         if not civ:
             return None
         cw = civ.get('civil_war') or {}
