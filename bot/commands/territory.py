@@ -981,12 +981,16 @@ class TerritoryCog(commands.Cog):
     async def reclaim_territory(self, ctx, *, territory: str = None):
         """Fight a rebel-held territory during a civil war. +30% offensive boost applies."""
         user_id = str(ctx.author.id)
-        civ = self.civ_manager.get_civilization(user_id)
+        civ = self.db.get_civilization(user_id)
         if not civ:
             await ctx.send("❌ You need a civilization first!")
             return
 
-        state = self.civ_manager.get_civil_war_state(user_id)
+        # Civil-war state is read directly from Firestore so an older manager
+        # cache can never make an active war look inactive.
+        state = (civ.get('civil_war') or {})
+        if not state.get('active'):
+            state = None
         if not state:
             await ctx.send("❌ You are not currently in a civil war.")
             return
