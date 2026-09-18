@@ -209,8 +209,8 @@ def _overview_slug(name):
     return re.sub(r'[^a-z0-9]+', '-', str(name or '').lower()).strip('-')[:48]
 
 
-@app.route('/country/<slug>')
-def country_overview(slug):
+@app.route('/country/<slug>', endpoint='country_overview_page')
+def country_overview_page(slug):
     initialize_services()
     if db is None:
         return "Database unavailable", 503
