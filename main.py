@@ -65,6 +65,7 @@ class WarBot(commands.Bot):
         self.event_manager = EventManager(self.db)
         self.events_task = None
         self.happiness_task = None
+        self._last_victory_check = {}
 
     async def _auto_sync_commands(self):
         do_sync = os.getenv("AUTO_SYNC_COMMANDS", "false").lower() in {"1", "true", "yes", "on"}
@@ -203,10 +204,17 @@ class WarBot(commands.Bot):
             return
         await self.process_commands(message)
 
-        # ---- VICTORY CHECK AFTER ANY COMMAND ----
-        if not message.author.bot:
+        # ---- VICTORY CHECK AFTER COMMANDS, THROTTLED ----
+        # Victory checks hit Firestore. During command spam, repeatedly checking
+        # the same player adds avoidable latency, so allow one check every 2s.
+        if not message.author.bot and message.content.lstrip().startswith('.'):
             try:
-                await self.check_victory(str(message.author.id), message)
+                import time
+                user_id = str(message.author.id)
+                now = time.monotonic()
+                if now - self._last_victory_check.get(user_id, 0.0) >= 2.0:
+                    self._last_victory_check[user_id] = now
+                    await self.check_victory(user_id, message)
             except Exception as e:
                 logger.error(f"Victory check failed: {e}")
 
