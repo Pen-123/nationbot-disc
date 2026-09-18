@@ -504,6 +504,33 @@ IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused 
         else:
             await ctx.send("❌ Failed to rename your civilization. Please try again.")
 
+    # FULL RESET
+    @commands.command(name='fullreset')
+    async def full_reset(self, ctx):
+        """Admin-only new-season wipe."""
+        allowed = {"1221063035842727998", "1477923077244457044"}
+        if str(ctx.author.id) not in allowed:
+            await ctx.send("❌ You are not authorized to start a new season.")
+            return
+        await ctx.send("⚠️ **FULL SEASON RESET** will wipe ALL persistent game data. Type **CONFIRM NEW SEASON** within 30 seconds.")
+
+        def check(m):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        try:
+            msg = await self.bot.wait_for("message", timeout=30, check=check)
+            if msg.content.strip() != "CONFIRM NEW SEASON":
+                await ctx.send("🛑 New-season reset cancelled.")
+                return
+            if not self.db.full_reset():
+                await ctx.send("❌ Full reset failed.")
+                return
+            self.civ_manager._civ_cache.clear()
+            self.civ_manager._cache_timestamps.clear()
+            await ctx.send("🆕 **NEW SEASON STARTED.** All persistent NationBot game data has been wiped.")
+        except asyncio.TimeoutError:
+            await ctx.send("🕒 Confirmation timed out. Nothing was reset.")
+
     # OVERVIEW
     @commands.command(name='overview')
     @commands.cooldown(1, 15, commands.BucketType.user)
