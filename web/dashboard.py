@@ -132,7 +132,7 @@ def _generate_ai_overview(civ):
 
     if os.getenv('GROQ_API_KEY'):
         endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        model = "openai/gpt-oss-20b"
+        model = "qwen/qwen3-32b"
     elif os.getenv('OPENROUTER'):
         endpoint = "https://openrouter.ai/api/v1/chat/completions"
         model = "meta-llama/llama-3.3-70b-instruct"
