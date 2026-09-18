@@ -490,6 +490,34 @@ IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused 
         else:
             await ctx.send("❌ Failed to rename your civilization. Please try again.")
 
+    # OVERVIEW
+    @commands.command(name='overview')
+    @commands.cooldown(1, 15, commands.BucketType.user)
+    async def country_overview(self, ctx):
+        """Create/open the public AI country overview page."""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id, force=True)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use .start <name>")
+            return
+
+        # The web server owns the generated page. Keep the Discord command fast
+        # by only returning the stable public slug URL.
+        import re
+        slug = re.sub(r'[^a-z0-9]+', '-', civ['name'].lower()).strip('-')[:48]
+        if not slug:
+            slug = user_id[-12:]
+
+        base_url = os.getenv("WEBSITE_URL", "").rstrip("/")
+        if not base_url:
+            await ctx.send("❌ The website URL is not configured. Set WEBSITE_URL in the bot environment.")
+            return
+
+        await ctx.send(
+            f"🌐 **{civ['name']} overview:** {base_url}/{slug}\n"
+            f"Anyone with the link can view the AI-generated country overview."
+        )
+
     # WARHELP
     # =================================================================
     @commands.command(name='warhelp')
@@ -505,6 +533,7 @@ IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused 
                     "start": "Start a new civilization with a cinematic intro",
                     "status": "View your civilization status",
                     "rename": "Rename your civilization",
+                    "overview": "Create a public AI country overview page",
                     "sv": "Start a saved chat with the AI (no timeout)",
                     "svc": "Close and delete your saved chat",
                     "victory": "Check your progress toward victory conditions",
