@@ -457,6 +457,39 @@ IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused 
                 "via GROQ_API_KEY, OPENROUTER, or OPENAI_API_KEY, and try again later.")
 
     # =================================================================
+    # =================================================================
+    # RENAME
+    # =================================================================
+    @commands.command(name='rename')
+    @commands.cooldown(1, 10, commands.BucketType.user)
+    @app_commands.describe(new_name="New name for your civilization")
+    async def rename_civilization(self, ctx, *, new_name: str = None):
+        """Rename your civilization without changing any other game progress."""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use .start <name>")
+            return
+        new_name = (new_name or "").strip()
+        if not new_name:
+            await ctx.send("❌ Usage: .rename <new civilization name>")
+            return
+        if len(new_name) > 64:
+            await ctx.send("❌ Civilization names must be 64 characters or fewer.")
+            return
+        if any(ord(ch) < 32 for ch in new_name):
+            await ctx.send("❌ That name contains invalid control characters.")
+            return
+        if new_name == civ.get("name"):
+            await ctx.send("❌ Your civilization already has that name.")
+            return
+        old_name = civ.get("name", "Unknown")
+        if self.db.update_civilization(user_id, {"name": new_name}):
+            self.civ_manager._invalidate_civ(user_id)
+            await ctx.send(f"✅ Your civilization has been renamed from **{old_name}** to **{new_name}**.")
+        else:
+            await ctx.send("❌ Failed to rename your civilization. Please try again.")
+
     # WARHELP
     # =================================================================
     @commands.command(name='warhelp')
@@ -471,6 +504,7 @@ IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused 
                     "reset": "Reset your civilization (irreversible!)",
                     "start": "Start a new civilization with a cinematic intro",
                     "status": "View your civilization status",
+                    "rename": "Rename your civilization",
                     "sv": "Start a saved chat with the AI (no timeout)",
                     "svc": "Close and delete your saved chat",
                     "victory": "Check your progress toward victory conditions",
