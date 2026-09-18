@@ -101,8 +101,10 @@ class UnionCommands(commands.Cog):
         manager=self.civ_manager
         if getattr(manager,"_union_hooks_installed",False):return
         original_get=manager.get_civilization; original_resources=manager.update_resources; original_population=manager.update_population; original_military=manager.update_military; original_employment=manager.update_employment; original_territory=manager.update_territory
-        def merged(uid):
-            base=original_get(str(uid)); members=self._members(uid)
+        def merged(uid, force=False):
+            # Accept force so cache-refreshing commands keep working after the
+            # union cog wraps CivilizationManager.get_civilization.
+            base=original_get(str(uid), force=force); members=self._members(uid)
             if not base or len(members)<2:return base
             out=self._aggregate(members); u=self._union(members[0]) or {}; out["name"]=u.get("name",out.get("name")); out["union"]=u; out["leaders"]=members; return out
         def shared_update(uid,field,changes,original):
