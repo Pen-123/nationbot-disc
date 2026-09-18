@@ -115,6 +115,32 @@ class Database:
     def close_connections(self):
         pass
 
+    def full_reset(self) -> bool:
+        """Delete all persistent game data for a new season."""
+        collections = [
+            "civilizations", "territories", "alliances", "wars", "peace_offers",
+            "trade_requests", "alliance_invitations", "messages", "events",
+            "territory_history", "industrial_revolutions", "unions", "navy",
+            "airforce", "cards", "cooldowns"
+        ]
+        try:
+            for collection_name in collections:
+                while True:
+                    docs = list(self.client.collection(collection_name).limit(450).stream())
+                    if not docs:
+                        break
+                    batch = self.client.batch()
+                    for doc in docs:
+                        batch.delete(doc.reference)
+                    batch.commit()
+                    if len(docs) < 450:
+                        break
+            logger.warning("FULL NEW-SEASON RESET completed")
+            return True
+        except Exception as e:
+            logger.error(f"full_reset error: {e}")
+            return False
+
     # -------------------- CIVILISATION CRUD --------------------
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None,
                             bonuses: Dict = None, hyper_item: str = None) -> bool:
