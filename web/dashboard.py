@@ -110,155 +110,74 @@ def dashboard():
 
 
 def _slugify_name(name):
-    slug = re.sub(r'[^a-z0-9]+', '-', str(name or '').lower()).strip('-')
-    return slug[:48]
+    """Create a stable URL slug from a civilization name."""
+    value = str(name or "").strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    return value.strip("-")[:48]
 
 
 def _find_civilization_by_slug(slug):
+    """Find a civilization by its public URL slug."""
     initialize_services()
     if db is None:
         return None
+
+    wanted = _slugify_name(slug)
+    wanted_compact = re.sub(r"[^a-z0-9]", "", wanted)
+
     for civ in db.get_all_civilizations():
-        if _slugify_name(civ.get('name')) == slug.lower():
-            return civ
+        candidates = [
+            civ.get("name"),
+            civ.get("country_name"),
+            civ.get("nation_name"),
+            civ.get("display_name"),
+        ]
+        for name in candidates:
+            candidate = _slugify_name(name)
+            if candidate == wanted:
+                return civ
+            if candidate and re.sub(r"[^a-z0-9]", "", candidate) == wanted_compact:
+                return civ
     return None
 
 
-def _generate_ai_overview(civ):
-    """Generate a short public-facing country profile using the configured AI."""
-    api_key = os.getenv('GROQ_API_KEY') or os.getenv('OPENROUTER') or os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        return "AI overview is currently unavailable."
+def _civilization_stats(civ):
+    return {
+        "name": civ.get("name", "Unknown"),
+        "ideology": civ.get("ideology") or "None",
+        "region": civ.get("region") or "Unknown",
+        "population": civ.get("population", {}).get("citizens", 0),
+        "happiness": civ.get("population", {}).get("happiness", 0),
+        "land": civ.get("territory", {}).get("land_size", 0),
+        "gold": civ.get("resources", {}).get("gold", 0),
+        "food": civ.get("resources", {}).get("food", 0),
+        "soldiers": civ.get("military", {}).get("soldiers", 0),
+        "spies": civ.get("military", {}).get("spies", 0),
+    }
 
-    if os.getenv('GROQ_API_KEY'):
-        endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        model = "qwen/qwen3-32b"
-    elif os.getenv('OPENROUTER'):
-        endpoint = "https://openrouter.ai/api/v1/chat/completions"
-        model = "meta-llama/llama-3.3-70b-instruct"
-    else:
-        endpoint = "https://api.openai.com/v1/chat/completions"
-        model = "gpt-4o-mini"
 
-    prompt = f"""Write a concise, neutral fictional nation profile for NationBot.
-Use only these game stats. Do not invent exact facts that contradict them.
-Nation: {civ.get('name', 'Unknown')}
-Ideology: {civ.get('ideology') or 'None'}
-Region: {civ.get('region') or 'Unknown'}
-Population: {civ.get('population', {}).get('citizens', 0)}
-Happiness: {civ.get('population', {}).get('happiness', 0)}%
-Land: {civ.get('territory', {}).get('land_size', 0)} km²
-Gold: {civ.get('resources', {}).get('gold', 0)}
-Food: {civ.get('resources', {}).get('food', 0)}
-Soldiers: {civ.get('military', {}).get('soldiers', 0)}
-Spies: {civ.get('military', {}).get('spies', 0)}
+def _render_country_overview(slug):
+    civ = _find_civilization_by_slug(slug)
+    if not civ:
+        logger.info("Overview lookup failed for slug=%r", slug)
+        return not_found(None)
 
-Return 3 short sections: Overview, Economy & Society, Military & Territory."""
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You write compact country-game profiles."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.6,
-        "max_tokens": 500
-    }).encode()
-
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    if endpoint.startswith("https://openrouter.ai"):
-        headers["HTTP-Referer"] = os.getenv("WEBSITE_URL", "https://nationbot-website.com")
-
-    try:
-        req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=12) as response:
-            data = json.loads(response.read().decode())
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.warning(f"AI overview generation failed: {e}")
-        return "AI overview is temporarily unavailable. The live game statistics below are still available."
+    overview = _generate_ai_overview(civ)
+    return render_template("overview.html", civ=_civilization_stats(civ), overview=overview)
 
 
 @app.route('/<slug>')
 def country_overview(slug):
-    """Public country page, e.g. /pen."""
-    if slug.lower() in {"api", "map.png", "static", "favicon.ico"}:
+    """Public country page, e.g. /united-sqr-cosmo-republic."""
+    if slug.lower() in {"api", "map.png", "static", "favicon.ico", "country"}:
         return not_found(None)
-
-    civ = _find_civilization_by_slug(slug)
-    if not civ:
-        return not_found(None)
-
-    overview = _generate_ai_overview(civ)
-    stats = {
-        "name": civ.get("name", "Unknown"),
-        "ideology": civ.get("ideology") or "None",
-        "region": civ.get("region") or "Unknown",
-        "population": civ.get("population", {}).get("citizens", 0),
-        "happiness": civ.get("population", {}).get("happiness", 0),
-        "land": civ.get("territory", {}).get("land_size", 0),
-        "gold": civ.get("resources", {}).get("gold", 0),
-        "food": civ.get("resources", {}).get("food", 0),
-        "soldiers": civ.get("military", {}).get("soldiers", 0),
-        "spies": civ.get("military", {}).get("spies", 0),
-    }
-    return render_template("overview.html", civ=stats, overview=overview)
+    return _render_country_overview(slug)
 
 
-def _overview_slug(name):
-    import re
-    return re.sub(r'[^a-z0-9]+', '-', str(name or '').lower()).strip('-')[:48]
-
-
-@app.route('/country/<slug>', endpoint='country_overview_page')
+@app.route('/country/<slug>')
 def country_overview_page(slug):
-    initialize_services()
-    if db is None:
-        return "Database unavailable", 503
-    civ = next((c for c in db.get_all_civilizations()
-                if _overview_slug(c.get("name")) == slug.lower()), None)
-    if not civ:
-        return "Country not found", 404
-
-    stats = {
-        "name": civ.get("name", "Unknown"),
-        "ideology": civ.get("ideology") or "None",
-        "region": civ.get("region") or "Unknown",
-        "population": civ.get("population", {}).get("citizens", 0),
-        "happiness": civ.get("population", {}).get("happiness", 0),
-        "land": civ.get("territory", {}).get("land_size", 0),
-        "gold": civ.get("resources", {}).get("gold", 0),
-        "food": civ.get("resources", {}).get("food", 0),
-        "soldiers": civ.get("military", {}).get("soldiers", 0),
-        "spies": civ.get("military", {}).get("spies", 0),
-    }
-    overview = "An AI overview could not be generated."
-    api_key = os.getenv("GROQ_API_KEY")
-    if api_key:
-        try:
-            import urllib.request
-            payload = json.dumps({
-                "model": "qwen/qwen3-32b",
-                "messages": [{"role": "user", "content":
-                    f"Write a concise fictional nation-game intelligence brief for {stats['name']}. "
-                    f"Use only these stats: ideology={stats['ideology']}, region={stats['region']}, "
-                    f"population={stats['population']}, happiness={stats['happiness']}%, "
-                    f"land={stats['land']} km2, gold={stats['gold']}, food={stats['food']}, "
-                    f"soldiers={stats['soldiers']}, spies={stats['spies']}. "
-                    "Use headings Overview, Economy & Society, Military & Territory."}],
-                "temperature": 0.6, "max_tokens": 450
-            }).encode()
-            req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/chat/completions",
-                data=payload,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=12) as r:
-                overview = json.loads(r.read().decode())["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.warning(f"Country overview AI failed: {e}")
-
-    return render_template("overview.html", civ=stats, overview=overview)
+    """Compatibility URL for /country/<slug>."""
+    return _render_country_overview(slug)
 
 
 @app.route('/api/stats')
