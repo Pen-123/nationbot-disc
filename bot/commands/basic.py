@@ -31,7 +31,7 @@ class BasicCommands(commands.Cog):
         self.openrouter_key = os.getenv('OPENROUTER')
         self.openai_key = os.getenv('OPENAI_API_KEY')
         # Groq uses short model IDs; OpenRouter uses org-prefixed paths
-        self.groq_model = "openai/gpt-oss-20b"
+        self.groq_model = "qwen/qwen3-32b"
         self.openrouter_model = "meta-llama/llama-3.3-70b-instruct"
         self.model_switch_time = None
         self.rate_limited = False
