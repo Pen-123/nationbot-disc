@@ -292,7 +292,7 @@ Your role is to help players understand game mechanics and strategies.
 - Victory conditions: Domination (80% of territories), Economic (500M gold & 100k GDP/citizen), Industrial (3 megaprojects & 6 policies), Conquest (all provinces), United Nations (alliance with 5 members). Use `.victory` to track your progress.
 
 **FULL COMMAND LIST:**
-- Basic: .start, .status, .ideology, .regions, .reset, .sv, .svc, .warhelp, .updates, .victory
+- Basic: .start, .status, .rename, .ideology, .regions, .reset, .sv, .svc, .warhelp, .updates, .victory
 - Economy: .gather, .work, .farm, .mine, .harvest, .drill, .fish, .labor, .raidcaravan, .tax, .lottery, .invest, .advertise, .census, .recruit, .buysoldiers, .buytech, .cheerup, .cheer, .festival, .burn, .immigration, .buycard, .corporation, .megaproject, .policy, .policieshelp
 - Military: .train, .find, .declare, .attack, .siege, .stealthbattle, .peace, .accept_peace, .addborder, .removeborder, .rectract, .retrieve, .borderinfo, .buildship, .buildplane, .tech, .trainboost, .navy, .airforce, .cards
 - Diplomacy: .ally, .acceptally, .rejectally, .break, .send, .trade, .accepttrade, .rejecttrade, .mail, .inbox, .coalition
