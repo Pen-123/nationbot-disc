@@ -485,7 +485,21 @@ IMPORTANT: Use Discord markdown formatting. Keep responses engaging but focused 
             return
         old_name = civ.get("name", "Unknown")
         if self.db.update_civilization(user_id, {"name": new_name}):
-            self.civ_manager._invalidate_civ(user_id)
+            # If this nation is in a union, status/map use the shared union name.
+            union = civ.get("union") or {}
+            members = union.get("members") or []
+            if len(members) >= 2:
+                union_id = union.get("id")
+                if union_id:
+                    try:
+                        self.db.client.collection("unions").document(str(union_id)).update({"name": new_name})
+                    except Exception:
+                        pass
+                for member_id in members:
+                    self.db.client.collection("civilizations").document(str(member_id)).update({"union.name": new_name})
+                    self.civ_manager._invalidate_civ(str(member_id))
+            else:
+                self.civ_manager._invalidate_civ(user_id)
             await ctx.send(f"✅ Your civilization has been renamed from **{old_name}** to **{new_name}**.")
         else:
             await ctx.send("❌ Failed to rename your civilization. Please try again.")
