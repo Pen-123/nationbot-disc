@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+import colorsys
 from io import BytesIO
 
 import discord
@@ -85,7 +86,10 @@ class MapCog(commands.Cog):
                 map_id = owner_id
                 name = (civ or {}).get("name") or owner_id[:6]
 
-            ownership.setdefault(map_id, {"provinces": [], "name": name})["provinces"].append(province_name)
+            info = ownership.setdefault(map_id, {"provinces": [], "name": name, "rebel_provinces": []})
+            info["provinces"].append(province_name)
+            if civ and province_name in ((civ.get("civil_war") or {}).get("rebel_territories") or []):
+                info["rebel_provinces"].append(province_name)
 
         self._ownership_cache = ownership
         self._ownership_cache_at = now
@@ -110,12 +114,22 @@ class MapCog(commands.Cog):
                 map_id: colors[i % len(colors)]
                 for i, map_id in enumerate(ownership_data)
             }
+            rebel_colors = {}
+            for map_id, base_color in user_colors.items():
+                r, g, b = base_color[:3]
+                h, s, v = colorsys.rgb_to_hsv(r, g, b)
+                rebel_colors[map_id] = (*colorsys.hsv_to_rgb(h, min(1, s * 1.15), max(0.15, v * 0.62)), 1)
             province_to_owner = {}
             for map_id, info in ownership_data.items():
                 for province in info["provinces"]:
                     province_to_owner[self._normalize_name(province)] = map_id
 
             owners = []
+            rebel_provinces = {
+                self._normalize_name(p)
+                for info in ownership_data.values()
+                for p in info.get("rebel_provinces", [])
+            }
             for name in self._normalized_names:
                 owner = province_to_owner.get(name)
                 if owner is None:
@@ -129,8 +143,10 @@ class MapCog(commands.Cog):
             plot_gdf = self.gdf.copy()
             plot_gdf["_map_owner"] = owners
             plot_gdf["_map_color"] = [
-                user_colors.get(owner, (0.8, 0.8, 0.8, 1))
-                for owner in owners
+                rebel_colors.get(owner, (0.8, 0.8, 0.8, 1))
+                if self._normalize_name(name) in rebel_provinces
+                else user_colors.get(owner, (0.8, 0.8, 0.8, 1))
+                for name, owner in zip(self._normalized_names, owners)
             ]
 
             fig, ax = plt.subplots(figsize=(15, 10))
