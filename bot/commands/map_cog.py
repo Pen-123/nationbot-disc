@@ -168,10 +168,17 @@ class MapCog(commands.Cog):
                 alpha=0.8,
             )
 
-            patches = [
-                mpatches.Patch(color=color, label=ownership_data[map_id]["name"])
-                for map_id, color in user_colors.items()
-            ]
+            patches = []
+            for map_id, color in user_colors.items():
+                name = ownership_data[map_id]["name"]
+                patches.append(mpatches.Patch(color=color, label=f"{name} • Loyalists"))
+                if ownership_data[map_id].get("rebel_provinces"):
+                    patches.append(
+                        mpatches.Patch(
+                            color=rebel_colors[map_id],
+                            label=f"{name} • Rebels"
+                        )
+                    )
             if patches:
                 ax.legend(handles=patches, loc="lower left", fontsize=8)
             ax.set_title("🌍 NationBot World Map", fontsize=16, fontweight='bold')
