@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ civ.name }} | NationBot</title>
+<style>
+body{margin:0;background:#07111f;color:#eaf2ff;font-family:Inter,system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:48px 22px}
+header{padding:28px;border:1px solid #20334d;border-radius:22px;background:linear-gradient(135deg,#0e1d32,#091522)}
+h1{font-size:42px;margin:0 0 8px}.muted{color:#91a4bd}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.card{padding:18px;border:1px solid #20334d;border-radius:16px;background:#0c1929}
+.value{font-size:25px;font-weight:700;margin-top:5px}
+section{margin-top:18px;padding:24px;border:1px solid #20334d;border-radius:18px;background:#0b1726;line-height:1.65;white-space:pre-wrap}
+.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#17304c;color:#9ed0ff;margin-right:6px}
+</style>
+</head>
+<body><main>
+<header><h1>{{ civ.name }}</h1><span class="badge">{{ civ.ideology }}</span><span class="badge">{{ civ.region }}</span><p class="muted">Public NationBot country overview</p></header>
+<div class="grid">
+<div class="card">Population<div class="value">{{ "{:,}".format(civ.population) }}</div></div>
+<div class="card">Happiness<div class="value">{{ civ.happiness }}%</div></div>
+<div class="card">Land<div class="value">{{ "{:,}".format(civ.land) }} km²</div></div>
+<div class="card">Gold<div class="value">{{ "{:,}".format(civ.gold) }}</div></div>
+<div class="card">Food<div class="value">{{ "{:,}".format(civ.food) }}</div></div>
+<div class="card">Soldiers<div class="value">{{ "{:,}".format(civ.soldiers) }}</div></div>
+<div class="card">Spies<div class="value">{{ "{:,}".format(civ.spies) }}</div></div>
+</div>
+<section><h2>🤖 AI Intelligence Brief</h2>{{ overview }}</section>
+</main></body></html>
